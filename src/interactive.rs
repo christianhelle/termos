@@ -5,16 +5,19 @@ use std::time::Duration;
 
 use crate::app::App;
 use crate::management::{Account, Management};
+use crate::output::render_table;
 use crate::prompt::{LineReader, Picker};
-use crate::store::DataPlane;
+use crate::store::{DataPlane, DataStore};
 
 /// Reads commands and queries from a prompt until the user leaves.
-pub struct Repl<M, D, W> {
+pub struct Repl<M, D: DataPlane, W> {
     app: App<M, D, W>,
     lines: Box<dyn LineReader>,
     picker: Box<dyn Picker>,
     /// The account commands and queries run against.
     account: Option<Account>,
+    /// The open connection to the container of the current account that queries run against.
+    store: Option<D::Store>,
 }
 
 impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
@@ -24,6 +27,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             lines,
             picker,
             account: None,
+            store: None,
         }
     }
 
@@ -47,13 +51,21 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 Some("containers") if is_listing(&words) => self.pick_container().await,
                 _ => Ok(Flow::Continue),
             },
-            Input::Query(_) => {
-                anyhow::bail!(
-                    "select an account with /accounts and a container with /containers first"
-                )
-            }
+            Input::Query(sql) => self.query(&sql).await,
             Input::Empty => Ok(Flow::Continue),
         }
+    }
+
+    async fn query(&mut self, sql: &str) -> anyhow::Result<Flow> {
+        let Some(store) = &self.store else {
+            anyhow::bail!(
+                "select an account with /accounts and a container with /containers first"
+            );
+        };
+        let docs = store.query(sql, None).await?;
+        let rendered = render_table(&docs, store.partition_key_path());
+        writeln!(self.app.out, "{rendered}")?;
+        Ok(Flow::Continue)
     }
 
     async fn pick_account(&mut self) -> anyhow::Result<Flow> {
@@ -73,9 +85,30 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     }
 
     async fn pick_container(&mut self) -> anyhow::Result<Flow> {
-        let Some(_account) = &self.account else {
+        let Some(account) = &self.account else {
             anyhow::bail!("select an account with /accounts first");
         };
+        let mut containers = self.app.containers_of(account, None).await?;
+        let labels: Vec<String> = containers
+            .iter()
+            .map(|(database, c)| {
+                let pk = c.partition_key_paths.join(", ");
+                format!("{database}/{} ({pk})", c.name)
+            })
+            .collect();
+        if let Some(index) = self.picker.pick("Select a container", &labels)? {
+            let (database, container) = containers.swap_remove(index);
+            let store = self
+                .app
+                .connect_to(account, &database, &container.name)
+                .await?;
+            writeln!(
+                self.app.out,
+                "Using container {database}/{}",
+                container.name
+            )?;
+            self.store = Some(store);
+        }
         Ok(Flow::Continue)
     }
 }
@@ -133,10 +166,12 @@ pub fn format_elapsed(elapsed: Duration) -> String {
 mod tests {
     use super::*;
     use crate::cli::GlobalArgs;
+    use crate::store::Credential;
     use crate::testing::{
         FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker, account,
         container,
     };
+    use serde_json::json;
 
     type TestRepl = Repl<FakeManagement, FakeDataPlane, Vec<u8>>;
 
@@ -263,6 +298,58 @@ mod tests {
             output(&repl),
             "error: select an account with /accounts first\n"
         );
+    }
+
+    #[tokio::test]
+    async fn containers_picks_the_current_container_across_databases() {
+        let lines = ScriptedLines::new(&["/accounts", "/containers"]);
+        let picker = ScriptedPicker::answering(&[Some(0), Some(1)]);
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(
+            picker.shown.borrow()[1],
+            vec!["shop/carts (/userId)", "audit/events (/deviceId)"]
+        );
+        assert_eq!(
+            output(&repl),
+            "Using account orders\nUsing container audit/events\n"
+        );
+        assert_eq!(*repl.app.data.connections.borrow(), vec![Credential::Entra]);
+    }
+
+    #[tokio::test]
+    async fn queries_run_against_the_current_container_over_one_connection() {
+        let lines = ScriptedLines::new(&[
+            "/accounts",
+            "/containers",
+            "SELECT * FROM c",
+            "SELECT * FROM c WHERE c.userId = 'u-1'",
+        ]);
+        let picker = ScriptedPicker::answering(&[Some(0), Some(0)]);
+        let mut repl = repl_picking(&lines, &picker);
+        repl.app.data =
+            FakeDataPlane::new("/userId", vec![json!({ "id": "c-1", "userId": "u-1" })]);
+
+        repl.run().await.unwrap();
+
+        let table = "\
++-----+---------+
+| id  | /userId |
++===============+
+| c-1 | u-1     |
++-----+---------+
+";
+        assert_eq!(
+            output(&repl),
+            format!("Using account orders\nUsing container shop/carts\n{table}{table}")
+        );
+        assert_eq!(
+            repl.app.data.container.borrow().queries,
+            vec!["SELECT * FROM c", "SELECT * FROM c WHERE c.userId = 'u-1'"]
+        );
+        assert_eq!(repl.app.data.connections.borrow().len(), 1);
     }
 
     #[tokio::test]
