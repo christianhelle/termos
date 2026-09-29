@@ -45,6 +45,31 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 max,
             } => self.query(&target, &sql, output, max).await,
             Command::Items { command } => self.items(command).await,
+            Command::Containers {
+                command:
+                    ContainersCommand::Create {
+                        target,
+                        partition_key,
+                        throughput,
+                    },
+            } => {
+                let account = self.resolve(&target.account).await?;
+                self.management
+                    .create_container(
+                        &account,
+                        &target.database,
+                        &target.container,
+                        &partition_key,
+                        throughput,
+                    )
+                    .await?;
+                writeln!(
+                    self.out,
+                    "Created container {}/{}",
+                    target.database, target.container
+                )?;
+                Ok(())
+            }
             _ => todo!(),
         }
     }
@@ -630,5 +655,38 @@ mod tests {
             output(&app),
             "No documents with partition key \"contoso\" in shop/carts\n"
         );
+    }
+
+    fn carts() -> ContainerRef {
+        ContainerRef {
+            account: "orders".into(),
+            database: "shop".into(),
+            container: "wishlists".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn containers_create_adds_a_container_with_partition_key() {
+        let mut app = app(shop());
+
+        app.run(Command::Containers {
+            command: ContainersCommand::Create {
+                target: carts(),
+                partition_key: "/userId".into(),
+                throughput: None,
+            },
+        })
+        .await
+        .unwrap();
+
+        let databases = app.management.databases.borrow();
+        assert_eq!(
+            databases[0].1,
+            vec![
+                container("carts", "/userId"),
+                container("wishlists", "/userId")
+            ]
+        );
+        assert_eq!(output(&app), "Created container shop/wishlists\n");
     }
 }

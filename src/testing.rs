@@ -80,6 +80,23 @@ impl Management for FakeManagement {
             .map(|(_, containers)| containers.clone())
             .unwrap_or_default())
     }
+
+    async fn create_container(
+        &self,
+        _account: &Account,
+        database: &str,
+        name: &str,
+        partition_key_path: &str,
+        _throughput: Option<u32>,
+    ) -> anyhow::Result<()> {
+        let mut databases = self.databases.borrow_mut();
+        let (_, containers) = databases
+            .iter_mut()
+            .find(|(db, _)| db == database)
+            .ok_or_else(|| anyhow::anyhow!("database '{database}' not found"))?;
+        containers.push(container(name, partition_key_path));
+        Ok(())
+    }
 }
 
 /// Shared state behind a fake container.

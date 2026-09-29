@@ -37,6 +37,15 @@ pub trait Management {
         account: &Account,
         database: &str,
     ) -> anyhow::Result<Vec<Container>>;
+
+    async fn create_container(
+        &self,
+        account: &Account,
+        database: &str,
+        container: &str,
+        partition_key_path: &str,
+        throughput: Option<u32>,
+    ) -> anyhow::Result<()>;
 }
 
 #[derive(Deserialize)]
