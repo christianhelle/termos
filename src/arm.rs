@@ -17,6 +17,7 @@ const ENDPOINT: &str = "https://management.azure.com";
 const SCOPE: &str = "https://management.azure.com/.default";
 const COSMOS_API_VERSION: &str = "2024-11-15";
 const SUBSCRIPTIONS_API_VERSION: &str = "2022-12-01";
+const MAX_ATTEMPTS: u32 = 5;
 
 /// Talks to Azure Resource Manager with an Entra ID token.
 pub struct Arm {
@@ -43,20 +44,41 @@ impl Arm {
             .get_token(&[SCOPE], None)
             .await
             .context("getting an Azure Resource Manager token, try `az login`")?;
-        let mut request = self
-            .http
-            .request(method.clone(), url)
-            .bearer_auth(token.token.secret());
-        if let Some(body) = body {
-            request = request.json(body);
+        let mut attempt = 1;
+        loop {
+            let mut request = self
+                .http
+                .request(method.clone(), url)
+                .bearer_auth(token.token.secret());
+            if let Some(body) = body {
+                request = request.json(body);
+            }
+            let response = request.send().await?;
+            let status = response.status();
+            let throttled = matches!(
+                status,
+                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+            );
+            if throttled && attempt < MAX_ATTEMPTS {
+                let retry_after = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|value| value.to_str().ok());
+                let delay = retry_delay(retry_after);
+                eprintln!(
+                    "Azure Resource Manager is throttling, retrying in {}s",
+                    delay.as_secs()
+                );
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                continue;
+            }
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                anyhow::bail!("{method} {url} failed with {status}: {text}");
+            }
+            return Ok(response);
         }
-        let response = request.send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("{method} {url} failed with {status}: {text}");
-        }
-        Ok(response)
     }
 
     async fn get(&self, url: &str) -> anyhow::Result<String> {
