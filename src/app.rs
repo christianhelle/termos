@@ -1,4 +1,7 @@
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::Path;
+
+use anyhow::Context;
 
 use serde_json::Value;
 
@@ -8,12 +11,15 @@ use crate::cli::{
 };
 use crate::management::{Account, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
+use crate::partition::value_at_path;
 use crate::store::{Credential, DataPlane, DataStore};
 
 /// Runs CLI commands against the control and data planes.
 pub struct App<M, D, W> {
     pub management: M,
     pub data: D,
+    /// Where documents are read from when no file is given.
+    pub input: Box<dyn Read>,
     pub out: W,
     pub global: GlobalArgs,
 }
@@ -91,8 +97,29 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 writeln!(self.out, "Deleted document '{id}'")?;
                 Ok(())
             }
+            ItemsCommand::Create { target, file } => {
+                let store = self.connect(&target).await?;
+                let doc = self.read_document(file.as_deref())?;
+                let (id, pk) = identify(&doc, store.partition_key_path())?;
+                store.create_item(&pk, doc).await?;
+                writeln!(self.out, "Created document '{id}'")?;
+                Ok(())
+            }
             _ => todo!(),
         }
+    }
+
+    fn read_document(&mut self, file: Option<&Path>) -> anyhow::Result<Value> {
+        let text = match file {
+            Some(path) => std::fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))?,
+            None => {
+                let mut text = String::new();
+                self.input.read_to_string(&mut text)?;
+                text
+            }
+        };
+        serde_json::from_str(&text).context("document is not valid JSON")
     }
 
     fn print_json(&mut self, doc: &Value) -> anyhow::Result<()> {
@@ -145,6 +172,17 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     }
 }
 
+/// Returns the id and partition key value of a document.
+fn identify(doc: &Value, pk_path: &str) -> anyhow::Result<(String, Value)> {
+    let id = doc
+        .get("id")
+        .and_then(Value::as_str)
+        .context("document has no string 'id' property")?;
+    let pk = value_at_path(doc, pk_path)
+        .with_context(|| format!("document has no partition key at {pk_path}"))?;
+    Ok((id.to_string(), pk.clone()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +199,7 @@ mod tests {
         App {
             management,
             data,
+            input: Box::new(std::io::empty()),
             out: Vec::new(),
             global: GlobalArgs::default(),
         }
@@ -369,5 +408,26 @@ mod tests {
             vec![json!({ "id": "c-2", "tenantId": "contoso" })]
         );
         assert_eq!(output(&app), "Deleted document 'c-1'\n");
+    }
+
+    #[tokio::test]
+    async fn items_create_reads_the_document_from_stdin() {
+        let mut app = orders_app(vec![]);
+        app.input = Box::new(r#"{ "id": "c-9", "tenantId": "contoso" }"#.as_bytes());
+
+        app.run(Command::Items {
+            command: ItemsCommand::Create {
+                target: orders(),
+                file: None,
+            },
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            app.data.container.borrow().docs,
+            vec![json!({ "id": "c-9", "tenantId": "contoso" })]
+        );
+        assert_eq!(output(&app), "Created document 'c-9'\n");
     }
 }

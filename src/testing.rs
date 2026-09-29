@@ -157,6 +157,16 @@ impl DataStore for FakeStore {
         anyhow::ensure!(container.docs.len() < before, "document '{id}' not found");
         Ok(())
     }
+
+    async fn create_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()> {
+        let id = doc["id"].as_str().unwrap_or_default().to_string();
+        anyhow::ensure!(
+            self.read_item(&id, pk).await.is_err(),
+            "document '{id}' already exists"
+        );
+        self.container.borrow_mut().docs.push(doc);
+        Ok(())
+    }
 }
 
 impl FakeStore {

@@ -34,4 +34,7 @@ pub trait DataStore {
     async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value>;
 
     async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()>;
+
+    /// Creates a document, failing if one with the same id already exists.
+    async fn create_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()>;
 }
