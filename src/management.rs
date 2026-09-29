@@ -10,6 +10,13 @@ pub struct Account {
     pub endpoint: String,
 }
 
+/// A SQL container and the paths that make up its partition key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Container {
+    pub name: String,
+    pub partition_key_paths: Vec<String>,
+}
+
 /// One page of an Azure Resource Manager list response.
 #[derive(Debug, PartialEq)]
 pub struct Page<T> {
@@ -65,6 +72,41 @@ struct ArmNamed {
 
 pub fn parse_databases(json: &str) -> anyhow::Result<Page<String>> {
     parse_page(json, |arm: ArmNamed| arm.name)
+}
+
+#[derive(Deserialize)]
+struct ArmContainer {
+    name: String,
+    properties: ArmContainerProperties,
+}
+
+#[derive(Deserialize)]
+struct ArmContainerProperties {
+    resource: ArmContainerResource,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmContainerResource {
+    partition_key: ArmPartitionKey,
+}
+
+#[derive(Deserialize)]
+struct ArmPartitionKey {
+    paths: Vec<String>,
+}
+
+impl From<ArmContainer> for Container {
+    fn from(arm: ArmContainer) -> Self {
+        Container {
+            name: arm.name,
+            partition_key_paths: arm.properties.resource.partition_key.paths,
+        }
+    }
+}
+
+pub fn parse_containers(json: &str) -> anyhow::Result<Page<Container>> {
+    parse_page(json, Container::from)
 }
 
 fn parse_page<A: DeserializeOwned, T>(
@@ -154,5 +196,25 @@ mod tests {
         let page = parse_databases(json).unwrap();
 
         assert_eq!(page.items, vec!["shop".to_string()]);
+    }
+
+    #[test]
+    fn parses_containers_with_partition_key_paths() {
+        let json = r#"{ "value": [
+            { "name": "orders", "properties": { "resource": {
+                "id": "orders",
+                "partitionKey": { "paths": ["/tenantId"], "kind": "Hash" }
+            } } }
+        ] }"#;
+
+        let page = parse_containers(json).unwrap();
+
+        assert_eq!(
+            page.items,
+            vec![Container {
+                name: "orders".into(),
+                partition_key_paths: vec!["/tenantId".into()],
+            }]
+        );
     }
 }
