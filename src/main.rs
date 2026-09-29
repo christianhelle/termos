@@ -10,7 +10,8 @@ use cosmoscli::arm::Arm;
 use cosmoscli::cli::{Cli, GlobalArgs};
 use cosmoscli::cosmos::CosmosDataPlane;
 use cosmoscli::credential::{CachedCredential, scopes_needed};
-use cosmoscli::interactive::{Repl, SystemClock};
+use cosmoscli::interactive::{AccountList, Repl, SystemClock};
+use cosmoscli::management::Management;
 use cosmoscli::prompt::{TerminalConfirm, TerminalLines, TerminalPicker};
 
 fn main() -> ExitCode {
@@ -50,6 +51,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             app.run(command).await
         }
         None => {
+            let accounts = prefetch_accounts(&credential, cli.global.subscription.clone());
             // Unlocked stdout, so the line editor and pickers can draw on the terminal too
             let app = app(credential, cli.global, std::io::stdout());
             println!("Type /help for commands, /exit or Ctrl-C to leave.");
@@ -58,7 +60,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 Box::new(TerminalLines::new()?),
                 Box::new(TerminalPicker),
                 Box::new(SystemClock),
-            );
+            )
+            .with_account_prefetch(accounts);
             repl.run().await
         }
     }
@@ -73,6 +76,16 @@ fn prefetch_tokens(credential: &Arc<dyn TokenCredential>, scopes: Vec<&'static s
             let _ = credential.get_token(&[scope], None).await;
         });
     }
+}
+
+/// Starts listing accounts in the background, so the first `/accounts` finds them ready.
+fn prefetch_accounts(
+    credential: &Arc<dyn TokenCredential>,
+    subscription: Option<String>,
+) -> AccountList {
+    let arm = Arm::new(credential.clone());
+    let listing = tokio::spawn(async move { arm.list_accounts(subscription.as_deref()).await });
+    Box::pin(async move { listing.await? })
 }
 
 fn app<W: Write>(
