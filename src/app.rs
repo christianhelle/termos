@@ -8,7 +8,7 @@ use crate::cli::{
     AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
     GlobalArgs, ItemsCommand, OutputFormat,
 };
-use crate::management::{Account, Management};
+use crate::management::{Account, Container, Management};
 use crate::output::{render_json, render_rows, render_table};
 use crate::partition::value_at_path;
 use crate::prompt::Confirm;
@@ -272,20 +272,37 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         database: Option<String>,
     ) -> anyhow::Result<()> {
         let account = self.resolve(account).await?;
-        let databases = match database {
-            Some(database) => vec![database],
-            None => self.management.list_databases(&account).await?,
-        };
-        let mut rows = Vec::new();
-        for database in databases {
-            for container in self.management.list_containers(&account, &database).await? {
+        let rows = self
+            .containers_of(&account, database)
+            .await?
+            .into_iter()
+            .map(|(database, container)| {
                 let pk = container.partition_key_paths.join(", ");
-                rows.push([database.clone(), container.name, pk]);
-            }
-        }
+                [database, container.name, pk]
+            })
+            .collect();
         let table = render_rows(["database", "container", "partition key"], rows);
         writeln!(self.out, "{table}")?;
         Ok(())
+    }
+
+    /// Lists the containers of one database, or of every database, with their database names.
+    pub(crate) async fn containers_of(
+        &self,
+        account: &Account,
+        database: Option<String>,
+    ) -> anyhow::Result<Vec<(String, Container)>> {
+        let databases = match database {
+            Some(database) => vec![database],
+            None => self.management.list_databases(account).await?,
+        };
+        let mut containers = Vec::new();
+        for database in databases {
+            for container in self.management.list_containers(account, &database).await? {
+                containers.push((database.clone(), container));
+            }
+        }
+        Ok(containers)
     }
 
     async fn list_accounts(&mut self) -> anyhow::Result<()> {
