@@ -30,6 +30,16 @@ pub trait Management {
     /// Lists accounts in one subscription, or in every accessible subscription.
     async fn list_accounts(&self, subscription: Option<&str>) -> anyhow::Result<Vec<Account>>;
 
+    /// Finds an account by name in one subscription, or in every accessible subscription.
+    async fn find_account(
+        &self,
+        name: &str,
+        subscription: Option<&str>,
+    ) -> anyhow::Result<Account> {
+        let accounts = self.list_accounts(subscription).await?;
+        resolve_account(&accounts, name).cloned()
+    }
+
     async fn list_databases(&self, account: &Account) -> anyhow::Result<Vec<String>>;
 
     async fn list_containers(

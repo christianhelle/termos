@@ -8,7 +8,7 @@ use crate::cli::{
     AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
     GlobalArgs, ItemsCommand, OutputFormat,
 };
-use crate::management::{Account, Management, resolve_account};
+use crate::management::{Account, Management};
 use crate::output::{render_json, render_rows, render_table};
 use crate::partition::value_at_path;
 use crate::prompt::Confirm;
@@ -92,11 +92,9 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     }
 
     async fn resolve(&self, name: &str) -> anyhow::Result<Account> {
-        let accounts = self
-            .management
-            .list_accounts(self.global.subscription.as_deref())
-            .await?;
-        resolve_account(&accounts, name).cloned()
+        self.management
+            .find_account(name, self.global.subscription.as_deref())
+            .await
     }
 
     async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
