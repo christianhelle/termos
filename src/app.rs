@@ -148,14 +148,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         database: &str,
         container: &str,
     ) -> anyhow::Result<D::Store> {
-        // In auto mode a key is only fetched after Entra ID was refused for the account
-        let known_key = self.account_keys.borrow().get(&account.name).cloned();
-        let credential = match (&self.global.key, self.global.auth, known_key) {
-            (Some(key), _, _) => Credential::Key(key.clone()),
-            (None, AuthMode::Key, _) => Credential::Key(self.primary_key(account).await?),
-            (None, AuthMode::Auto, Some(key)) => Credential::Key(key),
-            (None, AuthMode::Entra | AuthMode::Auto, _) => Credential::Entra,
-        };
+        let credential = self.first_credential(account).await?;
         let tried_entra_first =
             self.global.auth == AuthMode::Auto && credential == Credential::Entra;
         let result = self
@@ -171,6 +164,18 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             }
             result => result,
         }
+    }
+
+    /// The credential to try first for an account's documents, honouring the auth mode.
+    async fn first_credential(&self, account: &Account) -> anyhow::Result<Credential> {
+        // In auto mode a key is only fetched after Entra ID was refused for the account
+        let known_key = self.account_keys.borrow().get(&account.name).cloned();
+        Ok(match (&self.global.key, self.global.auth, known_key) {
+            (Some(key), _, _) => Credential::Key(key.clone()),
+            (None, AuthMode::Key, _) => Credential::Key(self.primary_key(account).await?),
+            (None, AuthMode::Auto, Some(key)) => Credential::Key(key),
+            (None, AuthMode::Entra | AuthMode::Auto, _) => Credential::Entra,
+        })
     }
 
     /// Fetches the account key once per account.
