@@ -37,7 +37,12 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 Some("exit" | "quit") => Ok(Flow::Exit),
                 _ => Ok(Flow::Continue),
             },
-            Input::Empty | Input::Query(_) => Ok(Flow::Continue),
+            Input::Query(_) => {
+                anyhow::bail!(
+                    "select an account with /accounts and a container with /containers first"
+                )
+            }
+            Input::Empty => Ok(Flow::Continue),
         }
     }
 }
@@ -134,6 +139,19 @@ mod tests {
 
     fn output(repl: &TestRepl) -> String {
         String::from_utf8(repl.app.out.clone()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn queries_need_an_account_and_container_first() {
+        let lines = ScriptedLines::new(&["SELECT * FROM c"]);
+        let mut repl = repl(&lines);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(
+            output(&repl),
+            "error: select an account with /accounts and a container with /containers first\n"
+        );
     }
 
     #[tokio::test]
