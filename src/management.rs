@@ -183,6 +183,21 @@ pub fn resolve_account<'a>(accounts: &'a [Account], name: &str) -> anyhow::Resul
         .ok_or_else(|| anyhow::anyhow!("Cosmos DB account '{name}' not found"))
 }
 
+/// Builds a Resource Graph query that finds one Cosmos DB account by name.
+pub fn account_query(name: &str) -> anyhow::Result<String> {
+    let name = name.to_ascii_lowercase();
+    let valid = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    anyhow::ensure!(valid, "'{name}' is not a valid Cosmos DB account name");
+    Ok(format!(
+        "resources \
+         | where type =~ 'microsoft.documentdb/databaseaccounts' and name =~ '{name}' \
+         | project id, name, location, documentEndpoint = tostring(properties.documentEndpoint)"
+    ))
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -346,5 +361,21 @@ mod tests {
         let error = resolve_account(&accounts, "billing").unwrap_err();
 
         assert_eq!(error.to_string(), "Cosmos DB account 'billing' not found");
+    }
+
+    #[test]
+    fn account_query_finds_the_named_account() {
+        assert_eq!(
+            account_query("Orders-EU").unwrap(),
+            "resources \
+             | where type =~ 'microsoft.documentdb/databaseaccounts' and name =~ 'orders-eu' \
+             | project id, name, location, documentEndpoint = tostring(properties.documentEndpoint)"
+        );
+    }
+
+    #[test]
+    fn account_query_rejects_names_that_are_not_valid_account_names() {
+        assert!(account_query("x' or name != '").is_err());
+        assert!(account_query("").is_err());
     }
 }
