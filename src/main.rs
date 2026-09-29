@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cosmoscli::app::App;
 use cosmoscli::arm::Arm;
 use cosmoscli::cli::Cli;
@@ -23,6 +23,10 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
+    let Some(command) = cli.command else {
+        Cli::command().print_help()?;
+        return Ok(());
+    };
     let credential: Arc<dyn TokenCredential> = DeveloperToolsCredential::new(None)?;
     let mut app = App {
         management: Arm::new(credential.clone()),
@@ -32,5 +36,5 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         out: std::io::stdout().lock(),
         global: cli.global,
     };
-    app.run(cli.command).await
+    app.run(command).await
 }

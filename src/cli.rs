@@ -12,8 +12,9 @@ pub struct Cli {
     #[command(flatten)]
     pub global: GlobalArgs,
 
+    /// Runs interactive mode when omitted
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Args, Debug, Clone, PartialEq, Default)]
@@ -250,14 +251,19 @@ mod tests {
     }
 
     #[test]
+    fn no_arguments_means_no_command() {
+        assert_eq!(parse(&[]).command, None);
+    }
+
+    #[test]
     fn parses_accounts_list_with_subscription() {
         let cli = parse(&["accounts", "list", "--subscription", "sub-1"]);
 
         assert_eq!(
             cli.command,
-            Command::Accounts {
+            Some(Command::Accounts {
                 command: AccountsCommand::List
-            }
+            })
         );
         assert_eq!(cli.global.subscription.as_deref(), Some("sub-1"));
     }
@@ -268,11 +274,11 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::Databases {
+            Some(Command::Databases {
                 command: DatabasesCommand::List {
                     account: "shop-acct".into()
                 }
-            }
+            })
         );
     }
 
@@ -282,12 +288,12 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::Containers {
+            Some(Command::Containers {
                 command: ContainersCommand::List {
                     account: "shop-acct".into(),
                     database: Some("shop".into()),
                 }
-            }
+            })
         );
     }
 
@@ -318,13 +324,13 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::Containers {
+            Some(Command::Containers {
                 command: ContainersCommand::Create {
                     target: target(),
                     partition_key: "/tenantId".into(),
                     throughput: Some(400),
                 }
-            }
+            })
         );
     }
 
@@ -354,18 +360,18 @@ mod tests {
 
         assert_eq!(
             show.command,
-            Command::Containers {
+            Some(Command::Containers {
                 command: ContainersCommand::Show { target: target() }
-            }
+            })
         );
         assert_eq!(
             delete.command,
-            Command::Containers {
+            Some(Command::Containers {
                 command: ContainersCommand::Delete {
                     target: target(),
                     yes: true
                 }
-            }
+            })
         );
     }
 
@@ -375,12 +381,12 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::Query {
+            Some(Command::Query {
                 target: target(),
                 sql: "SELECT * FROM c".into(),
                 output: OutputFormat::Table,
                 max: None,
-            }
+            })
         );
     }
 
@@ -403,12 +409,12 @@ mod tests {
 
         assert_eq!(
             cli.command,
-            Command::Query {
+            Some(Command::Query {
                 target: target(),
                 sql: "SELECT * FROM c WHERE c.total > 10".into(),
                 output: OutputFormat::Json,
                 max: Some(5),
-            }
+            })
         );
     }
 
@@ -419,7 +425,7 @@ mod tests {
             .chain(target)
             .collect();
         match parse(&all).command {
-            Command::Items { command } => command,
+            Some(Command::Items { command }) => command,
             other => panic!("expected items command, got {other:?}"),
         }
     }
