@@ -30,4 +30,6 @@ pub trait DataStore {
     fn partition_key_path(&self) -> &str;
 
     async fn query(&self, sql: &str, max: Option<usize>) -> anyhow::Result<Vec<Value>>;
+
+    async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value>;
 }

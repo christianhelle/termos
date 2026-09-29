@@ -6,6 +6,7 @@ use std::rc::Rc;
 use serde_json::Value;
 
 use crate::management::{Account, Container, Management};
+use crate::partition::value_at_path;
 use crate::store::{Credential, DataPlane, DataStore};
 
 pub fn account(name: &str) -> Account {
@@ -140,5 +141,19 @@ impl DataStore for FakeStore {
         container.queries.push(sql.to_string());
         let limit = max.unwrap_or(usize::MAX);
         Ok(container.docs.iter().take(limit).cloned().collect())
+    }
+
+    async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value> {
+        let container = self.container.borrow();
+        let doc = container.docs.iter().find(|doc| self.matches(doc, id, pk));
+        doc.cloned()
+            .ok_or_else(|| anyhow::anyhow!("document '{id}' not found"))
+    }
+}
+
+impl FakeStore {
+    fn matches(&self, doc: &Value, id: &str, pk: &Value) -> bool {
+        doc.get("id").and_then(Value::as_str) == Some(id)
+            && value_at_path(doc, &self.pk_path) == Some(pk)
     }
 }

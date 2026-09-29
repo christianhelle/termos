@@ -1,8 +1,10 @@
 use std::io::Write;
 
+use serde_json::Value;
+
 use crate::cli::{
     AccountsCommand, Command, ContainerRef, ContainersCommand, DatabasesCommand, GlobalArgs,
-    OutputFormat,
+    ItemsCommand, OutputFormat, PartitionKeyArg,
 };
 use crate::management::{Account, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
@@ -34,6 +36,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 output,
                 max,
             } => self.query(&target, &sql, output, max).await,
+            Command::Items { command } => self.items(command).await,
             _ => todo!(),
         }
     }
@@ -72,6 +75,22 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             OutputFormat::Json => render_json(&docs),
         };
         writeln!(self.out, "{rendered}")?;
+        Ok(())
+    }
+
+    async fn items(&mut self, command: ItemsCommand) -> anyhow::Result<()> {
+        match command {
+            ItemsCommand::Get { target, id, pk } => {
+                let store = self.connect(&target).await?;
+                let doc = store.read_item(&id, &pk.value()?).await?;
+                self.print_json(&doc)
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn print_json(&mut self, doc: &Value) -> anyhow::Result<()> {
+        writeln!(self.out, "{}", serde_json::to_string_pretty(doc)?)?;
         Ok(())
     }
 
@@ -289,5 +308,36 @@ mod tests {
 
         let expected = "[\n  {\n    \"id\": \"c-1\",\n    \"tenantId\": \"contoso\"\n  }\n]\n";
         assert_eq!(output(&app), expected);
+    }
+
+    fn contoso_pk() -> PartitionKeyArg {
+        PartitionKeyArg {
+            pk: Some("contoso".into()),
+            pk_json: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn items_get_prints_the_document() {
+        let mut app = orders_app(vec![
+            json!({ "id": "c-1", "tenantId": "fabrikam" }),
+            json!({ "id": "c-1", "tenantId": "contoso", "total": 5 }),
+        ]);
+
+        app.run(Command::Items {
+            command: ItemsCommand::Get {
+                target: orders(),
+                id: "c-1".into(),
+                pk: contoso_pk(),
+            },
+        })
+        .await
+        .unwrap();
+
+        let printed: serde_json::Value = serde_json::from_str(&output(&app)).unwrap();
+        assert_eq!(
+            printed,
+            json!({ "id": "c-1", "tenantId": "contoso", "total": 5 })
+        );
     }
 }
