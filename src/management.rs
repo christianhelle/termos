@@ -127,10 +127,10 @@ pub fn parse_container(json: &str) -> anyhow::Result<Container> {
 
 /// Finds an account by name. Account names are globally unique in Azure.
 pub fn resolve_account<'a>(accounts: &'a [Account], name: &str) -> anyhow::Result<&'a Account> {
-    let account = accounts
+    accounts
         .iter()
-        .find(|account| account.name.eq_ignore_ascii_case(name));
-    Ok(account.unwrap())
+        .find(|account| account.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| anyhow::anyhow!("Cosmos DB account '{name}' not found"))
 }
 
 fn parse_page<A: DeserializeOwned, T>(
@@ -287,5 +287,14 @@ mod tests {
         let found = resolve_account(&accounts, "Inventory").unwrap();
 
         assert_eq!(found.name, "inventory");
+    }
+
+    #[test]
+    fn unknown_account_is_an_error() {
+        let accounts = vec![account("orders")];
+
+        let error = resolve_account(&accounts, "billing").unwrap_err();
+
+        assert_eq!(error.to_string(), "Cosmos DB account 'billing' not found");
     }
 }
