@@ -58,6 +58,15 @@ pub fn parse_subscriptions(json: &str) -> anyhow::Result<Page<String>> {
     parse_page(json, |arm: ArmSubscription| arm.subscription_id)
 }
 
+#[derive(Deserialize)]
+struct ArmNamed {
+    name: String,
+}
+
+pub fn parse_databases(json: &str) -> anyhow::Result<Page<String>> {
+    parse_page(json, |arm: ArmNamed| arm.name)
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -133,5 +142,17 @@ mod tests {
         let page = parse_subscriptions(json).unwrap();
 
         assert_eq!(page.items, vec!["sub-1".to_string(), "sub-2".to_string()]);
+    }
+
+    #[test]
+    fn parses_database_names() {
+        let json = r#"{ "value": [
+            { "name": "shop", "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+              "properties": { "resource": { "id": "shop" } } }
+        ] }"#;
+
+        let page = parse_databases(json).unwrap();
+
+        assert_eq!(page.items, vec!["shop".to_string()]);
     }
 }
