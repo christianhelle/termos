@@ -80,6 +80,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             let account = accounts.swap_remove(index);
             writeln!(self.app.out, "Using account {}", account.name)?;
             self.account = Some(account);
+            self.store = None;
         }
         Ok(Flow::Continue)
     }
@@ -350,6 +351,22 @@ mod tests {
             vec!["SELECT * FROM c", "SELECT * FROM c WHERE c.userId = 'u-1'"]
         );
         assert_eq!(repl.app.data.connections.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn switching_accounts_forgets_the_current_container() {
+        let lines =
+            ScriptedLines::new(&["/accounts", "/containers", "/accounts", "SELECT * FROM c"]);
+        let picker = ScriptedPicker::answering(&[Some(0), Some(0), Some(1)]);
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert!(output(&repl).ends_with(
+            "Using account inventory\n\
+             error: select an account with /accounts and a container with /containers first\n"
+        ));
+        assert!(repl.app.data.container.borrow().queries.is_empty());
     }
 
     #[tokio::test]
