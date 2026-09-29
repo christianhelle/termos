@@ -1,6 +1,7 @@
 //! Interactive prompt session for running many commands and queries.
 
 use std::io::Write;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::app::App;
@@ -44,7 +45,7 @@ pub struct Repl<M, D: DataPlane, W> {
     /// The account commands and queries run against.
     account: Option<Account>,
     /// The container of the current account that queries run against.
-    current: Option<Current<D::Store>>,
+    current: Option<Current<Rc<D::Store>>>,
     /// How typed queries render their documents.
     output: OutputFormat,
 }
@@ -370,6 +371,7 @@ mod tests {
             out: Vec::new(),
             global: GlobalArgs::default(),
             known_accounts: Default::default(),
+            connections: Default::default(),
         };
         let mut management = shop();
         management.accounts.push(account("inventory"));

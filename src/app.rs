@@ -1,6 +1,8 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::rc::Rc;
 
 use anyhow::Context;
 use serde_json::Value;
@@ -15,8 +17,11 @@ use crate::partition::value_at_path;
 use crate::prompt::Confirm;
 use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
 
+/// Identifies a container across accounts: account, database and container names.
+type ContainerKey = (String, String, String);
+
 /// Runs CLI commands against the control and data planes.
-pub struct App<M, D, W> {
+pub struct App<M, D: DataPlane, W> {
     pub management: M,
     pub data: D,
     /// Where documents are read from when no file is given.
@@ -26,6 +31,8 @@ pub struct App<M, D, W> {
     pub global: GlobalArgs,
     /// Accounts found so far, so each name is only looked up once.
     pub known_accounts: RefCell<Vec<Account>>,
+    /// Open container connections, so each container is only connected to once.
+    pub connections: RefCell<HashMap<ContainerKey, Rc<D::Store>>>,
 }
 
 impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
@@ -106,14 +113,34 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         Ok(account)
     }
 
-    async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
+    async fn connect(&self, target: &ContainerRef) -> anyhow::Result<Rc<D::Store>> {
         let account = self.resolve(&target.account).await?;
         self.connect_to(&account, &target.database, &target.container)
             .await
     }
 
-    /// Connects to a container of an already resolved account, honouring the auth mode.
+    /// Connects to a container of an already resolved account, reusing an earlier connection.
     pub(crate) async fn connect_to(
+        &self,
+        account: &Account,
+        database: &str,
+        container: &str,
+    ) -> anyhow::Result<Rc<D::Store>> {
+        let key = (
+            account.name.clone(),
+            database.to_string(),
+            container.to_string(),
+        );
+        if let Some(store) = self.connections.borrow().get(&key) {
+            return Ok(store.clone());
+        }
+        let store = Rc::new(self.open(account, database, container).await?);
+        self.connections.borrow_mut().insert(key, store.clone());
+        Ok(store)
+    }
+
+    /// Opens a new connection to a container, honouring the auth mode.
+    async fn open(
         &self,
         account: &Account,
         database: &str,
@@ -370,6 +397,7 @@ mod tests {
             out: Vec::new(),
             global: GlobalArgs::default(),
             known_accounts: RefCell::default(),
+            connections: RefCell::default(),
         }
     }
 
@@ -911,6 +939,24 @@ mod tests {
         app.run(query_orders()).await.unwrap();
 
         assert_eq!(app.management.lookups.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn commands_on_the_same_container_share_one_connection() {
+        let mut app = orders_app(vec![json!({ "id": "c-1", "tenantId": "contoso" })]);
+
+        app.run(query_orders()).await.unwrap();
+        app.run(Command::Items {
+            command: ItemsCommand::Get {
+                target: orders(),
+                id: "c-1".into(),
+                pk: contoso_pk(),
+            },
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(app.data.connections.borrow().len(), 1);
     }
 
     #[tokio::test]
