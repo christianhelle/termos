@@ -81,6 +81,19 @@ impl Management for FakeManagement {
             .unwrap_or_default())
     }
 
+    async fn get_container(
+        &self,
+        account: &Account,
+        database: &str,
+        name: &str,
+    ) -> anyhow::Result<Container> {
+        self.list_containers(account, database)
+            .await?
+            .into_iter()
+            .find(|c| c.name == name)
+            .ok_or_else(|| anyhow::anyhow!("container '{database}/{name}' not found"))
+    }
+
     async fn create_container(
         &self,
         _account: &Account,

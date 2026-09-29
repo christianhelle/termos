@@ -38,6 +38,13 @@ pub trait Management {
         database: &str,
     ) -> anyhow::Result<Vec<Container>>;
 
+    async fn get_container(
+        &self,
+        account: &Account,
+        database: &str,
+        container: &str,
+    ) -> anyhow::Result<Container>;
+
     async fn create_container(
         &self,
         account: &Account,

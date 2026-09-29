@@ -73,7 +73,23 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             Command::Containers {
                 command: ContainersCommand::Delete { target, yes },
             } => self.delete_container(&target, yes).await,
-            _ => todo!(),
+            Command::Containers {
+                command: ContainersCommand::Show { target },
+            } => {
+                let account = self.resolve(&target.account).await?;
+                let container = self
+                    .management
+                    .get_container(&account, &target.database, &target.container)
+                    .await?;
+                writeln!(self.out, "database:      {}", target.database)?;
+                writeln!(self.out, "container:     {}", container.name)?;
+                writeln!(
+                    self.out,
+                    "partition key: {}",
+                    container.partition_key_paths.join(", ")
+                )?;
+                Ok(())
+            }
         }
     }
 
@@ -745,5 +761,26 @@ mod tests {
 
         assert!(app.management.databases.borrow()[0].1.is_empty());
         assert_eq!(output(&app), "Deleted container shop/carts\n");
+    }
+
+    #[tokio::test]
+    async fn containers_show_prints_name_and_partition_key() {
+        let mut app = app(shop());
+
+        app.run(Command::Containers {
+            command: ContainersCommand::Show {
+                target: ContainerRef {
+                    container: "carts".into(),
+                    ..carts()
+                },
+            },
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            output(&app),
+            "database:      shop\ncontainer:     carts\npartition key: /userId\n"
+        );
     }
 }
