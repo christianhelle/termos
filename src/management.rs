@@ -24,6 +24,13 @@ pub struct Page<T> {
     pub next_link: Option<String>,
 }
 
+/// Control plane operations backed by Azure Resource Manager.
+#[allow(async_fn_in_trait)]
+pub trait Management {
+    /// Lists accounts in one subscription, or in every accessible subscription.
+    async fn list_accounts(&self, subscription: Option<&str>) -> anyhow::Result<Vec<Account>>;
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListResponse<T> {

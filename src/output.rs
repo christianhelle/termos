@@ -16,6 +16,14 @@ pub fn render_table(docs: &[Value], pk_path: &str) -> String {
     table.to_string()
 }
 
+/// Renders arbitrary rows as a table with the given headers.
+pub fn render_rows<const N: usize>(headers: [&str; N], rows: Vec<[String; N]>) -> String {
+    let mut table = Table::new();
+    table.load_style(ASCII_FULL).set_header(headers);
+    table.add_rows(rows);
+    table.to_string()
+}
+
 /// Renders documents as a pretty-printed JSON array.
 pub fn render_json(docs: &[Value]) -> String {
     serde_json::to_string_pretty(docs).expect("JSON values always serialize")
