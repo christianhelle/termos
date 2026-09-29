@@ -143,7 +143,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             target.database,
             target.container
         );
-        if !self.confirm.confirm(&question)? {
+        if !yes && !self.confirm.confirm(&question)? {
             writeln!(self.out, "Aborted, nothing was deleted")?;
             return Ok(());
         }
@@ -595,5 +595,17 @@ mod tests {
             vec![json!({ "id": "f-1", "tenantId": "fabrikam" })]
         );
         assert_eq!(output(&app), "Deleted 2 documents\n");
+    }
+
+    #[tokio::test]
+    async fn delete_partition_with_yes_skips_the_prompt() {
+        let mut app = orders_app(contoso_partition());
+        let confirm = ScriptedConfirm::answering(false);
+        app.confirm = Box::new(confirm.clone());
+
+        app.run(delete_contoso(true)).await.unwrap();
+
+        assert!(confirm.asked.borrow().is_empty());
+        assert_eq!(app.data.container.borrow().docs.len(), 1);
     }
 }
