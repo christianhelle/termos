@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::management::{Account, Container, Management};
 use crate::partition::value_at_path;
 use crate::prompt::Confirm;
-use crate::store::{Credential, DataPlane, DataStore};
+use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
 
 pub fn account(name: &str) -> Account {
     Account {
@@ -124,6 +124,10 @@ impl Management for FakeManagement {
         }
         Ok(())
     }
+
+    async fn primary_key(&self, _account: &Account) -> anyhow::Result<String> {
+        Ok("primary==".into())
+    }
 }
 
 /// Shared state behind a fake container.
@@ -135,6 +139,8 @@ pub struct FakeContainer {
 
 pub struct FakeDataPlane {
     pub pk_path: String,
+    /// When false, Entra ID connections are rejected as unauthorized.
+    pub entra_allowed: bool,
     pub container: Rc<RefCell<FakeContainer>>,
     pub connections: RefCell<Vec<Credential>>,
 }
@@ -143,6 +149,7 @@ impl FakeDataPlane {
     pub fn new(pk_path: &str, docs: Vec<Value>) -> Self {
         FakeDataPlane {
             pk_path: pk_path.into(),
+            entra_allowed: true,
             container: Rc::new(RefCell::new(FakeContainer {
                 docs,
                 ..Default::default()
@@ -162,7 +169,10 @@ impl DataPlane for FakeDataPlane {
         _container: &str,
         credential: Credential,
     ) -> anyhow::Result<FakeStore> {
-        self.connections.borrow_mut().push(credential);
+        self.connections.borrow_mut().push(credential.clone());
+        if credential == Credential::Entra && !self.entra_allowed {
+            return Err(Unauthorized("Entra ID principal lacks a data plane role".into()).into());
+        }
         Ok(FakeStore {
             pk_path: self.pk_path.clone(),
             container: self.container.clone(),

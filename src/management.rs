@@ -60,6 +60,8 @@ pub trait Management {
         database: &str,
         container: &str,
     ) -> anyhow::Result<()>;
+
+    async fn primary_key(&self, account: &Account) -> anyhow::Result<String>;
 }
 
 #[derive(Deserialize)]

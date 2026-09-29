@@ -13,7 +13,7 @@ use crate::management::{Account, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
 use crate::partition::value_at_path;
 use crate::prompt::Confirm;
-use crate::store::{Credential, DataPlane, DataStore};
+use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
 
 /// Runs CLI commands against the control and data planes.
 pub struct App<M, D, W> {
@@ -102,14 +102,20 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
 
     async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
         let account = self.resolve(&target.account).await?;
-        self.data
-            .connect(
-                &account,
-                &target.database,
-                &target.container,
-                Credential::Entra,
-            )
-            .await
+        let (database, container) = (&target.database, &target.container);
+        let entra = self
+            .data
+            .connect(&account, database, container, Credential::Entra)
+            .await;
+        match entra {
+            Err(error) if error.is::<Unauthorized>() => {
+                let key = self.management.primary_key(&account).await?;
+                self.data
+                    .connect(&account, database, container, Credential::Key(key))
+                    .await
+            }
+            result => result,
+        }
     }
 
     async fn query(
@@ -780,6 +786,33 @@ mod tests {
         assert_eq!(
             output(&app),
             "database:      shop\ncontainer:     carts\npartition key: /userId\n"
+        );
+    }
+
+    fn query_orders() -> Command {
+        Command::Query {
+            target: orders(),
+            sql: "SELECT * FROM c".into(),
+            output: OutputFormat::Json,
+            max: None,
+        }
+    }
+
+    fn entra_forbidden_app() -> TestApp {
+        let mut data = FakeDataPlane::new("/tenantId", vec![]);
+        data.entra_allowed = false;
+        app_with_data(shop(), data)
+    }
+
+    #[tokio::test]
+    async fn auto_auth_falls_back_to_the_account_key_when_entra_is_forbidden() {
+        let mut app = entra_forbidden_app();
+
+        app.run(query_orders()).await.unwrap();
+
+        assert_eq!(
+            *app.data.connections.borrow(),
+            vec![Credential::Entra, Credential::Key("primary==".into())]
         );
     }
 }

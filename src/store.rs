@@ -9,6 +9,11 @@ pub enum Credential {
     Key(String),
 }
 
+/// Returned by a data plane when the credential is not allowed to access the container.
+#[derive(Debug, thiserror::Error)]
+#[error("not authorized: {0}")]
+pub struct Unauthorized(pub String);
+
 /// Opens connections to containers on the Cosmos DB data plane.
 #[allow(async_fn_in_trait)]
 pub trait DataPlane {
