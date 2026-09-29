@@ -99,23 +99,33 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
 
     async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
         let account = self.resolve(&target.account).await?;
-        let (database, container) = (&target.database, &target.container);
+        self.connect_to(&account, &target.database, &target.container)
+            .await
+    }
+
+    /// Connects to a container of an already resolved account, honouring the auth mode.
+    pub(crate) async fn connect_to(
+        &self,
+        account: &Account,
+        database: &str,
+        container: &str,
+    ) -> anyhow::Result<D::Store> {
         let credential = match (&self.global.key, self.global.auth) {
             (Some(key), _) => Credential::Key(key.clone()),
-            (None, AuthMode::Key) => Credential::Key(self.management.primary_key(&account).await?),
+            (None, AuthMode::Key) => Credential::Key(self.management.primary_key(account).await?),
             (None, AuthMode::Entra | AuthMode::Auto) => Credential::Entra,
         };
         let tried_entra_first =
             self.global.auth == AuthMode::Auto && credential == Credential::Entra;
         let result = self
             .data
-            .connect(&account, database, container, credential)
+            .connect(account, database, container, credential)
             .await;
         match result {
             Err(error) if tried_entra_first && error.is::<Unauthorized>() => {
-                let key = self.management.primary_key(&account).await?;
+                let key = self.management.primary_key(account).await?;
                 self.data
-                    .connect(&account, database, container, Credential::Key(key))
+                    .connect(account, database, container, Credential::Key(key))
                     .await
             }
             result => result,
