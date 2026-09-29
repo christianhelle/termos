@@ -4,8 +4,9 @@ use std::io::Write;
 use std::time::Duration;
 
 use crate::app::App;
+use crate::cli::OutputFormat;
 use crate::management::{Account, Management};
-use crate::output::render_table;
+use crate::output::{render_json, render_table};
 use crate::prompt::{LineReader, Picker};
 use crate::store::{DataPlane, DataStore};
 
@@ -18,6 +19,8 @@ pub struct Repl<M, D: DataPlane, W> {
     account: Option<Account>,
     /// The open connection to the container of the current account that queries run against.
     store: Option<D::Store>,
+    /// How typed queries render their documents.
+    output: OutputFormat,
 }
 
 impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
@@ -28,6 +31,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             picker,
             account: None,
             store: None,
+            output: OutputFormat::Table,
         }
     }
 
@@ -49,6 +53,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 Some("exit" | "quit") => Ok(Flow::Exit),
                 Some("accounts") if is_listing(&words) => self.pick_account().await,
                 Some("containers") if is_listing(&words) => self.pick_container().await,
+                Some("output") => self.set_output(&words[1..]),
                 _ => Ok(Flow::Continue),
             },
             Input::Query(sql) => self.query(&sql).await,
@@ -63,8 +68,21 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             );
         };
         let docs = store.query(sql, None).await?;
-        let rendered = render_table(&docs, store.partition_key_path());
+        let rendered = match self.output {
+            OutputFormat::Table => render_table(&docs, store.partition_key_path()),
+            OutputFormat::Json => render_json(&docs),
+        };
         writeln!(self.app.out, "{rendered}")?;
+        Ok(Flow::Continue)
+    }
+
+    fn set_output(&mut self, args: &[String]) -> anyhow::Result<Flow> {
+        self.output = match args {
+            [format] if format == "json" => OutputFormat::Json,
+            [format] if format == "table" => OutputFormat::Table,
+            _ => anyhow::bail!("expected /output json or /output table"),
+        };
+        writeln!(self.app.out, "Query output is now {}", args[0])?;
         Ok(Flow::Continue)
     }
 
@@ -385,6 +403,69 @@ mod tests {
 
         assert_eq!(picker.shown.borrow().len(), 1);
         assert!(output(&repl).ends_with("error: no containers found on account orders\n"));
+    }
+
+    const SELECTED: &str = "Using account orders\nUsing container shop/carts\n";
+
+    /// A session that picks the orders account and shop/carts container before the given lines.
+    fn selected(lines: &[&str], docs: Vec<serde_json::Value>) -> TestRepl {
+        let lines: Vec<&str> = ["/accounts", "/containers"]
+            .into_iter()
+            .chain(lines.iter().copied())
+            .collect();
+        let picker = ScriptedPicker::answering(&[Some(0), Some(0)]);
+        let mut repl = repl_picking(&ScriptedLines::new(&lines), &picker);
+        repl.app.data = FakeDataPlane::new("/userId", docs);
+        repl
+    }
+
+    fn output_after_selection(repl: &TestRepl) -> String {
+        output(repl).strip_prefix(SELECTED).unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn output_switches_queries_to_json_and_back() {
+        let mut repl = selected(
+            &[
+                "/output json",
+                "SELECT * FROM c",
+                "/output table",
+                "SELECT * FROM c",
+            ],
+            vec![json!({ "id": "c-1", "userId": "u-1" })],
+        );
+
+        repl.run().await.unwrap();
+
+        let expected = "\
+Query output is now json
+[
+  {
+    \"id\": \"c-1\",
+    \"userId\": \"u-1\"
+  }
+]
+Query output is now table
++-----+---------+
+| id  | /userId |
++===============+
+| c-1 | u-1     |
++-----+---------+
+";
+        assert_eq!(output_after_selection(&repl), expected);
+    }
+
+    #[tokio::test]
+    async fn output_rejects_unknown_formats() {
+        let mut repl = selected(&["/output yaml", "/output"], vec![]);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(
+            output_after_selection(&repl),
+            "error: expected /output json or /output table\n\
+             error: expected /output json or /output table\n"
+        );
     }
 
     #[tokio::test]
