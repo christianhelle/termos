@@ -1,17 +1,22 @@
 use std::io::Write;
 
-use crate::cli::{AccountsCommand, Command, ContainersCommand, DatabasesCommand, GlobalArgs};
+use crate::cli::{
+    AccountsCommand, Command, ContainerRef, ContainersCommand, DatabasesCommand, GlobalArgs,
+    OutputFormat,
+};
 use crate::management::{Account, Management, resolve_account};
-use crate::output::render_rows;
+use crate::output::{render_rows, render_table};
+use crate::store::{Credential, DataPlane, DataStore};
 
 /// Runs CLI commands against the control and data planes.
-pub struct App<M, W> {
+pub struct App<M, D, W> {
     pub management: M,
+    pub data: D,
     pub out: W,
     pub global: GlobalArgs,
 }
 
-impl<M: Management, W: Write> App<M, W> {
+impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     pub async fn run(&mut self, command: Command) -> anyhow::Result<()> {
         match command {
             Command::Accounts {
@@ -23,6 +28,12 @@ impl<M: Management, W: Write> App<M, W> {
             Command::Containers {
                 command: ContainersCommand::List { account, database },
             } => self.list_containers(&account, database).await,
+            Command::Query {
+                target,
+                sql,
+                output,
+                max,
+            } => self.query(&target, &sql, output, max).await,
             _ => todo!(),
         }
     }
@@ -33,6 +44,35 @@ impl<M: Management, W: Write> App<M, W> {
             .list_accounts(self.global.subscription.as_deref())
             .await?;
         resolve_account(&accounts, name).cloned()
+    }
+
+    async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
+        let account = self.resolve(&target.account).await?;
+        self.data
+            .connect(
+                &account,
+                &target.database,
+                &target.container,
+                Credential::Entra,
+            )
+            .await
+    }
+
+    async fn query(
+        &mut self,
+        target: &ContainerRef,
+        sql: &str,
+        output: OutputFormat,
+        max: Option<usize>,
+    ) -> anyhow::Result<()> {
+        let store = self.connect(target).await?;
+        let docs = store.query(sql, max).await?;
+        let rendered = match output {
+            OutputFormat::Table => render_table(&docs, store.partition_key_path()),
+            OutputFormat::Json => todo!(),
+        };
+        writeln!(self.out, "{rendered}")?;
+        Ok(())
     }
 
     async fn list_databases(&mut self, account: &str) -> anyhow::Result<()> {
@@ -83,17 +123,25 @@ impl<M: Management, W: Write> App<M, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{FakeManagement, account, container};
+    use crate::testing::{FakeDataPlane, FakeManagement, account, container};
+    use serde_json::json;
 
-    fn app(management: FakeManagement) -> App<FakeManagement, Vec<u8>> {
+    type TestApp = App<FakeManagement, FakeDataPlane, Vec<u8>>;
+
+    fn app(management: FakeManagement) -> TestApp {
+        app_with_data(management, FakeDataPlane::new("/tenantId", vec![]))
+    }
+
+    fn app_with_data(management: FakeManagement, data: FakeDataPlane) -> TestApp {
         App {
             management,
+            data,
             out: Vec::new(),
             global: GlobalArgs::default(),
         }
     }
 
-    fn output(app: &App<FakeManagement, Vec<u8>>) -> String {
+    fn output(app: &TestApp) -> String {
         String::from_utf8(app.out.clone()).unwrap()
     }
 
@@ -185,5 +233,41 @@ mod tests {
         let out = output(&app);
         assert!(out.contains("events"), "{out}");
         assert!(!out.contains("carts"), "{out}");
+    }
+
+    fn orders() -> ContainerRef {
+        ContainerRef {
+            account: "orders".into(),
+            database: "shop".into(),
+            container: "carts".into(),
+        }
+    }
+
+    fn orders_app(docs: Vec<serde_json::Value>) -> TestApp {
+        app_with_data(shop(), FakeDataPlane::new("/tenantId", docs))
+    }
+
+    #[tokio::test]
+    async fn query_renders_id_and_partition_key_table() {
+        let mut app = orders_app(vec![json!({ "id": "c-1", "tenantId": "contoso" })]);
+
+        app.run(Command::Query {
+            target: orders(),
+            sql: "SELECT * FROM c".into(),
+            output: OutputFormat::Table,
+            max: None,
+        })
+        .await
+        .unwrap();
+
+        let expected = "\
++-----+-----------+
+| id  | /tenantId |
++=================+
+| c-1 | contoso   |
++-----+-----------+
+";
+        assert_eq!(output(&app), expected);
+        assert_eq!(app.data.container.borrow().queries, vec!["SELECT * FROM c"]);
     }
 }

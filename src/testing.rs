@@ -1,8 +1,12 @@
 //! In-memory fakes for testing command handlers.
 
 use std::cell::RefCell;
+use std::rc::Rc;
+
+use serde_json::Value;
 
 use crate::management::{Account, Container, Management};
+use crate::store::{Credential, DataPlane, DataStore};
 
 pub fn account(name: &str) -> Account {
     Account {
@@ -73,5 +77,68 @@ impl Management for FakeManagement {
             .find(|(name, _)| name == database)
             .map(|(_, containers)| containers.clone())
             .unwrap_or_default())
+    }
+}
+
+/// Shared state behind a fake container.
+#[derive(Default)]
+pub struct FakeContainer {
+    pub docs: Vec<Value>,
+    pub queries: Vec<String>,
+}
+
+pub struct FakeDataPlane {
+    pub pk_path: String,
+    pub container: Rc<RefCell<FakeContainer>>,
+    pub connections: RefCell<Vec<Credential>>,
+}
+
+impl FakeDataPlane {
+    pub fn new(pk_path: &str, docs: Vec<Value>) -> Self {
+        FakeDataPlane {
+            pk_path: pk_path.into(),
+            container: Rc::new(RefCell::new(FakeContainer {
+                docs,
+                ..Default::default()
+            })),
+            connections: RefCell::default(),
+        }
+    }
+}
+
+impl DataPlane for FakeDataPlane {
+    type Store = FakeStore;
+
+    async fn connect(
+        &self,
+        _account: &Account,
+        _database: &str,
+        _container: &str,
+        credential: Credential,
+    ) -> anyhow::Result<FakeStore> {
+        self.connections.borrow_mut().push(credential);
+        Ok(FakeStore {
+            pk_path: self.pk_path.clone(),
+            container: self.container.clone(),
+        })
+    }
+}
+
+pub struct FakeStore {
+    pk_path: String,
+    container: Rc<RefCell<FakeContainer>>,
+}
+
+impl DataStore for FakeStore {
+    fn partition_key_path(&self) -> &str {
+        &self.pk_path
+    }
+
+    /// Records the SQL and returns every document, since the fake cannot run SQL.
+    async fn query(&self, sql: &str, max: Option<usize>) -> anyhow::Result<Vec<Value>> {
+        let mut container = self.container.borrow_mut();
+        container.queries.push(sql.to_string());
+        let limit = max.unwrap_or(usize::MAX);
+        Ok(container.docs.iter().take(limit).cloned().collect())
     }
 }
