@@ -8,6 +8,7 @@ use azure_core::credentials::TokenCredential;
 use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
+use crate::credential::MANAGEMENT_SCOPE;
 use crate::management::{
     Account, Container, Management, Page, account_query, parse_accounts, parse_container,
     parse_containers, parse_databases, parse_primary_key, parse_resource_graph_accounts,
@@ -15,7 +16,6 @@ use crate::management::{
 };
 
 const ENDPOINT: &str = "https://management.azure.com";
-const SCOPE: &str = "https://management.azure.com/.default";
 const COSMOS_API_VERSION: &str = "2024-11-15";
 const SUBSCRIPTIONS_API_VERSION: &str = "2022-12-01";
 const RESOURCE_GRAPH_API_VERSION: &str = "2022-10-01";
@@ -43,7 +43,7 @@ impl Arm {
     ) -> anyhow::Result<Response> {
         let token = self
             .credential
-            .get_token(&[SCOPE], None)
+            .get_token(&[MANAGEMENT_SCOPE], None)
             .await
             .context("getting an Azure Resource Manager token, try `az login`")?;
         let mut attempt = 1;
