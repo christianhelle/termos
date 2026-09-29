@@ -1,5 +1,6 @@
 pub mod app;
 pub mod cli;
+pub mod interactive;
 pub mod management;
 pub mod output;
 pub mod partition;
