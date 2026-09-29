@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 
 /// A Cosmos DB account as returned by Azure Resource Manager.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,20 +39,22 @@ struct ArmAccountProperties {
 }
 
 pub fn parse_accounts(json: &str) -> anyhow::Result<Page<Account>> {
-    let response: ListResponse<ArmAccount> = serde_json::from_str(json)?;
-    let items = response
-        .value
-        .into_iter()
-        .map(|arm| Account {
-            subscription_id: id_segment(&arm.id, "subscriptions"),
-            resource_group: id_segment(&arm.id, "resourceGroups"),
-            name: arm.name,
-            location: arm.location,
-            endpoint: arm.properties.document_endpoint,
-        })
-        .collect();
+    parse_page(json, |arm: ArmAccount| Account {
+        subscription_id: id_segment(&arm.id, "subscriptions"),
+        resource_group: id_segment(&arm.id, "resourceGroups"),
+        name: arm.name,
+        location: arm.location,
+        endpoint: arm.properties.document_endpoint,
+    })
+}
+
+fn parse_page<A: DeserializeOwned, T>(
+    json: &str,
+    map: impl FnMut(A) -> T,
+) -> anyhow::Result<Page<T>> {
+    let response: ListResponse<A> = serde_json::from_str(json)?;
     Ok(Page {
-        items,
+        items: response.value.into_iter().map(map).collect(),
         next_link: response.next_link,
     })
 }
