@@ -106,7 +106,7 @@ impl From<ArmContainer> for Container {
 }
 
 pub fn parse_containers(json: &str) -> anyhow::Result<Page<Container>> {
-    parse_page(json, Container::from)
+    parse_page(json, |arm: ArmContainer| Container::from(arm))
 }
 
 fn parse_page<A: DeserializeOwned, T>(
