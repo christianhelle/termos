@@ -4,19 +4,27 @@ use std::io::Write;
 use std::time::Duration;
 
 use crate::app::App;
-use crate::management::Management;
-use crate::prompt::LineReader;
+use crate::management::{Account, Management};
+use crate::prompt::{LineReader, Picker};
 use crate::store::DataPlane;
 
 /// Reads commands and queries from a prompt until the user leaves.
 pub struct Repl<M, D, W> {
     app: App<M, D, W>,
     lines: Box<dyn LineReader>,
+    picker: Box<dyn Picker>,
+    /// The account commands and queries run against.
+    account: Option<Account>,
 }
 
 impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
-    pub fn new(app: App<M, D, W>, lines: Box<dyn LineReader>) -> Self {
-        Repl { app, lines }
+    pub fn new(app: App<M, D, W>, lines: Box<dyn LineReader>, picker: Box<dyn Picker>) -> Self {
+        Repl {
+            app,
+            lines,
+            picker,
+            account: None,
+        }
     }
 
     /// Runs until `/exit`, `/quit` or the end of input. Failed lines are reported and skipped.
@@ -35,6 +43,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
         match parse_input(line)? {
             Input::Slash(words) => match words.first().map(String::as_str) {
                 Some("exit" | "quit") => Ok(Flow::Exit),
+                Some("accounts") if is_listing(&words) => self.pick_account().await,
                 _ => Ok(Flow::Continue),
             },
             Input::Query(_) => {
@@ -44,6 +53,30 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             }
             Input::Empty => Ok(Flow::Continue),
         }
+    }
+
+    async fn pick_account(&mut self) -> anyhow::Result<Flow> {
+        let subscription = self.app.global.subscription.as_deref();
+        let mut accounts = self.app.management.list_accounts(subscription).await?;
+        let labels: Vec<String> = accounts
+            .iter()
+            .map(|a| format!("{} ({}, {})", a.name, a.resource_group, a.location))
+            .collect();
+        if let Some(index) = self.picker.pick("Select an account", &labels)? {
+            let account = accounts.swap_remove(index);
+            writeln!(self.app.out, "Using account {}", account.name)?;
+            self.account = Some(account);
+        }
+        Ok(Flow::Continue)
+    }
+}
+
+/// Whether slash command words ask for a picker, such as `/accounts` or `/accounts list`.
+fn is_listing(words: &[String]) -> bool {
+    match &words[1..] {
+        [] => true,
+        [word] => word == "list",
+        _ => false,
     }
 }
 
@@ -92,7 +125,8 @@ mod tests {
     use super::*;
     use crate::cli::GlobalArgs;
     use crate::testing::{
-        FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, account, container,
+        FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker, account,
+        container,
     };
 
     type TestRepl = Repl<FakeManagement, FakeDataPlane, Vec<u8>>;
@@ -108,6 +142,10 @@ mod tests {
     }
 
     fn repl(lines: &ScriptedLines) -> TestRepl {
+        repl_picking(lines, &ScriptedPicker::default())
+    }
+
+    fn repl_picking(lines: &ScriptedLines, picker: &ScriptedPicker) -> TestRepl {
         let app = App {
             management: shop(),
             data: FakeDataPlane::new("/userId", vec![]),
@@ -116,7 +154,10 @@ mod tests {
             out: Vec::new(),
             global: GlobalArgs::default(),
         };
-        Repl::new(app, Box::new(lines.clone()))
+        let mut management = shop();
+        management.accounts.push(account("inventory"));
+        let app = App { management, ..app };
+        Repl::new(app, Box::new(lines.clone()), Box::new(picker.clone()))
     }
 
     #[tokio::test]
@@ -152,6 +193,27 @@ mod tests {
             output(&repl),
             "error: select an account with /accounts and a container with /containers first\n"
         );
+    }
+
+    #[tokio::test]
+    async fn accounts_picks_the_current_account_from_a_list() {
+        for command in ["/accounts", "/accounts list"] {
+            let lines = ScriptedLines::new(&[command]);
+            let picker = ScriptedPicker::answering(&[Some(1)]);
+            let mut repl = repl_picking(&lines, &picker);
+
+            repl.run().await.unwrap();
+
+            assert_eq!(
+                *picker.shown.borrow(),
+                vec![vec![
+                    "orders (rg-data, West Europe)".to_string(),
+                    "inventory (rg-data, West Europe)".to_string(),
+                ]]
+            );
+            assert_eq!(output(&repl), "Using account inventory\n", "{command}");
+            assert_eq!(repl.account, Some(account("inventory")));
+        }
     }
 
     #[tokio::test]

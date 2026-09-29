@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::management::{Account, Container, Management};
 use crate::partition::value_at_path;
-use crate::prompt::{Confirm, LineReader};
+use crate::prompt::{Confirm, LineReader, Picker};
 use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
 
 pub fn account(name: &str) -> Account {
@@ -295,5 +295,28 @@ impl ScriptedLines {
 impl LineReader for ScriptedLines {
     fn read_line(&mut self, _prompt: &str) -> anyhow::Result<Option<String>> {
         Ok(self.lines.borrow_mut().pop_front())
+    }
+}
+
+/// Gives scripted answers to pickers and records the items each one showed.
+#[derive(Clone, Default)]
+pub struct ScriptedPicker {
+    pub answers: Rc<RefCell<VecDeque<Option<usize>>>>,
+    pub shown: Rc<RefCell<Vec<Vec<String>>>>,
+}
+
+impl ScriptedPicker {
+    pub fn answering(answers: &[Option<usize>]) -> Self {
+        ScriptedPicker {
+            answers: Rc::new(RefCell::new(answers.iter().copied().collect())),
+            ..Default::default()
+        }
+    }
+}
+
+impl Picker for ScriptedPicker {
+    fn pick(&mut self, _prompt: &str, items: &[String]) -> anyhow::Result<Option<usize>> {
+        self.shown.borrow_mut().push(items.to_vec());
+        Ok(self.answers.borrow_mut().pop_front().flatten())
     }
 }

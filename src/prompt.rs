@@ -11,6 +11,12 @@ pub trait LineReader {
     fn read_line(&mut self, prompt: &str) -> anyhow::Result<Option<String>>;
 }
 
+/// Lets the user choose one item from a list.
+pub trait Picker {
+    /// Returns the index of the chosen item, or `None` when the user cancels.
+    fn pick(&mut self, prompt: &str, items: &[String]) -> anyhow::Result<Option<usize>>;
+}
+
 /// Whether a typed answer means yes. Anything else, including an empty line, means no.
 fn is_yes(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
