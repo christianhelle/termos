@@ -152,14 +152,15 @@ impl Management for Arm {
                 self.list_all(url, parse_subscriptions).await?
             }
         };
-        let mut accounts = Vec::new();
-        for subscription in subscriptions {
+        let listings = subscriptions.iter().map(|subscription| {
             let url = format!(
                 "{ENDPOINT}/subscriptions/{subscription}/providers/Microsoft.DocumentDB/databaseAccounts?api-version={COSMOS_API_VERSION}"
             );
-            accounts.extend(self.list_all(url, parse_accounts).await?);
-        }
-        Ok(accounts)
+            self.list_all(url, parse_accounts)
+        });
+        // Every subscription is listed at once, and results keep the subscription order
+        let accounts = futures::future::try_join_all(listings).await?;
+        Ok(accounts.into_iter().flatten().collect())
     }
 
     /// Uses one Resource Graph query instead of listing accounts in every subscription.
