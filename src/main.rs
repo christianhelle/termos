@@ -89,5 +89,6 @@ fn app<W: Write>(
         global,
         known_accounts: Default::default(),
         connections: Default::default(),
+        account_keys: Default::default(),
     }
 }

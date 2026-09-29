@@ -33,6 +33,8 @@ pub struct App<M, D: DataPlane, W> {
     pub known_accounts: RefCell<Vec<Account>>,
     /// Open container connections, so each container is only connected to once.
     pub connections: RefCell<HashMap<ContainerKey, Rc<D::Store>>>,
+    /// Account keys fetched so far, by account name.
+    pub account_keys: RefCell<HashMap<String, String>>,
 }
 
 impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
@@ -146,10 +148,13 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         database: &str,
         container: &str,
     ) -> anyhow::Result<D::Store> {
-        let credential = match (&self.global.key, self.global.auth) {
-            (Some(key), _) => Credential::Key(key.clone()),
-            (None, AuthMode::Key) => Credential::Key(self.management.primary_key(account).await?),
-            (None, AuthMode::Entra | AuthMode::Auto) => Credential::Entra,
+        // In auto mode a key is only fetched after Entra ID was refused for the account
+        let known_key = self.account_keys.borrow().get(&account.name).cloned();
+        let credential = match (&self.global.key, self.global.auth, known_key) {
+            (Some(key), _, _) => Credential::Key(key.clone()),
+            (None, AuthMode::Key, _) => Credential::Key(self.primary_key(account).await?),
+            (None, AuthMode::Auto, Some(key)) => Credential::Key(key),
+            (None, AuthMode::Entra | AuthMode::Auto, _) => Credential::Entra,
         };
         let tried_entra_first =
             self.global.auth == AuthMode::Auto && credential == Credential::Entra;
@@ -159,13 +164,25 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             .await;
         match result {
             Err(error) if tried_entra_first && error.is::<Unauthorized>() => {
-                let key = self.management.primary_key(account).await?;
+                let key = self.primary_key(account).await?;
                 self.data
                     .connect(account, database, container, Credential::Key(key))
                     .await
             }
             result => result,
         }
+    }
+
+    /// Fetches the account key once per account.
+    async fn primary_key(&self, account: &Account) -> anyhow::Result<String> {
+        if let Some(key) = self.account_keys.borrow().get(&account.name) {
+            return Ok(key.clone());
+        }
+        let key = self.management.primary_key(account).await?;
+        self.account_keys
+            .borrow_mut()
+            .insert(account.name.clone(), key.clone());
+        Ok(key)
     }
 
     async fn query(
@@ -404,6 +421,7 @@ mod tests {
             global: GlobalArgs::default(),
             known_accounts: RefCell::default(),
             connections: RefCell::default(),
+            account_keys: RefCell::default(),
         }
     }
 
@@ -898,6 +916,36 @@ mod tests {
             *app.data.connections.borrow(),
             vec![Credential::Entra, Credential::Key("primary==".into())]
         );
+    }
+
+    #[tokio::test]
+    async fn auto_auth_remembers_entra_was_refused_for_the_account() {
+        let mut app = entra_forbidden_app();
+        let events = ContainerRef {
+            account: "orders".into(),
+            database: "audit".into(),
+            container: "events".into(),
+        };
+
+        app.run(query_orders()).await.unwrap();
+        app.run(Command::Query {
+            target: events,
+            sql: "SELECT * FROM c".into(),
+            output: OutputFormat::Json,
+            max: None,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *app.data.connections.borrow(),
+            vec![
+                Credential::Entra,
+                Credential::Key("primary==".into()),
+                Credential::Key("primary==".into())
+            ]
+        );
+        assert_eq!(app.management.key_fetches.get(), 1);
     }
 
     #[tokio::test]

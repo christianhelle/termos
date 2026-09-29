@@ -37,6 +37,8 @@ pub struct FakeManagement {
     pub databases: RefCell<Vec<(String, Vec<Container>)>>,
     /// How many times an account was looked up by name.
     pub lookups: Cell<usize>,
+    /// How many times an account key was fetched.
+    pub key_fetches: Cell<usize>,
 }
 
 impl FakeManagement {
@@ -142,6 +144,7 @@ impl Management for FakeManagement {
     }
 
     async fn primary_key(&self, _account: &Account) -> anyhow::Result<String> {
+        self.key_fetches.set(self.key_fetches.get() + 1);
         Ok("primary==".into())
     }
 }

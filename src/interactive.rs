@@ -372,6 +372,7 @@ mod tests {
             global: GlobalArgs::default(),
             known_accounts: Default::default(),
             connections: Default::default(),
+            account_keys: Default::default(),
         };
         let mut management = shop();
         management.accounts.push(account("inventory"));
