@@ -58,6 +58,34 @@ cosmoscli items delete  -a my-account -d shop -c orders --id o-1 --pk contoso
 cosmoscli items delete-partition -a my-account -d shop -c orders --pk contoso [--yes]
 ```
 
+## Interactive mode
+
+Run `cosmoscli` without a command to stay in the tool and run many queries:
+
+```text
+$ cosmoscli
+Type /help for commands, /exit to leave.
+cosmoscli> /accounts
+Using account my-account
+Completed in 812 ms
+cosmoscli [my-account]> /containers
+Using container shop/orders
+Completed in 1.04 s
+cosmoscli [my-account/shop/orders]> SELECT * FROM c WHERE c.total > 10
++-----+-----------+
+| id  | /tenantId |
++=================+
+| o-1 | contoso   |
++-----+-----------+
+Completed in 143 ms
+```
+
+- `/accounts` and `/containers` show a list you can filter by typing. The choice becomes the current account and container. Pick an account first, then a container. Queries only run once both are picked.
+- Anything that doesn't start with `/` is a query against the current container. `/output json` shows full JSON documents and `/output table` switches back.
+- Every CLI command also works as a slash command, and `-a`, `-d` and `-c` default to the current account and container, for example `/items get --id o-1 --pk contoso` or `/containers show`. Document writes need `--file`, since stdin is the prompt.
+- Each command and query reports how long it took. Time spent choosing from a list isn't counted.
+- `/help` lists the commands. `/exit`, `/quit` or Ctrl-D leaves. The up and down arrows go through earlier lines.
+
 Partition key values given with `--pk` are strings. Use `--pk-json` for numbers, booleans or null, for example `--pk-json 42`.
 
 Deleting a partition or a container asks for confirmation. When stdin is not a terminal, the tool refuses unless you pass `--yes`.
