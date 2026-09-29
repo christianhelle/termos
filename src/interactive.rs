@@ -124,8 +124,15 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             defaults.push(("database", current.database.clone()));
             defaults.push(("container", current.container.clone()));
         }
-        let matches = with_defaults(Cli::command(), &defaults)
-            .try_get_matches_from(std::iter::once("cosmoscli".to_string()).chain(words))?;
+        let args = std::iter::once("cosmoscli".to_string()).chain(words);
+        let matches = match with_defaults(Cli::command(), &defaults).try_get_matches_from(args) {
+            Ok(matches) => matches,
+            // Help and usage errors come fully worded from clap
+            Err(usage) => {
+                write!(self.app.out, "{}", usage.render())?;
+                return Ok(Flow::Untimed);
+            }
+        };
         let Some(command) = Cli::from_arg_matches(&matches)?.command else {
             anyhow::bail!("type a command after /, see /help");
         };
@@ -631,6 +638,33 @@ Completed in 0 ms
             "{}",
             output(&repl)
         );
+    }
+
+    #[tokio::test]
+    async fn slash_command_help_is_printed_as_is() {
+        let lines = ScriptedLines::new(&["/query --help"]);
+        let mut repl = repl(&lines);
+
+        repl.run().await.unwrap();
+
+        let out = output(&repl);
+        assert!(out.starts_with("Query documents in a container\n"), "{out}");
+        assert!(!out.contains("Completed in"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn slash_command_usage_errors_are_printed_once() {
+        let lines = ScriptedLines::new(&["/nope"]);
+        let mut repl = repl(&lines);
+
+        repl.run().await.unwrap();
+
+        let out = output(&repl);
+        assert!(
+            out.starts_with("error: unrecognized subcommand 'nope'"),
+            "{out}"
+        );
+        assert!(!out.contains("Completed in"), "{out}");
     }
 
     #[tokio::test]
