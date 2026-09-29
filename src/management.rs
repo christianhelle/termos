@@ -198,6 +198,36 @@ pub fn account_query(name: &str) -> anyhow::Result<String> {
     ))
 }
 
+/// Parses the accounts in a Resource Graph response to [`account_query`].
+#[derive(Deserialize)]
+struct GraphResponse {
+    data: Vec<GraphAccount>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphAccount {
+    id: String,
+    name: String,
+    location: String,
+    document_endpoint: String,
+}
+
+pub fn parse_resource_graph_accounts(json: &str) -> anyhow::Result<Vec<Account>> {
+    let response: GraphResponse = serde_json::from_str(json)?;
+    Ok(response
+        .data
+        .into_iter()
+        .map(|graph| Account {
+            subscription_id: id_segment(&graph.id, "subscriptions"),
+            resource_group: id_segment(&graph.id, "resourceGroups"),
+            name: graph.name,
+            location: graph.location,
+            endpoint: graph.document_endpoint,
+        })
+        .collect())
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -377,5 +407,32 @@ mod tests {
     fn account_query_rejects_names_that_are_not_valid_account_names() {
         assert!(account_query("x' or name != '").is_err());
         assert!(account_query("").is_err());
+    }
+
+    #[test]
+    fn parses_resource_graph_accounts() {
+        let json = r#"{
+            "totalRecords": 1,
+            "count": 1,
+            "data": [{
+                "id": "/subscriptions/sub-1/resourceGroups/rg-data/providers/Microsoft.DocumentDB/databaseAccounts/orders",
+                "name": "orders",
+                "location": "swedencentral",
+                "documentEndpoint": "https://orders.documents.azure.com:443/"
+            }],
+            "facets": [],
+            "resultTruncated": "false"
+        }"#;
+
+        assert_eq!(
+            parse_resource_graph_accounts(json).unwrap(),
+            vec![Account {
+                name: "orders".into(),
+                subscription_id: "sub-1".into(),
+                resource_group: "rg-data".into(),
+                location: "swedencentral".into(),
+                endpoint: "https://orders.documents.azure.com:443/".into(),
+            }]
+        );
     }
 }
