@@ -147,7 +147,11 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             writeln!(self.out, "Aborted, nothing was deleted")?;
             return Ok(());
         }
-        todo!()
+        for id in &ids {
+            store.delete_item(id, pk).await?;
+        }
+        writeln!(self.out, "Deleted {} documents", ids.len())?;
+        Ok(())
     }
 
     fn read_document(&mut self, file: Option<&Path>) -> anyhow::Result<Value> {
@@ -577,5 +581,19 @@ mod tests {
         );
         assert_eq!(app.data.container.borrow().docs, contoso_partition());
         assert_eq!(output(&app), "Aborted, nothing was deleted\n");
+    }
+
+    #[tokio::test]
+    async fn delete_partition_removes_every_document_when_confirmed() {
+        let mut app = orders_app(contoso_partition());
+        app.confirm = Box::new(ScriptedConfirm::answering(true));
+
+        app.run(delete_contoso(false)).await.unwrap();
+
+        assert_eq!(
+            app.data.container.borrow().docs,
+            vec![json!({ "id": "f-1", "tenantId": "fabrikam" })]
+        );
+        assert_eq!(output(&app), "Deleted 2 documents\n");
     }
 }
