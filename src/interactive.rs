@@ -44,6 +44,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             Input::Slash(words) => match words.first().map(String::as_str) {
                 Some("exit" | "quit") => Ok(Flow::Exit),
                 Some("accounts") if is_listing(&words) => self.pick_account().await,
+                Some("containers") if is_listing(&words) => self.pick_container().await,
                 _ => Ok(Flow::Continue),
             },
             Input::Query(_) => {
@@ -68,6 +69,13 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             writeln!(self.app.out, "Using account {}", account.name)?;
             self.account = Some(account);
         }
+        Ok(Flow::Continue)
+    }
+
+    async fn pick_container(&mut self) -> anyhow::Result<Flow> {
+        let Some(_account) = &self.account else {
+            anyhow::bail!("select an account with /accounts first");
+        };
         Ok(Flow::Continue)
     }
 }
@@ -240,6 +248,21 @@ mod tests {
 
         assert!(picker.shown.borrow().is_empty());
         assert_eq!(output(&repl), "error: no Cosmos DB accounts found\n");
+    }
+
+    #[tokio::test]
+    async fn containers_needs_an_account_first() {
+        let lines = ScriptedLines::new(&["/containers"]);
+        let picker = ScriptedPicker::default();
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert!(picker.shown.borrow().is_empty());
+        assert_eq!(
+            output(&repl),
+            "error: select an account with /accounts first\n"
+        );
     }
 
     #[tokio::test]
