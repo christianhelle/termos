@@ -167,6 +167,13 @@ impl DataStore for FakeStore {
         self.container.borrow_mut().docs.push(doc);
         Ok(())
     }
+
+    async fn upsert_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()> {
+        let id = doc["id"].as_str().unwrap_or_default().to_string();
+        let _ = self.delete_item(&id, pk).await;
+        self.container.borrow_mut().docs.push(doc);
+        Ok(())
+    }
 }
 
 impl FakeStore {

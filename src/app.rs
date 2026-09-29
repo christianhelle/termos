@@ -105,6 +105,14 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 writeln!(self.out, "Created document '{id}'")?;
                 Ok(())
             }
+            ItemsCommand::Upsert { target, file } => {
+                let store = self.connect(&target).await?;
+                let doc = self.read_document(file.as_deref())?;
+                let (id, pk) = identify(&doc, store.partition_key_path())?;
+                store.upsert_item(&pk, doc).await?;
+                writeln!(self.out, "Upserted document '{id}'")?;
+                Ok(())
+            }
             _ => todo!(),
         }
     }
@@ -429,5 +437,36 @@ mod tests {
             vec![json!({ "id": "c-9", "tenantId": "contoso" })]
         );
         assert_eq!(output(&app), "Created document 'c-9'\n");
+    }
+
+    #[tokio::test]
+    async fn items_upsert_replaces_an_existing_document_from_a_file() {
+        let mut app = orders_app(vec![
+            json!({ "id": "c-1", "tenantId": "contoso", "total": 1 }),
+        ]);
+        let file =
+            std::env::temp_dir().join(format!("cosmoscli-upsert-{}.json", std::process::id()));
+        std::fs::write(
+            &file,
+            r#"{ "id": "c-1", "tenantId": "contoso", "total": 2 }"#,
+        )
+        .unwrap();
+
+        let result = app
+            .run(Command::Items {
+                command: ItemsCommand::Upsert {
+                    target: orders(),
+                    file: Some(file.clone()),
+                },
+            })
+            .await;
+        std::fs::remove_file(&file).unwrap();
+
+        result.unwrap();
+        assert_eq!(
+            app.data.container.borrow().docs,
+            vec![json!({ "id": "c-1", "tenantId": "contoso", "total": 2 })]
+        );
+        assert_eq!(output(&app), "Upserted document 'c-1'\n");
     }
 }
