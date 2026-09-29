@@ -56,11 +56,21 @@ impl DataPlane for CosmosDataPlane {
     }
 }
 
-/// Turns authorization failures into [`Unauthorized`] so callers can fall back.
+/// Drops the diagnostics JSON the SDK appends to service error messages.
+fn short_message(message: &str) -> &str {
+    match message.find(", {\"Summary\"") {
+        Some(end) => &message[..end],
+        None => message,
+    }
+}
+
+/// Shortens SDK errors and turns authorization failures into [`Unauthorized`]
+/// so callers can fall back.
 fn classify(error: CosmosError) -> anyhow::Error {
+    let message = short_message(&error.to_string()).to_string();
     match error.status().status_code() {
-        StatusCode::Unauthorized | StatusCode::Forbidden => Unauthorized(error.to_string()).into(),
-        _ => error.into(),
+        StatusCode::Unauthorized | StatusCode::Forbidden => Unauthorized(message).into(),
+        _ => anyhow::anyhow!(message),
     }
 }
 
@@ -78,8 +88,13 @@ impl DataStore for CosmosStore {
         let items = self
             .client
             .query_items::<Value>(Query::from(sql), FeedScope::full_container(), None)
-            .await?;
-        let docs = items.take(max.unwrap_or(usize::MAX)).try_collect().await?;
+            .await
+            .map_err(classify)?;
+        let docs = items
+            .take(max.unwrap_or(usize::MAX))
+            .try_collect()
+            .await
+            .map_err(classify)?;
         Ok(docs)
     }
 
@@ -87,14 +102,16 @@ impl DataStore for CosmosStore {
         let response = self
             .client
             .read_item(to_partition_key(pk)?, id, None)
-            .await?;
-        Ok(response.into_model()?)
+            .await
+            .map_err(classify)?;
+        Ok(response.into_model().map_err(classify)?)
     }
 
     async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()> {
         self.client
             .delete_item(to_partition_key(pk)?, id, None)
-            .await?;
+            .await
+            .map_err(classify)?;
         Ok(())
     }
 
@@ -102,7 +119,8 @@ impl DataStore for CosmosStore {
         let id = document_id(&doc)?;
         self.client
             .create_item(to_partition_key(pk)?, &id, doc, None)
-            .await?;
+            .await
+            .map_err(classify)?;
         Ok(())
     }
 
@@ -110,14 +128,16 @@ impl DataStore for CosmosStore {
         let id = document_id(&doc)?;
         self.client
             .upsert_item(to_partition_key(pk)?, &id, doc, None)
-            .await?;
+            .await
+            .map_err(classify)?;
         Ok(())
     }
 
     async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()> {
         self.client
             .replace_item(to_partition_key(pk)?, id, doc, None)
-            .await?;
+            .await
+            .map_err(classify)?;
         Ok(())
     }
 
@@ -129,9 +149,11 @@ impl DataStore for CosmosStore {
                 FeedScope::partition(to_partition_key(pk)?),
                 None,
             )
-            .await?
+            .await
+            .map_err(classify)?
             .try_collect()
-            .await?;
+            .await
+            .map_err(classify)?;
         Ok(ids)
     }
 }
@@ -184,6 +206,24 @@ mod tests {
             to_partition_key(&json!(null)).unwrap(),
             PartitionKey::from(PartitionKey::NULL)
         );
+    }
+
+    #[test]
+    fn short_message_drops_diagnostics() {
+        let message = r#"409: Cosmos DB returned HTTP 409: Unknown. Details: Entity with the specified id already exists in the system., {"Summary":{"DirectCalls":{"(409, 0)":1}},"name":"HandleDocumentRequest"}"#;
+
+        assert_eq!(
+            short_message(message),
+            "409: Cosmos DB returned HTTP 409: Unknown. Details: Entity with the specified id already exists in the system."
+        );
+    }
+
+    #[test]
+    fn short_message_keeps_messages_without_diagnostics() {
+        let message =
+            "403/5301 (RbacUnauthorizedMetadataRequest): AccountProperties fetch returned HTTP 403";
+
+        assert_eq!(short_message(message), message);
     }
 
     #[test]
