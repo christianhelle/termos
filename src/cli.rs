@@ -206,6 +206,16 @@ pub struct ContainerRef {
     pub container: String,
 }
 
+impl PartitionKeyArg {
+    pub fn value(&self) -> anyhow::Result<serde_json::Value> {
+        match (&self.pk, &self.pk_json) {
+            (Some(pk), _) => Ok(serde_json::Value::String(pk.clone())),
+            (None, Some(json)) => Ok(serde_json::from_str(json)?),
+            (None, None) => anyhow::bail!("a partition key is required, use --pk or --pk-json"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +483,19 @@ mod tests {
             "z",
         ];
         assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn string_partition_key_value_stays_a_string() {
+        assert_eq!(string_pk("42").value().unwrap(), serde_json::json!("42"));
+    }
+
+    #[test]
+    fn json_partition_key_value_keeps_its_type() {
+        let pk = PartitionKeyArg {
+            pk: None,
+            pk_json: Some("42".into()),
+        };
+        assert_eq!(pk.value().unwrap(), serde_json::json!(42));
     }
 }
