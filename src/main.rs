@@ -87,5 +87,6 @@ fn app<W: Write>(
         confirm: Box::new(TerminalConfirm),
         out,
         global,
+        known_accounts: Default::default(),
     }
 }

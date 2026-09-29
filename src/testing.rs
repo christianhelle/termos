@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::interactive::Clock;
-use crate::management::{Account, Container, Management};
+use crate::management::{Account, Container, Management, resolve_account};
 use crate::partition::value_at_path;
 use crate::prompt::{Confirm, LineReader, Picker};
 use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
@@ -35,6 +35,8 @@ pub struct FakeManagement {
     pub accounts: Vec<Account>,
     /// Databases and their containers, shared by every account.
     pub databases: RefCell<Vec<(String, Vec<Container>)>>,
+    /// How many times an account was looked up by name.
+    pub lookups: Cell<usize>,
 }
 
 impl FakeManagement {
@@ -47,6 +49,7 @@ impl FakeManagement {
                     .map(|(name, containers)| (name.to_string(), containers.to_vec()))
                     .collect(),
             ),
+            ..Default::default()
         }
     }
 }
@@ -59,6 +62,16 @@ impl Management for FakeManagement {
             .filter(|account| subscription.is_none_or(|id| account.subscription_id == id))
             .cloned()
             .collect())
+    }
+
+    async fn find_account(
+        &self,
+        name: &str,
+        subscription: Option<&str>,
+    ) -> anyhow::Result<Account> {
+        self.lookups.set(self.lookups.get() + 1);
+        let accounts = self.list_accounts(subscription).await?;
+        resolve_account(&accounts, name).cloned()
     }
 
     async fn list_databases(&self, _account: &Account) -> anyhow::Result<Vec<String>> {

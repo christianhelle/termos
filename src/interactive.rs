@@ -368,6 +368,7 @@ mod tests {
             confirm: Box::new(ScriptedConfirm::answering(false)),
             out: Vec::new(),
             global: GlobalArgs::default(),
+            known_accounts: Default::default(),
         };
         let mut management = shop();
         management.accounts.push(account("inventory"));

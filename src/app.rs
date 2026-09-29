@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -8,7 +9,7 @@ use crate::cli::{
     AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
     GlobalArgs, ItemsCommand, OutputFormat,
 };
-use crate::management::{Account, Container, Management};
+use crate::management::{Account, Container, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
 use crate::partition::value_at_path;
 use crate::prompt::Confirm;
@@ -23,6 +24,8 @@ pub struct App<M, D, W> {
     pub confirm: Box<dyn Confirm>,
     pub out: W,
     pub global: GlobalArgs,
+    /// Accounts found so far, so each name is only looked up once.
+    pub known_accounts: RefCell<Vec<Account>>,
 }
 
 impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
@@ -92,9 +95,15 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     }
 
     async fn resolve(&self, name: &str) -> anyhow::Result<Account> {
-        self.management
+        if let Ok(account) = resolve_account(&self.known_accounts.borrow(), name) {
+            return Ok(account.clone());
+        }
+        let account = self
+            .management
             .find_account(name, self.global.subscription.as_deref())
-            .await
+            .await?;
+        self.known_accounts.borrow_mut().push(account.clone());
+        Ok(account)
     }
 
     async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
@@ -360,6 +369,7 @@ mod tests {
             confirm: Box::new(ScriptedConfirm::answering(false)),
             out: Vec::new(),
             global: GlobalArgs::default(),
+            known_accounts: RefCell::default(),
         }
     }
 
@@ -891,6 +901,16 @@ mod tests {
             *app.data.connections.borrow(),
             vec![Credential::Key("given==".into())]
         );
+    }
+
+    #[tokio::test]
+    async fn an_account_is_looked_up_once_for_many_commands() {
+        let mut app = orders_app(vec![]);
+
+        app.run(query_orders()).await.unwrap();
+        app.run(query_orders()).await.unwrap();
+
+        assert_eq!(app.management.lookups.get(), 1);
     }
 
     #[tokio::test]
