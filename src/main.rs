@@ -1,8 +1,5 @@
 use clap::Parser;
-
-#[derive(Parser)]
-#[command(version, about = "Command line tool for Azure Cosmos DB")]
-struct Cli {}
+use cosmoscli::cli::Cli;
 
 fn main() {
     Cli::parse();
