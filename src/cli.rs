@@ -21,6 +21,25 @@ pub struct GlobalArgs {
     /// Only use this subscription id instead of every subscription you can access
     #[arg(long, global = true)]
     pub subscription: Option<String>,
+
+    /// How to authenticate to the Cosmos DB data plane
+    #[arg(long, global = true, value_enum, default_value_t = AuthMode::Auto)]
+    pub auth: AuthMode,
+
+    /// Account key to use instead of fetching one from Resource Manager
+    #[arg(long, global = true)]
+    pub key: Option<String>,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Default)]
+pub enum AuthMode {
+    /// Try Entra ID first and fall back to the account key
+    #[default]
+    Auto,
+    /// Only use Entra ID
+    Entra,
+    /// Only use the account key
+    Key,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -497,5 +516,30 @@ mod tests {
             pk_json: Some("42".into()),
         };
         assert_eq!(pk.value().unwrap(), serde_json::json!(42));
+    }
+
+    #[test]
+    fn auth_defaults_to_auto() {
+        let cli = parse(&["accounts", "list"]);
+
+        assert_eq!(cli.global.auth, AuthMode::Auto);
+        assert_eq!(cli.global.key, None);
+    }
+
+    #[test]
+    fn parses_key_auth_after_the_subcommand() {
+        let cli = parse(&[
+            "databases",
+            "list",
+            "-a",
+            "x",
+            "--auth",
+            "key",
+            "--key",
+            "secret==",
+        ]);
+
+        assert_eq!(cli.global.auth, AuthMode::Key);
+        assert_eq!(cli.global.key.as_deref(), Some("secret=="));
     }
 }
