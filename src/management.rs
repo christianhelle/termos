@@ -29,6 +29,8 @@ pub struct Page<T> {
 pub trait Management {
     /// Lists accounts in one subscription, or in every accessible subscription.
     async fn list_accounts(&self, subscription: Option<&str>) -> anyhow::Result<Vec<Account>>;
+
+    async fn list_databases(&self, account: &Account) -> anyhow::Result<Vec<String>>;
 }
 
 #[derive(Deserialize)]
