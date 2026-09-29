@@ -70,7 +70,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
 
     /// Runs until `/exit`, `/quit` or the end of input. Failed lines are reported and skipped.
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        while let Some(line) = self.lines.read_line("cosmoscli> ")? {
+        while let Some(line) = self.lines.read_line(&self.prompt())? {
             let started = self.clock.now();
             self.picking = Duration::ZERO;
             match self.handle(&line).await {
@@ -83,6 +83,18 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             writeln!(self.app.out, "Completed in {}", format_elapsed(elapsed))?;
         }
         Ok(())
+    }
+
+    /// The prompt, naming the current account and container once they are picked.
+    fn prompt(&self) -> String {
+        match (&self.account, &self.current) {
+            (Some(account), Some(current)) => format!(
+                "cosmoscli [{}/{}/{}]> ",
+                account.name, current.database, current.container
+            ),
+            (Some(account), None) => format!("cosmoscli [{}]> ", account.name),
+            (None, _) => "cosmoscli> ".to_string(),
+        }
     }
 
     async fn handle(&mut self, line: &str) -> anyhow::Result<Flow> {
@@ -752,6 +764,23 @@ Add --help to a command to see its options, for example /items get --help
             );
             assert!(repl.app.data.container.borrow().docs.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn prompt_shows_the_current_account_and_container() {
+        let lines = ScriptedLines::new(&["/accounts", "/containers"]);
+        let picker = ScriptedPicker::answering(&[Some(0), Some(0)]);
+
+        repl_picking(&lines, &picker).run().await.unwrap();
+
+        assert_eq!(
+            *lines.prompts.borrow(),
+            vec![
+                "cosmoscli> ",
+                "cosmoscli [orders]> ",
+                "cosmoscli [orders/shop/carts]> "
+            ]
+        );
     }
 
     #[tokio::test]

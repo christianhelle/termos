@@ -280,22 +280,25 @@ impl Confirm for ScriptedConfirm {
     }
 }
 
-/// Hands out scripted lines, then reports the end of input.
+/// Hands out scripted lines, then reports the end of input, recording each prompt shown.
 #[derive(Clone, Default)]
 pub struct ScriptedLines {
     pub lines: Rc<RefCell<VecDeque<String>>>,
+    pub prompts: Rc<RefCell<Vec<String>>>,
 }
 
 impl ScriptedLines {
     pub fn new(lines: &[&str]) -> Self {
         ScriptedLines {
             lines: Rc::new(RefCell::new(lines.iter().map(|l| l.to_string()).collect())),
+            ..Default::default()
         }
     }
 }
 
 impl LineReader for ScriptedLines {
-    fn read_line(&mut self, _prompt: &str) -> anyhow::Result<Option<String>> {
+    fn read_line(&mut self, prompt: &str) -> anyhow::Result<Option<String>> {
+        self.prompts.borrow_mut().push(prompt.to_string());
         Ok(self.lines.borrow_mut().pop_front())
     }
 }
