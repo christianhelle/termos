@@ -1,5 +1,9 @@
 use std::io::{IsTerminal, Write};
 
+use dialoguer::FuzzySelect;
+use dialoguer::theme::ColorfulTheme;
+use rustyline::error::ReadlineError;
+
 /// Asks the user to confirm a destructive operation.
 pub trait Confirm {
     fn confirm(&mut self, message: &str) -> anyhow::Result<bool>;
@@ -37,6 +41,51 @@ impl Confirm for TerminalConfirm {
         let mut answer = String::new();
         stdin.read_line(&mut answer)?;
         Ok(is_yes(&answer))
+    }
+}
+
+/// Reads prompt lines on the terminal with line editing and history.
+pub struct TerminalLines {
+    editor: rustyline::DefaultEditor,
+}
+
+impl TerminalLines {
+    pub fn new() -> anyhow::Result<Self> {
+        Ok(TerminalLines {
+            editor: rustyline::DefaultEditor::new()?,
+        })
+    }
+}
+
+impl LineReader for TerminalLines {
+    fn read_line(&mut self, prompt: &str) -> anyhow::Result<Option<String>> {
+        match self.editor.readline(prompt) {
+            Ok(line) => {
+                if !line.trim().is_empty() {
+                    self.editor.add_history_entry(line.as_str())?;
+                }
+                Ok(Some(line))
+            }
+            // Ctrl-C drops the line being typed, Ctrl-D ends the session
+            Err(ReadlineError::Interrupted) => Ok(Some(String::new())),
+            Err(ReadlineError::Eof) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+/// Picks from a list on the terminal, filtering as the user types.
+pub struct TerminalPicker;
+
+impl Picker for TerminalPicker {
+    fn pick(&mut self, prompt: &str, items: &[String]) -> anyhow::Result<Option<usize>> {
+        let choice = FuzzySelect::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .items(items)
+            .default(0)
+            .max_length(15)
+            .interact_opt()?;
+        Ok(choice)
     }
 }
 
