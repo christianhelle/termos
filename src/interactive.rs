@@ -20,9 +20,9 @@ pub fn parse_input(line: &str) -> anyhow::Result<Input> {
         return Ok(Input::Empty);
     }
     match line.strip_prefix('/') {
-        Some(command) => Ok(Input::Slash(
-            command.split_whitespace().map(String::from).collect(),
-        )),
+        Some(command) => shlex::split(command)
+            .map(Input::Slash)
+            .ok_or_else(|| anyhow::anyhow!("unbalanced quotes in command")),
         None => Ok(Input::Query(line.to_string())),
     }
 }
@@ -63,6 +63,24 @@ mod tests {
             parse_input(" /items get  --id c-1\n").unwrap(),
             words(&["items", "get", "--id", "c-1"])
         );
+    }
+
+    #[test]
+    fn quoted_words_stay_together() {
+        assert_eq!(
+            parse_input(r#"/query "SELECT * FROM c WHERE c.name = 'a b'" -o json"#).unwrap(),
+            words(&[
+                "query",
+                "SELECT * FROM c WHERE c.name = 'a b'",
+                "-o",
+                "json"
+            ])
+        );
+    }
+
+    #[test]
+    fn unbalanced_quotes_are_rejected() {
+        assert!(parse_input(r#"/query "SELECT * FROM c"#).is_err());
     }
 
     #[test]
