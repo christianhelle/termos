@@ -2,12 +2,11 @@ use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::Context;
-
 use serde_json::Value;
 
 use crate::cli::{
     AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
-    GlobalArgs, ItemsCommand, OutputFormat, PartitionKeyArg,
+    GlobalArgs, ItemsCommand, OutputFormat,
 };
 use crate::management::{Account, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
@@ -310,6 +309,7 @@ fn identify(doc: &Value, pk_path: &str) -> anyhow::Result<(String, Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::PartitionKeyArg;
     use crate::testing::{FakeDataPlane, FakeManagement, ScriptedConfirm, account, container};
     use serde_json::json;
 
