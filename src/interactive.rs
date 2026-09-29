@@ -1,6 +1,8 @@
 //! Interactive prompt session for running many commands and queries.
 
+use std::future::Future;
 use std::io::Write;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -48,7 +50,12 @@ pub struct Repl<M, D: DataPlane, W> {
     current: Option<Current<Rc<D::Store>>>,
     /// How typed queries render their documents.
     output: OutputFormat,
+    /// An account list started ahead of time, used by the first `/accounts`.
+    account_prefetch: Option<AccountList>,
 }
+
+/// A list of accounts that may still be loading.
+pub type AccountList = Pin<Box<dyn Future<Output = anyhow::Result<Vec<Account>>>>>;
 
 impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     pub fn new(
@@ -66,7 +73,14 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             account: None,
             current: None,
             output: OutputFormat::Table,
+            account_prefetch: None,
         }
+    }
+
+    /// Lets the first `/accounts` use a list that started loading ahead of time.
+    pub fn with_account_prefetch(mut self, accounts: AccountList) -> Self {
+        self.account_prefetch = Some(accounts);
+        self
     }
 
     /// Runs until `/exit`, `/quit` or the end of input. Failed lines are reported and skipped.
@@ -192,8 +206,13 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     }
 
     async fn pick_account(&mut self) -> anyhow::Result<Flow> {
-        let subscription = self.app.global.subscription.as_deref();
-        let mut accounts = self.app.management.list_accounts(subscription).await?;
+        let mut accounts = match self.account_prefetch.take() {
+            Some(prefetched) => prefetched.await?,
+            None => {
+                let subscription = self.app.global.subscription.as_deref();
+                self.app.management.list_accounts(subscription).await?
+            }
+        };
         anyhow::ensure!(!accounts.is_empty(), "no Cosmos DB accounts found");
         let labels: Vec<String> = accounts
             .iter()
@@ -475,6 +494,23 @@ mod tests {
             output(&repl),
             "error: no Cosmos DB accounts found\nCompleted in 0 ms\n"
         );
+    }
+
+    #[tokio::test]
+    async fn the_first_account_list_can_come_from_a_prefetch() {
+        let lines = ScriptedLines::new(&["/accounts", "/accounts"]);
+        let picker = ScriptedPicker::answering(&[None, None]);
+        let repl = repl_picking(&lines, &picker);
+        let prefetched = async { Ok(vec![account("prefetched")]) };
+        let mut repl = repl.with_account_prefetch(Box::pin(prefetched));
+
+        repl.run().await.unwrap();
+
+        assert_eq!(
+            picker.shown.borrow()[0],
+            vec!["prefetched (rg-data, West Europe)"]
+        );
+        assert_eq!(picker.shown.borrow()[1].len(), 2);
     }
 
     #[tokio::test]
