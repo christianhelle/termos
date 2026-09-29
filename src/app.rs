@@ -113,6 +113,14 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 writeln!(self.out, "Upserted document '{id}'")?;
                 Ok(())
             }
+            ItemsCommand::Replace { target, file } => {
+                let store = self.connect(&target).await?;
+                let doc = self.read_document(file.as_deref())?;
+                let (id, pk) = identify(&doc, store.partition_key_path())?;
+                store.replace_item(&id, &pk, doc).await?;
+                writeln!(self.out, "Replaced document '{id}'")?;
+                Ok(())
+            }
             _ => todo!(),
         }
     }
@@ -468,5 +476,46 @@ mod tests {
             vec![json!({ "id": "c-1", "tenantId": "contoso", "total": 2 })]
         );
         assert_eq!(output(&app), "Upserted document 'c-1'\n");
+    }
+
+    #[tokio::test]
+    async fn items_replace_updates_an_existing_document() {
+        let mut app = orders_app(vec![
+            json!({ "id": "c-1", "tenantId": "contoso", "total": 1 }),
+        ]);
+        app.input = Box::new(r#"{ "id": "c-1", "tenantId": "contoso", "total": 3 }"#.as_bytes());
+
+        app.run(Command::Items {
+            command: ItemsCommand::Replace {
+                target: orders(),
+                file: None,
+            },
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            app.data.container.borrow().docs,
+            vec![json!({ "id": "c-1", "tenantId": "contoso", "total": 3 })]
+        );
+        assert_eq!(output(&app), "Replaced document 'c-1'\n");
+    }
+
+    #[tokio::test]
+    async fn items_replace_fails_for_a_missing_document() {
+        let mut app = orders_app(vec![]);
+        app.input = Box::new(r#"{ "id": "c-1", "tenantId": "contoso" }"#.as_bytes());
+
+        let result = app
+            .run(Command::Items {
+                command: ItemsCommand::Replace {
+                    target: orders(),
+                    file: None,
+                },
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(app.data.container.borrow().docs.is_empty());
     }
 }

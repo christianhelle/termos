@@ -40,4 +40,7 @@ pub trait DataStore {
 
     /// Creates a document, or replaces it when the id already exists.
     async fn upsert_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()>;
+
+    /// Replaces an existing document, failing if it does not exist.
+    async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()>;
 }

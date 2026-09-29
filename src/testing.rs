@@ -174,6 +174,12 @@ impl DataStore for FakeStore {
         self.container.borrow_mut().docs.push(doc);
         Ok(())
     }
+
+    async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()> {
+        self.delete_item(id, pk).await?;
+        self.container.borrow_mut().docs.push(doc);
+        Ok(())
+    }
 }
 
 impl FakeStore {
