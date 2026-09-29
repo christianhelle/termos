@@ -109,6 +109,17 @@ pub fn parse_containers(json: &str) -> anyhow::Result<Page<Container>> {
     parse_page(json, |arm: ArmContainer| Container::from(arm))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmKeys {
+    primary_master_key: String,
+}
+
+pub fn parse_primary_key(json: &str) -> anyhow::Result<String> {
+    let keys: ArmKeys = serde_json::from_str(json)?;
+    Ok(keys.primary_master_key)
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -216,5 +227,17 @@ mod tests {
                 partition_key_paths: vec!["/tenantId".into()],
             }]
         );
+    }
+
+    #[test]
+    fn parses_primary_key_from_list_keys() {
+        let json = r#"{
+            "primaryMasterKey": "primary==",
+            "secondaryMasterKey": "secondary==",
+            "primaryReadonlyMasterKey": "ro==",
+            "secondaryReadonlyMasterKey": "ro2=="
+        }"#;
+
+        assert_eq!(parse_primary_key(json).unwrap(), "primary==");
     }
 }
