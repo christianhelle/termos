@@ -12,6 +12,7 @@ use crate::cli::{
 use crate::management::{Account, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
 use crate::partition::value_at_path;
+use crate::prompt::Confirm;
 use crate::store::{Credential, DataPlane, DataStore};
 
 /// Runs CLI commands against the control and data planes.
@@ -20,6 +21,7 @@ pub struct App<M, D, W> {
     pub data: D,
     /// Where documents are read from when no file is given.
     pub input: Box<dyn Read>,
+    pub confirm: Box<dyn Confirm>,
     pub out: W,
     pub global: GlobalArgs,
 }
@@ -121,8 +123,31 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 writeln!(self.out, "Replaced document '{id}'")?;
                 Ok(())
             }
-            _ => todo!(),
+            ItemsCommand::DeletePartition { target, pk, yes } => {
+                self.delete_partition(&target, &pk.value()?, yes).await
+            }
         }
+    }
+
+    async fn delete_partition(
+        &mut self,
+        target: &ContainerRef,
+        pk: &Value,
+        yes: bool,
+    ) -> anyhow::Result<()> {
+        let store = self.connect(target).await?;
+        let ids = store.ids_in_partition(pk).await?;
+        let question = format!(
+            "Delete {} documents with partition key {pk} from {}/{}?",
+            ids.len(),
+            target.database,
+            target.container
+        );
+        if !self.confirm.confirm(&question)? {
+            writeln!(self.out, "Aborted, nothing was deleted")?;
+            return Ok(());
+        }
+        todo!()
     }
 
     fn read_document(&mut self, file: Option<&Path>) -> anyhow::Result<Value> {
@@ -202,7 +227,7 @@ fn identify(doc: &Value, pk_path: &str) -> anyhow::Result<(String, Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{FakeDataPlane, FakeManagement, account, container};
+    use crate::testing::{FakeDataPlane, FakeManagement, ScriptedConfirm, account, container};
     use serde_json::json;
 
     type TestApp = App<FakeManagement, FakeDataPlane, Vec<u8>>;
@@ -216,6 +241,7 @@ mod tests {
             management,
             data,
             input: Box::new(std::io::empty()),
+            confirm: Box::new(ScriptedConfirm::answering(false)),
             out: Vec::new(),
             global: GlobalArgs::default(),
         }
@@ -517,5 +543,39 @@ mod tests {
 
         assert!(result.is_err());
         assert!(app.data.container.borrow().docs.is_empty());
+    }
+
+    fn contoso_partition() -> Vec<serde_json::Value> {
+        vec![
+            json!({ "id": "c-1", "tenantId": "contoso" }),
+            json!({ "id": "c-2", "tenantId": "contoso" }),
+            json!({ "id": "f-1", "tenantId": "fabrikam" }),
+        ]
+    }
+
+    fn delete_contoso(yes: bool) -> Command {
+        Command::Items {
+            command: ItemsCommand::DeletePartition {
+                target: orders(),
+                pk: contoso_pk(),
+                yes,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_partition_asks_first_and_keeps_documents_when_declined() {
+        let mut app = orders_app(contoso_partition());
+        let confirm = ScriptedConfirm::answering(false);
+        app.confirm = Box::new(confirm.clone());
+
+        app.run(delete_contoso(false)).await.unwrap();
+
+        assert_eq!(
+            *confirm.asked.borrow(),
+            vec!["Delete 2 documents with partition key \"contoso\" from shop/carts?"]
+        );
+        assert_eq!(app.data.container.borrow().docs, contoso_partition());
+        assert_eq!(output(&app), "Aborted, nothing was deleted\n");
     }
 }

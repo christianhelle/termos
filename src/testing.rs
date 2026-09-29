@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use crate::management::{Account, Container, Management};
 use crate::partition::value_at_path;
+use crate::prompt::Confirm;
 use crate::store::{Credential, DataPlane, DataStore};
 
 pub fn account(name: &str) -> Account {
@@ -180,11 +181,44 @@ impl DataStore for FakeStore {
         self.container.borrow_mut().docs.push(doc);
         Ok(())
     }
+
+    async fn ids_in_partition(&self, pk: &Value) -> anyhow::Result<Vec<String>> {
+        let container = self.container.borrow();
+        Ok(container
+            .docs
+            .iter()
+            .filter(|doc| value_at_path(doc, &self.pk_path) == Some(pk))
+            .filter_map(|doc| doc["id"].as_str().map(String::from))
+            .collect())
+    }
 }
 
 impl FakeStore {
     fn matches(&self, doc: &Value, id: &str, pk: &Value) -> bool {
         doc.get("id").and_then(Value::as_str) == Some(id)
             && value_at_path(doc, &self.pk_path) == Some(pk)
+    }
+}
+
+/// Answers every confirmation the same way and records what was asked.
+#[derive(Clone, Default)]
+pub struct ScriptedConfirm {
+    pub answer: bool,
+    pub asked: Rc<RefCell<Vec<String>>>,
+}
+
+impl ScriptedConfirm {
+    pub fn answering(answer: bool) -> Self {
+        ScriptedConfirm {
+            answer,
+            ..Default::default()
+        }
+    }
+}
+
+impl Confirm for ScriptedConfirm {
+    fn confirm(&mut self, message: &str) -> anyhow::Result<bool> {
+        self.asked.borrow_mut().push(message.to_string());
+        Ok(self.answer)
     }
 }
