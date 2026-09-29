@@ -48,6 +48,16 @@ pub fn parse_accounts(json: &str) -> anyhow::Result<Page<Account>> {
     })
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmSubscription {
+    subscription_id: String,
+}
+
+pub fn parse_subscriptions(json: &str) -> anyhow::Result<Page<String>> {
+    parse_page(json, |arm: ArmSubscription| arm.subscription_id)
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -111,5 +121,17 @@ mod tests {
             page.next_link.as_deref(),
             Some("https://management.azure.com/next?page=2")
         );
+    }
+
+    #[test]
+    fn parses_subscription_ids() {
+        let json = r#"{ "value": [
+            { "id": "/subscriptions/sub-1", "subscriptionId": "sub-1", "displayName": "Production" },
+            { "id": "/subscriptions/sub-2", "subscriptionId": "sub-2", "displayName": "Dev" }
+        ] }"#;
+
+        let page = parse_subscriptions(json).unwrap();
+
+        assert_eq!(page.items, vec!["sub-1".to_string(), "sub-2".to_string()]);
     }
 }
