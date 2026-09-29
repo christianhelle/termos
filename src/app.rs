@@ -35,9 +35,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             Command::Databases {
                 command: DatabasesCommand::List { account },
             } => self.list_databases(&account).await,
-            Command::Containers {
-                command: ContainersCommand::List { account, database },
-            } => self.list_containers(&account, database).await,
+            Command::Containers { command } => self.containers(command).await,
             Command::Query {
                 target,
                 sql,
@@ -45,13 +43,33 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 max,
             } => self.query(&target, &sql, output, max).await,
             Command::Items { command } => self.items(command).await,
-            Command::Containers {
-                command:
-                    ContainersCommand::Create {
-                        target,
-                        partition_key,
-                        throughput,
-                    },
+        }
+    }
+
+    async fn containers(&mut self, command: ContainersCommand) -> anyhow::Result<()> {
+        match command {
+            ContainersCommand::List { account, database } => {
+                self.list_containers(&account, database).await
+            }
+            ContainersCommand::Show { target } => {
+                let account = self.resolve(&target.account).await?;
+                let container = self
+                    .management
+                    .get_container(&account, &target.database, &target.container)
+                    .await?;
+                writeln!(self.out, "database:      {}", target.database)?;
+                writeln!(self.out, "container:     {}", container.name)?;
+                writeln!(
+                    self.out,
+                    "partition key: {}",
+                    container.partition_key_paths.join(", ")
+                )?;
+                Ok(())
+            }
+            ContainersCommand::Create {
+                target,
+                partition_key,
+                throughput,
             } => {
                 let account = self.resolve(&target.account).await?;
                 self.management
@@ -70,26 +88,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 )?;
                 Ok(())
             }
-            Command::Containers {
-                command: ContainersCommand::Delete { target, yes },
-            } => self.delete_container(&target, yes).await,
-            Command::Containers {
-                command: ContainersCommand::Show { target },
-            } => {
-                let account = self.resolve(&target.account).await?;
-                let container = self
-                    .management
-                    .get_container(&account, &target.database, &target.container)
-                    .await?;
-                writeln!(self.out, "database:      {}", target.database)?;
-                writeln!(self.out, "container:     {}", container.name)?;
-                writeln!(
-                    self.out,
-                    "partition key: {}",
-                    container.partition_key_paths.join(", ")
-                )?;
-                Ok(())
-            }
+            ContainersCommand::Delete { target, yes } => self.delete_container(&target, yes).await,
         }
     }
 
