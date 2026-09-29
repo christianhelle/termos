@@ -89,11 +89,11 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     fn prompt(&self) -> String {
         match (&self.account, &self.current) {
             (Some(account), Some(current)) => format!(
-                "cosmoscli [{}/{}/{}]> ",
+                "[{}/{}/{}]> ",
                 account.name, current.database, current.container
             ),
-            (Some(account), None) => format!("cosmoscli [{}]> ", account.name),
-            (None, _) => "cosmoscli> ".to_string(),
+            (Some(account), None) => format!("[{}]> ", account.name),
+            (None, _) => "> ".to_string(),
         }
     }
 
@@ -775,11 +775,7 @@ Add --help to a command to see its options, for example /items get --help
 
         assert_eq!(
             *lines.prompts.borrow(),
-            vec![
-                "cosmoscli> ",
-                "cosmoscli [orders]> ",
-                "cosmoscli [orders/shop/carts]> "
-            ]
+            vec!["> ", "[orders]> ", "[orders/shop/carts]> "]
         );
     }
 

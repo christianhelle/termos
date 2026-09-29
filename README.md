@@ -65,13 +65,13 @@ Run `cosmoscli` without a command to stay in the tool and run many queries:
 ```text
 $ cosmoscli
 Type /help for commands, /exit or Ctrl-C to leave.
-cosmoscli> /accounts
+> /accounts
 Using account my-account
 Completed in 812 ms
-cosmoscli [my-account]> /containers
+[my-account]> /containers
 Using container shop/orders
 Completed in 1.04 s
-cosmoscli [my-account/shop/orders]> SELECT * FROM c WHERE c.total > 10
+[my-account/shop/orders]> SELECT * FROM c WHERE c.total > 10
 +-----+-----------+
 | id  | /tenantId |
 +=================+
