@@ -38,7 +38,8 @@ impl DataPlane for CosmosDataPlane {
         };
         let client = CosmosClient::builder()
             .build(reference, RoutingStrategy::PreferredRegions(Vec::new()))
-            .await?;
+            .await
+            .map_err(classify)?;
         let client = client
             .database_client(database)
             .container_client(container, None)
