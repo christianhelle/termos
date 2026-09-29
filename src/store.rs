@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::management::Account;
 
 /// How to authenticate to the Cosmos DB data plane.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Credential {
     Entra,
     Key(String),

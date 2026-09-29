@@ -82,7 +82,7 @@ fn app<W: Write>(
 ) -> App<Arm, CosmosDataPlane, W> {
     App {
         management: Arm::new(credential.clone()),
-        data: CosmosDataPlane { entra: credential },
+        data: CosmosDataPlane::new(credential),
         input: Box::new(std::io::stdin()),
         confirm: Box::new(TerminalConfirm),
         out,

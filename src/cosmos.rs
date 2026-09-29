@@ -1,6 +1,7 @@
 //! Data plane adapter backed by the Azure Cosmos DB SDK.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use azure_core::credentials::{Secret, TokenCredential};
 use azure_core::http::StatusCode;
@@ -16,7 +17,51 @@ use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
 
 /// Connects to containers with the Cosmos DB SDK.
 pub struct CosmosDataPlane {
-    pub entra: Arc<dyn TokenCredential>,
+    entra: Arc<dyn TokenCredential>,
+    /// Clients by account endpoint and credential, so another container of the
+    /// same account skips client setup.
+    clients: Mutex<HashMap<(String, Credential), CosmosClient>>,
+}
+
+impl CosmosDataPlane {
+    pub fn new(entra: Arc<dyn TokenCredential>) -> Self {
+        CosmosDataPlane {
+            entra,
+            clients: Mutex::default(),
+        }
+    }
+
+    async fn client(
+        &self,
+        account: &Account,
+        credential: Credential,
+    ) -> anyhow::Result<CosmosClient> {
+        let key = (account.endpoint.clone(), credential);
+        if let Some(client) = self
+            .clients
+            .lock()
+            .expect("clients lock poisoned")
+            .get(&key)
+        {
+            return Ok(client.clone());
+        }
+        let endpoint: AccountEndpoint = account.endpoint.parse()?;
+        let reference = match &key.1 {
+            Credential::Entra => AccountReference::with_credential(endpoint, self.entra.clone()),
+            Credential::Key(key) => {
+                AccountReference::with_authentication_key(endpoint, Secret::from(key.clone()))
+            }
+        };
+        let client = CosmosClient::builder()
+            .build(reference, RoutingStrategy::PreferredRegions(Vec::new()))
+            .await
+            .map_err(classify)?;
+        self.clients
+            .lock()
+            .expect("clients lock poisoned")
+            .insert(key, client.clone());
+        Ok(client)
+    }
 }
 
 impl DataPlane for CosmosDataPlane {
@@ -29,18 +74,9 @@ impl DataPlane for CosmosDataPlane {
         container: &str,
         credential: Credential,
     ) -> anyhow::Result<CosmosStore> {
-        let endpoint: AccountEndpoint = account.endpoint.parse()?;
-        let reference = match credential {
-            Credential::Entra => AccountReference::with_credential(endpoint, self.entra.clone()),
-            Credential::Key(key) => {
-                AccountReference::with_authentication_key(endpoint, Secret::from(key))
-            }
-        };
-        let client = CosmosClient::builder()
-            .build(reference, RoutingStrategy::PreferredRegions(Vec::new()))
-            .await
-            .map_err(classify)?;
-        let client = client
+        let client = self
+            .client(account, credential)
+            .await?
             .database_client(database)
             .container_client(container, None)
             .await
