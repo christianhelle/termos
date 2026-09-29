@@ -216,8 +216,8 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             return Ok(());
         }
         let question = format!(
-            "Delete {} documents with partition key {pk} from {}/{}?",
-            ids.len(),
+            "Delete {} with partition key {pk} from {}/{}?",
+            documents(ids.len()),
             target.database,
             target.container
         );
@@ -228,7 +228,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         for id in &ids {
             store.delete_item(id, pk).await?;
         }
-        writeln!(self.out, "Deleted {} documents", ids.len())?;
+        writeln!(self.out, "Deleted {}", documents(ids.len()))?;
         Ok(())
     }
 
@@ -292,6 +292,14 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         let table = render_rows(["name", "resource group", "location", "subscription"], rows);
         writeln!(self.out, "{table}")?;
         Ok(())
+    }
+}
+
+/// Counts documents in words, such as "1 document" or "3 documents".
+fn documents(count: usize) -> String {
+    match count {
+        1 => "1 document".to_string(),
+        n => format!("{n} documents"),
     }
 }
 
@@ -858,5 +866,20 @@ mod tests {
             *app.data.connections.borrow(),
             vec![Credential::Key("given==".into())]
         );
+    }
+
+    #[tokio::test]
+    async fn delete_partition_uses_singular_for_one_document() {
+        let mut app = orders_app(vec![json!({ "id": "c-1", "tenantId": "contoso" })]);
+        let confirm = ScriptedConfirm::answering(true);
+        app.confirm = Box::new(confirm.clone());
+
+        app.run(delete_contoso(false)).await.unwrap();
+
+        assert_eq!(
+            *confirm.asked.borrow(),
+            vec!["Delete 1 document with partition key \"contoso\" from shop/carts?"]
+        );
+        assert_eq!(output(&app), "Deleted 1 document\n");
     }
 }
