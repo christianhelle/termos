@@ -120,6 +120,11 @@ pub fn parse_primary_key(json: &str) -> anyhow::Result<String> {
     Ok(keys.primary_master_key)
 }
 
+pub fn parse_container(json: &str) -> anyhow::Result<Container> {
+    let arm: ArmContainer = serde_json::from_str(json)?;
+    Ok(arm.into())
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -239,5 +244,21 @@ mod tests {
         }"#;
 
         assert_eq!(parse_primary_key(json).unwrap(), "primary==");
+    }
+
+    #[test]
+    fn parses_single_container() {
+        let json = r#"{ "name": "events", "properties": { "resource": {
+            "id": "events",
+            "partitionKey": { "paths": ["/deviceId"], "kind": "Hash" }
+        } } }"#;
+
+        assert_eq!(
+            parse_container(json).unwrap(),
+            Container {
+                name: "events".into(),
+                partition_key_paths: vec!["/deviceId".into()],
+            }
+        );
     }
 }
