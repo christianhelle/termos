@@ -18,8 +18,10 @@ pub struct Page<T> {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ListResponse<T> {
     value: Vec<T>,
+    next_link: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -51,7 +53,7 @@ pub fn parse_accounts(json: &str) -> anyhow::Result<Page<Account>> {
         .collect();
     Ok(Page {
         items,
-        next_link: None,
+        next_link: response.next_link,
     })
 }
 
@@ -94,6 +96,18 @@ mod tests {
                 }],
                 next_link: None,
             }
+        );
+    }
+
+    #[test]
+    fn keeps_next_link_for_paging() {
+        let json = r#"{ "value": [], "nextLink": "https://management.azure.com/next?page=2" }"#;
+
+        let page = parse_accounts(json).unwrap();
+
+        assert_eq!(
+            page.next_link.as_deref(),
+            Some("https://management.azure.com/next?page=2")
         );
     }
 }
