@@ -198,6 +198,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             .iter()
             .map(|a| format!("{} ({}, {})", a.name, a.resource_group, a.location))
             .collect();
+        *self.app.known_accounts.borrow_mut() = accounts.clone();
         if let Some(index) = self.pick("Select an account", &labels)? {
             let account = accounts.swap_remove(index);
             writeln!(self.app.out, "Using account {}", account.name)?;
@@ -694,6 +695,21 @@ Completed in 0 ms
             "{}",
             output(&repl)
         );
+    }
+
+    #[tokio::test]
+    async fn listed_accounts_need_no_lookup_in_slash_commands() {
+        let lines = ScriptedLines::new(&[
+            "/accounts",
+            "/databases list",
+            "/databases list -a inventory",
+        ]);
+        let picker = ScriptedPicker::answering(&[Some(0)]);
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(repl.app.management.lookups.get(), 0);
     }
 
     #[tokio::test]
