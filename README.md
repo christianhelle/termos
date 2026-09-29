@@ -64,7 +64,7 @@ Run `cosmoscli` without a command to stay in the tool and run many queries:
 
 ```text
 $ cosmoscli
-Type /help for commands, /exit to leave.
+Type /help for commands, /exit or Ctrl-C to leave.
 cosmoscli> /accounts
 Using account my-account
 Completed in 812 ms
@@ -84,7 +84,7 @@ Completed in 143 ms
 - Anything that doesn't start with `/` is a query against the current container. `/output json` shows full JSON documents and `/output table` switches back.
 - Every CLI command also works as a slash command, and `-a`, `-d` and `-c` default to the current account and container, for example `/items get --id o-1 --pk contoso` or `/containers show`. Document writes need `--file`, since stdin is the prompt.
 - Each command and query reports how long it took. Time spent choosing from a list isn't counted.
-- `/help` lists the commands. `/exit`, `/quit` or Ctrl-D leaves. The up and down arrows go through earlier lines.
+- `/help` lists the commands. `/exit`, `/quit`, Ctrl-C or Ctrl-D leaves. The up and down arrows go through earlier lines.
 
 Partition key values given with `--pk` are strings. Use `--pk-json` for numbers, booleans or null, for example `--pk-json 42`.
 

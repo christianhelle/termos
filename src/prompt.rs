@@ -59,18 +59,20 @@ impl TerminalLines {
 
 impl LineReader for TerminalLines {
     fn read_line(&mut self, prompt: &str) -> anyhow::Result<Option<String>> {
-        match self.editor.readline(prompt) {
-            Ok(line) => {
-                if !line.trim().is_empty() {
-                    self.editor.add_history_entry(line.as_str())?;
-                }
-                Ok(Some(line))
-            }
-            // Ctrl-C drops the line being typed, Ctrl-D ends the session
-            Err(ReadlineError::Interrupted) => Ok(Some(String::new())),
-            Err(ReadlineError::Eof) => Ok(None),
-            Err(error) => Err(error.into()),
+        let line = session_line(self.editor.readline(prompt))?;
+        if let Some(line) = line.as_deref().filter(|l| !l.trim().is_empty()) {
+            self.editor.add_history_entry(line)?;
         }
+        Ok(line)
+    }
+}
+
+/// Turns what the line editor read into a line, or `None` when the session should end.
+fn session_line(read: Result<String, ReadlineError>) -> anyhow::Result<Option<String>> {
+    match read {
+        Ok(line) => Ok(Some(line)),
+        Err(ReadlineError::Interrupted | ReadlineError::Eof) => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -92,6 +94,20 @@ impl Picker for TerminalPicker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_typed_line_is_returned() {
+        assert_eq!(
+            session_line(Ok("SELECT * FROM c".into())).unwrap(),
+            Some("SELECT * FROM c".into())
+        );
+    }
+
+    #[test]
+    fn ctrl_c_and_ctrl_d_end_the_session() {
+        assert_eq!(session_line(Err(ReadlineError::Interrupted)).unwrap(), None);
+        assert_eq!(session_line(Err(ReadlineError::Eof)).unwrap(), None);
+    }
 
     #[test]
     fn only_y_or_yes_confirms() {

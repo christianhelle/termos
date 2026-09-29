@@ -34,7 +34,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         None => {
             // Unlocked stdout, so the line editor and pickers can draw on the terminal too
             let app = app(credential, cli.global, std::io::stdout());
-            println!("Type /help for commands, /exit to leave.");
+            println!("Type /help for commands, /exit or Ctrl-C to leave.");
             let mut repl = Repl::new(
                 app,
                 Box::new(TerminalLines::new()?),
