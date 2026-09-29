@@ -1,0 +1,99 @@
+use serde::Deserialize;
+
+/// A Cosmos DB account as returned by Azure Resource Manager.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    pub name: String,
+    pub subscription_id: String,
+    pub resource_group: String,
+    pub location: String,
+    pub endpoint: String,
+}
+
+/// One page of an Azure Resource Manager list response.
+#[derive(Debug, PartialEq)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub next_link: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListResponse<T> {
+    value: Vec<T>,
+}
+
+#[derive(Deserialize)]
+struct ArmAccount {
+    id: String,
+    name: String,
+    location: String,
+    properties: ArmAccountProperties,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArmAccountProperties {
+    document_endpoint: String,
+}
+
+pub fn parse_accounts(json: &str) -> anyhow::Result<Page<Account>> {
+    let response: ListResponse<ArmAccount> = serde_json::from_str(json)?;
+    let items = response
+        .value
+        .into_iter()
+        .map(|arm| Account {
+            subscription_id: id_segment(&arm.id, "subscriptions"),
+            resource_group: id_segment(&arm.id, "resourceGroups"),
+            name: arm.name,
+            location: arm.location,
+            endpoint: arm.properties.document_endpoint,
+        })
+        .collect();
+    Ok(Page {
+        items,
+        next_link: None,
+    })
+}
+
+/// Returns the segment following `key` in an ARM resource id.
+fn id_segment(id: &str, key: &str) -> String {
+    let mut segments = id.split('/');
+    segments
+        .by_ref()
+        .find(|segment| segment.eq_ignore_ascii_case(key));
+    segments.next().unwrap_or_default().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_account_list() {
+        let json = r#"{
+            "value": [{
+                "id": "/subscriptions/sub-1/resourceGroups/rg-data/providers/Microsoft.DocumentDB/databaseAccounts/orders",
+                "name": "orders",
+                "location": "West Europe",
+                "kind": "GlobalDocumentDB",
+                "properties": { "documentEndpoint": "https://orders.documents.azure.com:443/" }
+            }]
+        }"#;
+
+        let page = parse_accounts(json).unwrap();
+
+        assert_eq!(
+            page,
+            Page {
+                items: vec![Account {
+                    name: "orders".into(),
+                    subscription_id: "sub-1".into(),
+                    resource_group: "rg-data".into(),
+                    location: "West Europe".into(),
+                    endpoint: "https://orders.documents.azure.com:443/".into(),
+                }],
+                next_link: None,
+            }
+        );
+    }
+}
