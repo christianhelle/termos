@@ -92,6 +92,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 Some("accounts") if is_listing(&words) => self.pick_account().await,
                 Some("containers") if is_listing(&words) => self.pick_container().await,
                 Some("output") => self.set_output(&words[1..]),
+                Some("help") => self.help(),
                 _ => self.run_cli(words).await,
             },
             Input::Query(sql) => self.query(&sql).await,
@@ -138,6 +139,21 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
         };
         self.app.run(command).await?;
         Ok(Flow::Timed)
+    }
+
+    fn help(&mut self) -> anyhow::Result<Flow> {
+        write!(self.app.out, "{SESSION_HELP}")?;
+        let cli = Cli::command();
+        for command in cli.get_subcommands() {
+            let name = format!("/{}", command.get_name());
+            let about = command.get_about().map(ToString::to_string);
+            writeln!(self.app.out, "  {name:<19}  {}", about.unwrap_or_default())?;
+        }
+        writeln!(
+            self.app.out,
+            "Add --help to a command to see its options, for example /items get --help"
+        )?;
+        Ok(Flow::Untimed)
     }
 
     fn set_output(&mut self, args: &[String]) -> anyhow::Result<Flow> {
@@ -212,6 +228,17 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
         Ok(Flow::Timed)
     }
 }
+
+const SESSION_HELP: &str = "\
+Type SQL to query the current container, or one of these commands:
+  /accounts            Pick the current account
+  /containers          Pick the current container
+  /output json|table   Choose how query results are shown
+  /help                Show this help
+  /exit, /quit         Leave interactive mode
+
+CLI commands run as slash commands on the current account and container:
+";
 
 /// Gives every required argument with a default a value, so it may be left out.
 fn with_defaults(command: clap::Command, defaults: &[(&str, String)]) -> clap::Command {
@@ -665,6 +692,32 @@ Completed in 0 ms
             "{out}"
         );
         assert!(!out.contains("Completed in"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn help_lists_session_and_cli_commands() {
+        let lines = ScriptedLines::new(&["/help"]);
+        let mut repl = repl(&lines);
+
+        repl.run().await.unwrap();
+
+        let expected = "\
+Type SQL to query the current container, or one of these commands:
+  /accounts            Pick the current account
+  /containers          Pick the current container
+  /output json|table   Choose how query results are shown
+  /help                Show this help
+  /exit, /quit         Leave interactive mode
+
+CLI commands run as slash commands on the current account and container:
+  /accounts            Manage Cosmos DB accounts
+  /databases           Manage SQL databases on an account
+  /containers          Manage containers on an account
+  /query               Query documents in a container
+  /items               Read, write and delete documents in a container
+Add --help to a command to see its options, for example /items get --help
+";
+        assert_eq!(output(&repl), expected);
     }
 
     #[tokio::test]
