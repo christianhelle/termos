@@ -16,6 +16,11 @@ pub fn render_table(docs: &[Value], pk_path: &str) -> String {
     table.to_string()
 }
 
+/// Renders documents as a pretty-printed JSON array.
+pub fn render_json(docs: &[Value]) -> String {
+    serde_json::to_string_pretty(docs).expect("JSON values always serialize")
+}
+
 fn cell(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(s)) => s.clone(),
@@ -49,5 +54,12 @@ mod tests {
     #[test]
     fn empty_result_says_no_documents() {
         assert_eq!(render_table(&[], "/tenantId"), "No documents found.");
+    }
+
+    #[test]
+    fn json_renders_pretty_array() {
+        let docs = vec![json!({ "id": "1" }), json!({ "id": "2" })];
+        let expected = "[\n  {\n    \"id\": \"1\"\n  },\n  {\n    \"id\": \"2\"\n  }\n]";
+        assert_eq!(render_json(&docs), expected);
     }
 }
