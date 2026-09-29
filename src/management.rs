@@ -46,6 +46,13 @@ pub trait Management {
         partition_key_path: &str,
         throughput: Option<u32>,
     ) -> anyhow::Result<()>;
+
+    async fn delete_container(
+        &self,
+        account: &Account,
+        database: &str,
+        container: &str,
+    ) -> anyhow::Result<()>;
 }
 
 #[derive(Deserialize)]

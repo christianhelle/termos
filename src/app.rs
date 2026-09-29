@@ -70,6 +70,9 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 )?;
                 Ok(())
             }
+            Command::Containers {
+                command: ContainersCommand::Delete { target, yes },
+            } => self.delete_container(&target, yes).await,
             _ => todo!(),
         }
     }
@@ -152,6 +155,21 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 self.delete_partition(&target, &pk.value()?, yes).await
             }
         }
+    }
+
+    async fn delete_container(&mut self, target: &ContainerRef, yes: bool) -> anyhow::Result<()> {
+        let account = self.resolve(&target.account).await?;
+        let name = format!("{}/{}", target.database, target.container);
+        let question = format!("Delete container {name} and all of its documents?");
+        if !yes && !self.confirm.confirm(&question)? {
+            writeln!(self.out, "Aborted, nothing was deleted")?;
+            return Ok(());
+        }
+        self.management
+            .delete_container(&account, &target.database, &target.container)
+            .await?;
+        writeln!(self.out, "Deleted container {name}")?;
+        Ok(())
     }
 
     async fn delete_partition(
@@ -688,5 +706,44 @@ mod tests {
             ]
         );
         assert_eq!(output(&app), "Created container shop/wishlists\n");
+    }
+
+    fn delete_carts(yes: bool) -> Command {
+        Command::Containers {
+            command: ContainersCommand::Delete {
+                target: ContainerRef {
+                    container: "carts".into(),
+                    ..carts()
+                },
+                yes,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn containers_delete_asks_first_and_keeps_container_when_declined() {
+        let mut app = app(shop());
+        let confirm = ScriptedConfirm::answering(false);
+        app.confirm = Box::new(confirm.clone());
+
+        app.run(delete_carts(false)).await.unwrap();
+
+        assert_eq!(
+            *confirm.asked.borrow(),
+            vec!["Delete container shop/carts and all of its documents?"]
+        );
+        assert_eq!(app.management.databases.borrow()[0].1.len(), 1);
+        assert_eq!(output(&app), "Aborted, nothing was deleted\n");
+    }
+
+    #[tokio::test]
+    async fn containers_delete_removes_the_container_when_confirmed() {
+        let mut app = app(shop());
+        app.confirm = Box::new(ScriptedConfirm::answering(true));
+
+        app.run(delete_carts(false)).await.unwrap();
+
+        assert!(app.management.databases.borrow()[0].1.is_empty());
+        assert_eq!(output(&app), "Deleted container shop/carts\n");
     }
 }

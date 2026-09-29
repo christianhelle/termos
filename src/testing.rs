@@ -97,6 +97,20 @@ impl Management for FakeManagement {
         containers.push(container(name, partition_key_path));
         Ok(())
     }
+
+    async fn delete_container(
+        &self,
+        _account: &Account,
+        database: &str,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        for (db, containers) in self.databases.borrow_mut().iter_mut() {
+            if db == database {
+                containers.retain(|c| c.name != name);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Shared state behind a fake container.
