@@ -58,6 +58,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     async fn pick_account(&mut self) -> anyhow::Result<Flow> {
         let subscription = self.app.global.subscription.as_deref();
         let mut accounts = self.app.management.list_accounts(subscription).await?;
+        anyhow::ensure!(!accounts.is_empty(), "no Cosmos DB accounts found");
         let labels: Vec<String> = accounts
             .iter()
             .map(|a| format!("{} ({}, {})", a.name, a.resource_group, a.location))
@@ -226,6 +227,19 @@ mod tests {
 
         assert_eq!(repl.account, Some(account("orders")));
         assert_eq!(output(&repl), "Using account orders\n");
+    }
+
+    #[tokio::test]
+    async fn accounts_says_so_when_there_are_none_instead_of_picking() {
+        let lines = ScriptedLines::new(&["/accounts"]);
+        let picker = ScriptedPicker::default();
+        let mut repl = repl_picking(&lines, &picker);
+        repl.app.management.accounts.clear();
+
+        repl.run().await.unwrap();
+
+        assert!(picker.shown.borrow().is_empty());
+        assert_eq!(output(&repl), "error: no Cosmos DB accounts found\n");
     }
 
     #[tokio::test]
