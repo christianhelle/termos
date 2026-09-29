@@ -104,7 +104,7 @@ impl DataStore for CosmosStore {
             .read_item(to_partition_key(pk)?, id, None)
             .await
             .map_err(classify)?;
-        Ok(response.into_model().map_err(classify)?)
+        response.into_model().map_err(classify)
     }
 
     async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()> {
