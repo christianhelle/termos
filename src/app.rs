@@ -5,7 +5,7 @@ use crate::cli::{
     OutputFormat,
 };
 use crate::management::{Account, Management, resolve_account};
-use crate::output::{render_rows, render_table};
+use crate::output::{render_json, render_rows, render_table};
 use crate::store::{Credential, DataPlane, DataStore};
 
 /// Runs CLI commands against the control and data planes.
@@ -69,7 +69,7 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         let docs = store.query(sql, max).await?;
         let rendered = match output {
             OutputFormat::Table => render_table(&docs, store.partition_key_path()),
-            OutputFormat::Json => todo!(),
+            OutputFormat::Json => render_json(&docs),
         };
         writeln!(self.out, "{rendered}")?;
         Ok(())
@@ -269,5 +269,25 @@ mod tests {
 ";
         assert_eq!(output(&app), expected);
         assert_eq!(app.data.container.borrow().queries, vec!["SELECT * FROM c"]);
+    }
+
+    #[tokio::test]
+    async fn query_renders_json_documents_up_to_max() {
+        let mut app = orders_app(vec![
+            json!({ "id": "c-1", "tenantId": "contoso" }),
+            json!({ "id": "c-2", "tenantId": "fabrikam" }),
+        ]);
+
+        app.run(Command::Query {
+            target: orders(),
+            sql: "SELECT * FROM c".into(),
+            output: OutputFormat::Json,
+            max: Some(1),
+        })
+        .await
+        .unwrap();
+
+        let expected = "[\n  {\n    \"id\": \"c-1\",\n    \"tenantId\": \"contoso\"\n  }\n]\n";
+        assert_eq!(output(&app), expected);
     }
 }
