@@ -484,6 +484,7 @@ name = "cosmoscli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "azure_core",
  "azure_data_cosmos",
  "azure_identity",

@@ -7,6 +7,7 @@ license = "MIT"
 
 [dependencies]
 anyhow = "1.0.104"
+async-trait = "0.1"
 azure_core = { version = "1.1.0", default-features = false }
 azure_data_cosmos = { version = "=0.38.0", features = ["key_auth"] }
 azure_identity = "1.0"
@@ -20,4 +21,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 shlex = "2.0.1"
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
