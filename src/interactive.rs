@@ -217,6 +217,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelling_the_account_picker_keeps_the_current_account() {
+        let lines = ScriptedLines::new(&["/accounts", "/accounts"]);
+        let picker = ScriptedPicker::answering(&[Some(0), None]);
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(repl.account, Some(account("orders")));
+        assert_eq!(output(&repl), "Using account orders\n");
+    }
+
+    #[tokio::test]
     async fn errors_are_reported_and_the_session_goes_on() {
         let lines = ScriptedLines::new(&["/query \"SELECT", "/exit", "SELECT * FROM c"]);
         let mut repl = repl(&lines);
