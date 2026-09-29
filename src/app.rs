@@ -85,6 +85,12 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 let doc = store.read_item(&id, &pk.value()?).await?;
                 self.print_json(&doc)
             }
+            ItemsCommand::Delete { target, id, pk } => {
+                let store = self.connect(&target).await?;
+                store.delete_item(&id, &pk.value()?).await?;
+                writeln!(self.out, "Deleted document '{id}'")?;
+                Ok(())
+            }
             _ => todo!(),
         }
     }
@@ -339,5 +345,29 @@ mod tests {
             printed,
             json!({ "id": "c-1", "tenantId": "contoso", "total": 5 })
         );
+    }
+
+    #[tokio::test]
+    async fn items_delete_removes_only_that_document() {
+        let mut app = orders_app(vec![
+            json!({ "id": "c-1", "tenantId": "contoso" }),
+            json!({ "id": "c-2", "tenantId": "contoso" }),
+        ]);
+
+        app.run(Command::Items {
+            command: ItemsCommand::Delete {
+                target: orders(),
+                id: "c-1".into(),
+                pk: contoso_pk(),
+            },
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            app.data.container.borrow().docs,
+            vec![json!({ "id": "c-2", "tenantId": "contoso" })]
+        );
+        assert_eq!(output(&app), "Deleted document 'c-1'\n");
     }
 }

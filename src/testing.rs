@@ -149,6 +149,14 @@ impl DataStore for FakeStore {
         doc.cloned()
             .ok_or_else(|| anyhow::anyhow!("document '{id}' not found"))
     }
+
+    async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()> {
+        let mut container = self.container.borrow_mut();
+        let before = container.docs.len();
+        container.docs.retain(|doc| !self.matches(doc, id, pk));
+        anyhow::ensure!(container.docs.len() < before, "document '{id}' not found");
+        Ok(())
+    }
 }
 
 impl FakeStore {
