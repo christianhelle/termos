@@ -125,6 +125,14 @@ pub fn parse_container(json: &str) -> anyhow::Result<Container> {
     Ok(arm.into())
 }
 
+/// Finds an account by name. Account names are globally unique in Azure.
+pub fn resolve_account<'a>(accounts: &'a [Account], name: &str) -> anyhow::Result<&'a Account> {
+    let account = accounts
+        .iter()
+        .find(|account| account.name.eq_ignore_ascii_case(name));
+    Ok(account.unwrap())
+}
+
 fn parse_page<A: DeserializeOwned, T>(
     json: &str,
     map: impl FnMut(A) -> T,
@@ -260,5 +268,24 @@ mod tests {
                 partition_key_paths: vec!["/deviceId".into()],
             }
         );
+    }
+
+    fn account(name: &str) -> Account {
+        Account {
+            name: name.into(),
+            subscription_id: "sub-1".into(),
+            resource_group: "rg".into(),
+            location: "West Europe".into(),
+            endpoint: format!("https://{name}.documents.azure.com:443/"),
+        }
+    }
+
+    #[test]
+    fn resolves_account_by_name_ignoring_case() {
+        let accounts = vec![account("orders"), account("inventory")];
+
+        let found = resolve_account(&accounts, "Inventory").unwrap();
+
+        assert_eq!(found.name, "inventory");
     }
 }
