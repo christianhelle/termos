@@ -9,7 +9,7 @@ use cosmoscli::app::App;
 use cosmoscli::arm::Arm;
 use cosmoscli::cli::{Cli, GlobalArgs};
 use cosmoscli::cosmos::CosmosDataPlane;
-use cosmoscli::credential::CachedCredential;
+use cosmoscli::credential::{CachedCredential, scopes_needed};
 use cosmoscli::interactive::{Repl, SystemClock};
 use cosmoscli::prompt::{TerminalConfirm, TerminalLines, TerminalPicker};
 
@@ -40,6 +40,10 @@ fn skip_vm_metadata_probe() {
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let credential: Arc<dyn TokenCredential> =
         Arc::new(CachedCredential::new(DeveloperToolsCredential::new(None)?));
+    prefetch_tokens(
+        &credential,
+        scopes_needed(cli.command.as_ref(), &cli.global),
+    );
     match cli.command {
         Some(command) => {
             let mut app = app(credential, cli.global, std::io::stdout().lock());
@@ -57,6 +61,17 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             );
             repl.run().await
         }
+    }
+}
+
+/// Fetches tokens in the background, so the first requests find them in the cache.
+fn prefetch_tokens(credential: &Arc<dyn TokenCredential>, scopes: Vec<&'static str>) {
+    for scope in scopes {
+        let credential = credential.clone();
+        tokio::spawn(async move {
+            // A failure here resurfaces with context when the token is really needed
+            let _ = credential.get_token(&[scope], None).await;
+        });
     }
 }
 
