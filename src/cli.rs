@@ -67,6 +67,44 @@ pub enum ContainersCommand {
         #[arg(short, long)]
         database: Option<String>,
     },
+    /// Show a container and its partition key
+    Show {
+        #[command(flatten)]
+        target: ContainerRef,
+    },
+    /// Create a container
+    Create {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// Partition key path, for example /tenantId
+        #[arg(long)]
+        partition_key: String,
+        /// Provisioned throughput in RU/s
+        #[arg(long)]
+        throughput: Option<u32>,
+    },
+    /// Delete a container and all of its documents
+    Delete {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+/// Identifies a container on a Cosmos DB account.
+#[derive(Args, Debug, Clone, PartialEq)]
+pub struct ContainerRef {
+    /// Cosmos DB account name
+    #[arg(short, long)]
+    pub account: String,
+    /// Database name
+    #[arg(short, long)]
+    pub database: String,
+    /// Container name
+    #[arg(short, long)]
+    pub container: String,
 }
 
 #[cfg(test)]
@@ -120,6 +158,84 @@ mod tests {
                 command: ContainersCommand::List {
                     account: "shop-acct".into(),
                     database: Some("shop".into()),
+                }
+            }
+        );
+    }
+
+    fn target() -> ContainerRef {
+        ContainerRef {
+            account: "shop-acct".into(),
+            database: "shop".into(),
+            container: "orders".into(),
+        }
+    }
+
+    #[test]
+    fn parses_containers_create() {
+        let cli = parse(&[
+            "containers",
+            "create",
+            "-a",
+            "shop-acct",
+            "-d",
+            "shop",
+            "-c",
+            "orders",
+            "--partition-key",
+            "/tenantId",
+            "--throughput",
+            "400",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Containers {
+                command: ContainersCommand::Create {
+                    target: target(),
+                    partition_key: "/tenantId".into(),
+                    throughput: Some(400),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn parses_containers_show_and_delete() {
+        let show = parse(&[
+            "containers",
+            "show",
+            "-a",
+            "shop-acct",
+            "-d",
+            "shop",
+            "-c",
+            "orders",
+        ]);
+        let delete = parse(&[
+            "containers",
+            "delete",
+            "-a",
+            "shop-acct",
+            "-d",
+            "shop",
+            "-c",
+            "orders",
+            "--yes",
+        ]);
+
+        assert_eq!(
+            show.command,
+            Command::Containers {
+                command: ContainersCommand::Show { target: target() }
+            }
+        );
+        assert_eq!(
+            delete.command,
+            Command::Containers {
+                command: ContainersCommand::Delete {
+                    target: target(),
+                    yes: true
                 }
             }
         );
