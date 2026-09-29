@@ -9,14 +9,16 @@ use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
 use crate::management::{
-    Account, Container, Management, Page, parse_accounts, parse_container, parse_containers,
-    parse_databases, parse_primary_key, parse_subscriptions,
+    Account, Container, Management, Page, account_query, parse_accounts, parse_container,
+    parse_containers, parse_databases, parse_primary_key, parse_resource_graph_accounts,
+    parse_subscriptions, resolve_account,
 };
 
 const ENDPOINT: &str = "https://management.azure.com";
 const SCOPE: &str = "https://management.azure.com/.default";
 const COSMOS_API_VERSION: &str = "2024-11-15";
 const SUBSCRIPTIONS_API_VERSION: &str = "2022-12-01";
+const RESOURCE_GRAPH_API_VERSION: &str = "2022-10-01";
 const MAX_ATTEMPTS: u32 = 5;
 
 /// Talks to Azure Resource Manager with an Entra ID token.
@@ -158,6 +160,24 @@ impl Management for Arm {
             accounts.extend(self.list_all(url, parse_accounts).await?);
         }
         Ok(accounts)
+    }
+
+    /// Uses one Resource Graph query instead of listing accounts in every subscription.
+    async fn find_account(
+        &self,
+        name: &str,
+        subscription: Option<&str>,
+    ) -> anyhow::Result<Account> {
+        let url = format!(
+            "{ENDPOINT}/providers/Microsoft.ResourceGraph/resources?api-version={RESOURCE_GRAPH_API_VERSION}"
+        );
+        let mut body = json!({ "query": account_query(name)? });
+        if let Some(subscription) = subscription {
+            body["subscriptions"] = json!([subscription]);
+        }
+        let response = self.send(Method::POST, &url, Some(&body)).await?;
+        let accounts = parse_resource_graph_accounts(&response.text().await?)?;
+        resolve_account(&accounts, name).cloned()
     }
 
     async fn list_databases(&self, account: &Account) -> anyhow::Result<Vec<String>> {
