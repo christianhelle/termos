@@ -162,6 +162,8 @@ pub struct FakeDataPlane {
     pub entra_allowed: bool,
     pub container: Rc<RefCell<FakeContainer>>,
     pub connections: RefCell<Vec<Credential>>,
+    /// Credentials the data plane was asked to prepare clients for.
+    pub prepared: RefCell<Vec<Credential>>,
 }
 
 impl FakeDataPlane {
@@ -174,6 +176,7 @@ impl FakeDataPlane {
                 ..Default::default()
             })),
             connections: RefCell::default(),
+            prepared: RefCell::default(),
         }
     }
 }
@@ -196,6 +199,10 @@ impl DataPlane for FakeDataPlane {
             pk_path: self.pk_path.clone(),
             container: self.container.clone(),
         })
+    }
+
+    async fn prepare(&self, _account: &Account, credential: Credential) {
+        self.prepared.borrow_mut().push(credential);
     }
 }
 

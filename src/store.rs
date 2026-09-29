@@ -26,6 +26,10 @@ pub trait DataPlane {
         container: &str,
         credential: Credential,
     ) -> anyhow::Result<Self::Store>;
+
+    /// Gets ready to connect to the account's containers, such as by setting up a client.
+    /// Failures are left for [`DataPlane::connect`] to report.
+    async fn prepare(&self, _account: &Account, _credential: Credential) {}
 }
 
 /// Document operations on a single container.

@@ -232,7 +232,12 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
         let Some(account) = self.account.clone() else {
             anyhow::bail!("select an account with /accounts first");
         };
-        let mut containers = self.app.containers_of(&account, None).await?;
+        // Set up the data plane client while the containers are listed
+        let (containers, ()) = futures::join!(
+            self.app.containers_of(&account, None),
+            self.app.prepare(&account)
+        );
+        let mut containers = containers?;
         anyhow::ensure!(
             !containers.is_empty(),
             "no containers found on account {}",
@@ -545,6 +550,17 @@ mod tests {
             "Using account orders\nCompleted in 0 ms\nUsing container audit/events\nCompleted in 0 ms\n"
         );
         assert_eq!(*repl.app.data.connections.borrow(), vec![Credential::Entra]);
+    }
+
+    #[tokio::test]
+    async fn containers_prepares_the_data_plane_while_listing() {
+        let lines = ScriptedLines::new(&["/accounts", "/containers"]);
+        let picker = ScriptedPicker::answering(&[Some(0), None]);
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(*repl.app.data.prepared.borrow(), vec![Credential::Entra]);
     }
 
     #[tokio::test]

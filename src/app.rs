@@ -166,6 +166,13 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         }
     }
 
+    /// Gets the data plane ready for the account's containers. Failures surface on connect.
+    pub(crate) async fn prepare(&self, account: &Account) {
+        if let Ok(credential) = self.first_credential(account).await {
+            self.data.prepare(account, credential).await;
+        }
+    }
+
     /// The credential to try first for an account's documents, honouring the auth mode.
     async fn first_credential(&self, account: &Account) -> anyhow::Result<Credential> {
         // In auto mode a key is only fetched after Entra ID was refused for the account

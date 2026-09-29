@@ -90,6 +90,10 @@ impl DataPlane for CosmosDataPlane {
             .unwrap_or_else(|| "/id".into());
         Ok(CosmosStore { client, pk_path })
     }
+
+    async fn prepare(&self, account: &Account, credential: Credential) {
+        let _ = self.client(account, credential).await;
+    }
 }
 
 /// Drops the diagnostics JSON the SDK appends to service error messages.
