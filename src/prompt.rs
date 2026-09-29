@@ -5,6 +5,12 @@ pub trait Confirm {
     fn confirm(&mut self, message: &str) -> anyhow::Result<bool>;
 }
 
+/// Reads lines typed at an interactive prompt.
+pub trait LineReader {
+    /// Returns the next line, or `None` when input has ended.
+    fn read_line(&mut self, prompt: &str) -> anyhow::Result<Option<String>>;
+}
+
 /// Whether a typed answer means yes. Anything else, including an empty line, means no.
 fn is_yes(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")

@@ -1,13 +1,14 @@
 //! In-memory fakes for testing command handlers.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use serde_json::Value;
 
 use crate::management::{Account, Container, Management};
 use crate::partition::value_at_path;
-use crate::prompt::Confirm;
+use crate::prompt::{Confirm, LineReader};
 use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
 
 pub fn account(name: &str) -> Account {
@@ -274,5 +275,25 @@ impl Confirm for ScriptedConfirm {
     fn confirm(&mut self, message: &str) -> anyhow::Result<bool> {
         self.asked.borrow_mut().push(message.to_string());
         Ok(self.answer)
+    }
+}
+
+/// Hands out scripted lines, then reports the end of input.
+#[derive(Clone, Default)]
+pub struct ScriptedLines {
+    pub lines: Rc<RefCell<VecDeque<String>>>,
+}
+
+impl ScriptedLines {
+    pub fn new(lines: &[&str]) -> Self {
+        ScriptedLines {
+            lines: Rc::new(RefCell::new(lines.iter().map(|l| l.to_string()).collect())),
+        }
+    }
+}
+
+impl LineReader for ScriptedLines {
+    fn read_line(&mut self, _prompt: &str) -> anyhow::Result<Option<String>> {
+        Ok(self.lines.borrow_mut().pop_front())
     }
 }
