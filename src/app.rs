@@ -137,6 +137,14 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     ) -> anyhow::Result<()> {
         let store = self.connect(target).await?;
         let ids = store.ids_in_partition(pk).await?;
+        if ids.is_empty() {
+            writeln!(
+                self.out,
+                "No documents with partition key {pk} in {}/{}",
+                target.database, target.container
+            )?;
+            return Ok(());
+        }
         let question = format!(
             "Delete {} documents with partition key {pk} from {}/{}?",
             ids.len(),
@@ -607,5 +615,20 @@ mod tests {
 
         assert!(confirm.asked.borrow().is_empty());
         assert_eq!(app.data.container.borrow().docs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_partition_does_not_ask_when_the_partition_is_empty() {
+        let mut app = orders_app(vec![json!({ "id": "f-1", "tenantId": "fabrikam" })]);
+        let confirm = ScriptedConfirm::answering(true);
+        app.confirm = Box::new(confirm.clone());
+
+        app.run(delete_contoso(false)).await.unwrap();
+
+        assert!(confirm.asked.borrow().is_empty());
+        assert_eq!(
+            output(&app),
+            "No documents with partition key \"contoso\" in shop/carts\n"
+        );
     }
 }
