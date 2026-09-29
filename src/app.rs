@@ -6,8 +6,8 @@ use anyhow::Context;
 use serde_json::Value;
 
 use crate::cli::{
-    AccountsCommand, Command, ContainerRef, ContainersCommand, DatabasesCommand, GlobalArgs,
-    ItemsCommand, OutputFormat, PartitionKeyArg,
+    AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
+    GlobalArgs, ItemsCommand, OutputFormat, PartitionKeyArg,
 };
 use crate::management::{Account, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
@@ -103,12 +103,17 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     async fn connect(&self, target: &ContainerRef) -> anyhow::Result<D::Store> {
         let account = self.resolve(&target.account).await?;
         let (database, container) = (&target.database, &target.container);
-        let entra = self
+        let credential = match (&self.global.key, self.global.auth) {
+            (Some(key), _) => Credential::Key(key.clone()),
+            (None, AuthMode::Key) => Credential::Key(self.management.primary_key(&account).await?),
+            (None, AuthMode::Entra | AuthMode::Auto) => Credential::Entra,
+        };
+        let result = self
             .data
-            .connect(&account, database, container, Credential::Entra)
+            .connect(&account, database, container, credential)
             .await;
-        match entra {
-            Err(error) if error.is::<Unauthorized>() => {
+        match result {
+            Err(error) if self.global.auth == AuthMode::Auto && error.is::<Unauthorized>() => {
                 let key = self.management.primary_key(&account).await?;
                 self.data
                     .connect(&account, database, container, Credential::Key(key))
@@ -813,6 +818,43 @@ mod tests {
         assert_eq!(
             *app.data.connections.borrow(),
             vec![Credential::Entra, Credential::Key("primary==".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn entra_auth_does_not_fall_back_to_keys() {
+        let mut app = entra_forbidden_app();
+        app.global.auth = AuthMode::Entra;
+
+        let result = app.run(query_orders()).await;
+
+        assert!(result.is_err());
+        assert_eq!(*app.data.connections.borrow(), vec![Credential::Entra]);
+    }
+
+    #[tokio::test]
+    async fn key_auth_fetches_the_key_without_trying_entra() {
+        let mut app = orders_app(vec![]);
+        app.global.auth = AuthMode::Key;
+
+        app.run(query_orders()).await.unwrap();
+
+        assert_eq!(
+            *app.data.connections.borrow(),
+            vec![Credential::Key("primary==".into())]
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_key_is_used_as_is() {
+        let mut app = orders_app(vec![]);
+        app.global.key = Some("given==".into());
+
+        app.run(query_orders()).await.unwrap();
+
+        assert_eq!(
+            *app.data.connections.borrow(),
+            vec![Credential::Key("given==".into())]
         );
     }
 }
