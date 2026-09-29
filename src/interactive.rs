@@ -675,6 +675,18 @@ Completed in 0 ms
     }
 
     #[tokio::test]
+    async fn slash_commands_reuse_the_current_container_connection() {
+        let mut repl = selected(
+            &["SELECT * FROM c", "/items get --id c-1 --pk u-1"],
+            vec![json!({ "id": "c-1", "userId": "u-1" })],
+        );
+
+        repl.run().await.unwrap();
+
+        assert_eq!(repl.app.data.connections.borrow().len(), 1);
+    }
+
+    #[tokio::test]
     async fn slash_commands_can_name_another_account_explicitly() {
         let lines = ScriptedLines::new(&["/databases list -a orders"]);
         let mut repl = repl(&lines);
