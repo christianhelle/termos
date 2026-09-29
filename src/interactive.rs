@@ -4,11 +4,20 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crate::app::App;
-use crate::cli::OutputFormat;
+use clap::{CommandFactory, FromArgMatches};
+
+use crate::cli::{Cli, OutputFormat};
 use crate::management::{Account, Management};
 use crate::output::{render_json, render_table};
 use crate::prompt::{LineReader, Picker};
 use crate::store::{DataPlane, DataStore};
+
+/// The container queries run against, with its open connection.
+struct Current<S> {
+    database: String,
+    container: String,
+    store: S,
+}
 
 /// Tells the time, so tests can control how long things take.
 pub trait Clock {
@@ -34,8 +43,8 @@ pub struct Repl<M, D: DataPlane, W> {
     picking: Duration,
     /// The account commands and queries run against.
     account: Option<Account>,
-    /// The open connection to the container of the current account that queries run against.
-    store: Option<D::Store>,
+    /// The container of the current account that queries run against.
+    current: Option<Current<D::Store>>,
     /// How typed queries render their documents.
     output: OutputFormat,
 }
@@ -54,7 +63,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             clock,
             picking: Duration::ZERO,
             account: None,
-            store: None,
+            current: None,
             output: OutputFormat::Table,
         }
     }
@@ -83,7 +92,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 Some("accounts") if is_listing(&words) => self.pick_account().await,
                 Some("containers") if is_listing(&words) => self.pick_container().await,
                 Some("output") => self.set_output(&words[1..]),
-                _ => Ok(Flow::Timed),
+                _ => self.run_cli(words).await,
             },
             Input::Query(sql) => self.query(&sql).await,
             Input::Empty => Ok(Flow::Untimed),
@@ -91,7 +100,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     }
 
     async fn query(&mut self, sql: &str) -> anyhow::Result<Flow> {
-        let Some(store) = &self.store else {
+        let Some(Current { store, .. }) = &self.current else {
             anyhow::bail!(
                 "select an account with /accounts and a container with /containers first"
             );
@@ -102,6 +111,25 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             OutputFormat::Json => render_json(&docs),
         };
         writeln!(self.app.out, "{rendered}")?;
+        Ok(Flow::Timed)
+    }
+
+    /// Runs a CLI command, filling in the current account, database and container.
+    async fn run_cli(&mut self, words: Vec<String>) -> anyhow::Result<Flow> {
+        let mut defaults = Vec::new();
+        if let Some(account) = &self.account {
+            defaults.push(("account", account.name.clone()));
+        }
+        if let Some(current) = &self.current {
+            defaults.push(("database", current.database.clone()));
+            defaults.push(("container", current.container.clone()));
+        }
+        let matches = with_defaults(Cli::command(), &defaults)
+            .try_get_matches_from(std::iter::once("cosmoscli".to_string()).chain(words))?;
+        let Some(command) = Cli::from_arg_matches(&matches)?.command else {
+            anyhow::bail!("type a command after /, see /help");
+        };
+        self.app.run(command).await?;
         Ok(Flow::Timed)
     }
 
@@ -135,7 +163,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             let account = accounts.swap_remove(index);
             writeln!(self.app.out, "Using account {}", account.name)?;
             self.account = Some(account);
-            self.store = None;
+            self.current = None;
         }
         Ok(Flow::Timed)
     }
@@ -168,10 +196,29 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 "Using container {database}/{}",
                 container.name
             )?;
-            self.store = Some(store);
+            self.current = Some(Current {
+                database,
+                container: container.name,
+                store,
+            });
         }
         Ok(Flow::Timed)
     }
+}
+
+/// Gives every required argument with a default a value, so it may be left out.
+fn with_defaults(command: clap::Command, defaults: &[(&str, String)]) -> clap::Command {
+    command
+        .mut_args(|arg| {
+            let default = defaults.iter().find(|(id, _)| arg.get_id() == *id);
+            match default {
+                Some((_, value)) if arg.is_required_set() => {
+                    arg.default_value(value.clone()).required(false)
+                }
+                _ => arg,
+            }
+        })
+        .mut_subcommands(|sub| with_defaults(sub, defaults))
 }
 
 /// Whether slash command words ask for a picker, such as `/accounts` or `/accounts list`.
@@ -543,6 +590,46 @@ Completed in 0 ms
             "Using account orders\nCompleted in 10 ms\n\
              Using container shop/carts\nCompleted in 10 ms\n\
              No documents found.\nCompleted in 5 ms\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn slash_commands_run_cli_commands_on_the_current_container() {
+        let mut repl = selected(
+            &["/items get --id c-1 --pk u-1"],
+            vec![json!({ "id": "c-1", "userId": "u-1" })],
+        );
+
+        repl.run().await.unwrap();
+
+        assert_eq!(
+            output_after_selection(&repl),
+            "{\n  \"id\": \"c-1\",\n  \"userId\": \"u-1\"\n}\nCompleted in 0 ms\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn slash_commands_can_name_another_account_explicitly() {
+        let lines = ScriptedLines::new(&["/databases list -a orders"]);
+        let mut repl = repl(&lines);
+
+        repl.run().await.unwrap();
+
+        assert_eq!(output(&repl), "shop\naudit\nCompleted in 0 ms\n");
+    }
+
+    #[tokio::test]
+    async fn slash_commands_default_to_the_current_account() {
+        let lines = ScriptedLines::new(&["/accounts", "/databases list"]);
+        let picker = ScriptedPicker::answering(&[Some(0)]);
+        let mut repl = repl_picking(&lines, &picker);
+
+        repl.run().await.unwrap();
+
+        assert!(
+            output(&repl).ends_with("shop\naudit\nCompleted in 0 ms\n"),
+            "{}",
+            output(&repl)
         );
     }
 
