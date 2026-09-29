@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -38,6 +38,28 @@ pub enum Command {
         #[command(subcommand)]
         command: ContainersCommand,
     },
+    /// Query documents in a container
+    Query {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// Cosmos DB SQL query
+        #[arg(default_value = "SELECT * FROM c")]
+        sql: String,
+        /// Output format
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Table)]
+        output: OutputFormat,
+        /// Stop after this many documents
+        #[arg(long)]
+        max: Option<usize>,
+    },
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
+pub enum OutputFormat {
+    /// Table with the id and partition key of each document
+    Table,
+    /// Full JSON documents
+    Json,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -237,6 +259,49 @@ mod tests {
                     target: target(),
                     yes: true
                 }
+            }
+        );
+    }
+
+    #[test]
+    fn query_defaults_to_select_all_as_table() {
+        let cli = parse(&["query", "-a", "shop-acct", "-d", "shop", "-c", "orders"]);
+
+        assert_eq!(
+            cli.command,
+            Command::Query {
+                target: target(),
+                sql: "SELECT * FROM c".into(),
+                output: OutputFormat::Table,
+                max: None,
+            }
+        );
+    }
+
+    #[test]
+    fn query_accepts_sql_json_output_and_max() {
+        let cli = parse(&[
+            "query",
+            "-a",
+            "shop-acct",
+            "-d",
+            "shop",
+            "-c",
+            "orders",
+            "SELECT * FROM c WHERE c.total > 10",
+            "-o",
+            "json",
+            "--max",
+            "5",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Query {
+                target: target(),
+                sql: "SELECT * FROM c WHERE c.total > 10".into(),
+                output: OutputFormat::Json,
+                max: Some(5),
             }
         );
     }
