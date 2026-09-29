@@ -31,6 +31,12 @@ pub trait Management {
     async fn list_accounts(&self, subscription: Option<&str>) -> anyhow::Result<Vec<Account>>;
 
     async fn list_databases(&self, account: &Account) -> anyhow::Result<Vec<String>>;
+
+    async fn list_containers(
+        &self,
+        account: &Account,
+        database: &str,
+    ) -> anyhow::Result<Vec<Container>>;
 }
 
 #[derive(Deserialize)]

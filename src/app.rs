@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::cli::{AccountsCommand, Command, DatabasesCommand, GlobalArgs};
+use crate::cli::{AccountsCommand, Command, ContainersCommand, DatabasesCommand, GlobalArgs};
 use crate::management::{Account, Management, resolve_account};
 use crate::output::render_rows;
 
@@ -20,6 +20,9 @@ impl<M: Management, W: Write> App<M, W> {
             Command::Databases {
                 command: DatabasesCommand::List { account },
             } => self.list_databases(&account).await,
+            Command::Containers {
+                command: ContainersCommand::List { account, database },
+            } => self.list_containers(&account, database).await,
             _ => todo!(),
         }
     }
@@ -37,6 +40,28 @@ impl<M: Management, W: Write> App<M, W> {
         for database in self.management.list_databases(&account).await? {
             writeln!(self.out, "{database}")?;
         }
+        Ok(())
+    }
+
+    async fn list_containers(
+        &mut self,
+        account: &str,
+        database: Option<String>,
+    ) -> anyhow::Result<()> {
+        let account = self.resolve(account).await?;
+        let databases = match database {
+            Some(database) => vec![database],
+            None => self.management.list_databases(&account).await?,
+        };
+        let mut rows = Vec::new();
+        for database in databases {
+            for container in self.management.list_containers(&account, &database).await? {
+                let pk = container.partition_key_paths.join(", ");
+                rows.push([database.clone(), container.name, pk]);
+            }
+        }
+        let table = render_rows(["database", "container", "partition key"], rows);
+        writeln!(self.out, "{table}")?;
         Ok(())
     }
 
@@ -58,7 +83,7 @@ impl<M: Management, W: Write> App<M, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{FakeManagement, account};
+    use crate::testing::{FakeManagement, account, container};
 
     fn app(management: FakeManagement) -> App<FakeManagement, Vec<u8>> {
         App {
@@ -107,5 +132,58 @@ mod tests {
         .unwrap();
 
         assert_eq!(output(&app), "shop\naudit\n");
+    }
+
+    fn shop() -> FakeManagement {
+        FakeManagement::with_databases(
+            account("orders"),
+            &[
+                ("shop", &[container("carts", "/userId")]),
+                ("audit", &[container("events", "/deviceId")]),
+            ],
+        )
+    }
+
+    #[tokio::test]
+    async fn containers_list_covers_every_database_by_default() {
+        let mut app = app(shop());
+
+        app.run(Command::Containers {
+            command: ContainersCommand::List {
+                account: "orders".into(),
+                database: None,
+            },
+        })
+        .await
+        .unwrap();
+
+        let expected = "\
++----------+-----------+---------------+
+| database | container | partition key |
++======================================+
+| shop     | carts     | /userId       |
+|----------+-----------+---------------|
+| audit    | events    | /deviceId     |
++----------+-----------+---------------+
+";
+        assert_eq!(output(&app), expected);
+    }
+
+    #[tokio::test]
+    async fn containers_list_can_filter_by_database() {
+        let mut app = app(shop());
+
+        app.run(Command::Containers {
+            command: ContainersCommand::List {
+                account: "orders".into(),
+                database: Some("audit".into()),
+            },
+        })
+        .await
+        .unwrap();
+
+        let out = output(&app);
+        assert!(out.contains("events"), "{out}");
+        assert!(!out.contains("carts"), "{out}");
     }
 }

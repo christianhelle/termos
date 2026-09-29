@@ -60,4 +60,18 @@ impl Management for FakeManagement {
             .map(|(name, _)| name.clone())
             .collect())
     }
+
+    async fn list_containers(
+        &self,
+        _account: &Account,
+        database: &str,
+    ) -> anyhow::Result<Vec<Container>> {
+        Ok(self
+            .databases
+            .borrow()
+            .iter()
+            .find(|(name, _)| name == database)
+            .map(|(_, containers)| containers.clone())
+            .unwrap_or_default())
+    }
 }
