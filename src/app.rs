@@ -355,13 +355,13 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             Some(database) => vec![database],
             None => self.management.list_databases(account).await?,
         };
-        let mut containers = Vec::new();
-        for database in databases {
-            for container in self.management.list_containers(account, &database).await? {
-                containers.push((database.clone(), container));
-            }
-        }
-        Ok(containers)
+        let listings = databases.iter().map(|database| async move {
+            let containers = self.management.list_containers(account, database).await?;
+            anyhow::Ok(containers.into_iter().map(|c| (database.clone(), c)))
+        });
+        // Every database is listed at once, and results keep the database order
+        let containers = futures::future::try_join_all(listings).await?;
+        Ok(containers.into_iter().flatten().collect())
     }
 
     async fn list_accounts(&mut self) -> anyhow::Result<()> {
