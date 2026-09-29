@@ -9,6 +9,7 @@ use cosmoscli::app::App;
 use cosmoscli::arm::Arm;
 use cosmoscli::cli::{Cli, GlobalArgs};
 use cosmoscli::cosmos::CosmosDataPlane;
+use cosmoscli::credential::CachedCredential;
 use cosmoscli::interactive::{Repl, SystemClock};
 use cosmoscli::prompt::{TerminalConfirm, TerminalLines, TerminalPicker};
 
@@ -25,7 +26,8 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    let credential: Arc<dyn TokenCredential> = DeveloperToolsCredential::new(None)?;
+    let credential: Arc<dyn TokenCredential> =
+        Arc::new(CachedCredential::new(DeveloperToolsCredential::new(None)?));
     match cli.command {
         Some(command) => {
             let mut app = app(credential, cli.global, std::io::stdout().lock());
