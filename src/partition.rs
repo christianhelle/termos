@@ -26,4 +26,10 @@ mod tests {
             Some(&json!("Copenhagen"))
         );
     }
+
+    #[test]
+    fn missing_partition_key_is_none() {
+        let doc = json!({ "id": "1", "address": {} });
+        assert_eq!(value_at_path(&doc, "/address/city"), None);
+    }
 }
