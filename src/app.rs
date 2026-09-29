@@ -108,12 +108,14 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             (None, AuthMode::Key) => Credential::Key(self.management.primary_key(&account).await?),
             (None, AuthMode::Entra | AuthMode::Auto) => Credential::Entra,
         };
+        let tried_entra_first =
+            self.global.auth == AuthMode::Auto && credential == Credential::Entra;
         let result = self
             .data
             .connect(&account, database, container, credential)
             .await;
         match result {
-            Err(error) if self.global.auth == AuthMode::Auto && error.is::<Unauthorized>() => {
+            Err(error) if tried_entra_first && error.is::<Unauthorized>() => {
                 let key = self.management.primary_key(&account).await?;
                 self.data
                     .connect(&account, database, container, Credential::Key(key))
