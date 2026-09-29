@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
@@ -52,6 +54,81 @@ pub enum Command {
         #[arg(long)]
         max: Option<usize>,
     },
+    /// Read, write and delete documents in a container
+    Items {
+        #[command(subcommand)]
+        command: ItemsCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, PartialEq)]
+pub enum ItemsCommand {
+    /// Read a single document
+    Get {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// Document id
+        #[arg(long)]
+        id: String,
+        #[command(flatten)]
+        pk: PartitionKeyArg,
+    },
+    /// Create a document from a JSON file or stdin
+    Create {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// JSON file to read, stdin when omitted
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
+    /// Create or replace a document from a JSON file or stdin
+    Upsert {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// JSON file to read, stdin when omitted
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
+    /// Replace an existing document from a JSON file or stdin
+    Replace {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// JSON file to read, stdin when omitted
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
+    /// Delete a single document
+    Delete {
+        #[command(flatten)]
+        target: ContainerRef,
+        /// Document id
+        #[arg(long)]
+        id: String,
+        #[command(flatten)]
+        pk: PartitionKeyArg,
+    },
+    /// Delete every document with the given partition key
+    DeletePartition {
+        #[command(flatten)]
+        target: ContainerRef,
+        #[command(flatten)]
+        pk: PartitionKeyArg,
+        /// Skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+/// A partition key value given as a string or as raw JSON.
+#[derive(Args, Debug, Clone, PartialEq)]
+#[group(required = true, multiple = false)]
+pub struct PartitionKeyArg {
+    /// Partition key value as a string
+    #[arg(long)]
+    pub pk: Option<String>,
+    /// Partition key value as JSON, for numbers, booleans or null
+    #[arg(long)]
+    pub pk_json: Option<String>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -304,5 +381,97 @@ mod tests {
                 max: Some(5),
             }
         );
+    }
+
+    fn items(args: &[&str]) -> ItemsCommand {
+        let target = ["-a", "shop-acct", "-d", "shop", "-c", "orders"];
+        let all: Vec<&str> = std::iter::once("items")
+            .chain(args.iter().copied())
+            .chain(target)
+            .collect();
+        match parse(&all).command {
+            Command::Items { command } => command,
+            other => panic!("expected items command, got {other:?}"),
+        }
+    }
+
+    fn string_pk(value: &str) -> PartitionKeyArg {
+        PartitionKeyArg {
+            pk: Some(value.into()),
+            pk_json: None,
+        }
+    }
+
+    #[test]
+    fn parses_items_get_and_delete() {
+        assert_eq!(
+            items(&["get", "--id", "o-1", "--pk", "contoso"]),
+            ItemsCommand::Get {
+                target: target(),
+                id: "o-1".into(),
+                pk: string_pk("contoso"),
+            }
+        );
+        assert_eq!(
+            items(&["delete", "--id", "o-1", "--pk", "contoso"]),
+            ItemsCommand::Delete {
+                target: target(),
+                id: "o-1".into(),
+                pk: string_pk("contoso"),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_item_writes_from_file_or_stdin() {
+        assert_eq!(
+            items(&["create", "--file", "order.json"]),
+            ItemsCommand::Create {
+                target: target(),
+                file: Some("order.json".into()),
+            }
+        );
+        assert_eq!(
+            items(&["upsert"]),
+            ItemsCommand::Upsert {
+                target: target(),
+                file: None,
+            }
+        );
+        assert_eq!(
+            items(&["replace", "-f", "order.json"]),
+            ItemsCommand::Replace {
+                target: target(),
+                file: Some("order.json".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_delete_partition_with_yes() {
+        assert_eq!(
+            items(&["delete-partition", "--pk", "contoso", "--yes"]),
+            ItemsCommand::DeletePartition {
+                target: target(),
+                pk: string_pk("contoso"),
+                yes: true,
+            }
+        );
+    }
+
+    #[test]
+    fn partition_key_is_required() {
+        let args = [
+            "cosmoscli",
+            "items",
+            "delete-partition",
+            "-a",
+            "x",
+            "-d",
+            "y",
+            "-c",
+            "z",
+        ];
+        assert!(Cli::try_parse_from(args).is_err());
     }
 }
