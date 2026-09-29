@@ -1,7 +1,7 @@
 //! Interactive prompt session for running many commands and queries.
 
 use std::io::Write;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::App;
 use crate::cli::OutputFormat;
@@ -10,11 +10,28 @@ use crate::output::{render_json, render_table};
 use crate::prompt::{LineReader, Picker};
 use crate::store::{DataPlane, DataStore};
 
+/// Tells the time, so tests can control how long things take.
+pub trait Clock {
+    fn now(&self) -> Instant;
+}
+
+/// The real monotonic clock.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 /// Reads commands and queries from a prompt until the user leaves.
 pub struct Repl<M, D: DataPlane, W> {
     app: App<M, D, W>,
     lines: Box<dyn LineReader>,
     picker: Box<dyn Picker>,
+    clock: Box<dyn Clock>,
+    /// Time spent waiting for the user to pick, left out of the command's duration.
+    picking: Duration,
     /// The account commands and queries run against.
     account: Option<Account>,
     /// The open connection to the container of the current account that queries run against.
@@ -24,11 +41,18 @@ pub struct Repl<M, D: DataPlane, W> {
 }
 
 impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
-    pub fn new(app: App<M, D, W>, lines: Box<dyn LineReader>, picker: Box<dyn Picker>) -> Self {
+    pub fn new(
+        app: App<M, D, W>,
+        lines: Box<dyn LineReader>,
+        picker: Box<dyn Picker>,
+        clock: Box<dyn Clock>,
+    ) -> Self {
         Repl {
             app,
             lines,
             picker,
+            clock,
+            picking: Duration::ZERO,
             account: None,
             store: None,
             output: OutputFormat::Table,
@@ -38,11 +62,16 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     /// Runs until `/exit`, `/quit` or the end of input. Failed lines are reported and skipped.
     pub async fn run(&mut self) -> anyhow::Result<()> {
         while let Some(line) = self.lines.read_line("cosmoscli> ")? {
+            let started = self.clock.now();
+            self.picking = Duration::ZERO;
             match self.handle(&line).await {
                 Ok(Flow::Exit) => break,
-                Ok(Flow::Continue) => {}
+                Ok(Flow::Untimed) => continue,
+                Ok(Flow::Timed) => {}
                 Err(error) => writeln!(self.app.out, "error: {error:#}")?,
             }
+            let elapsed = self.clock.now() - started - self.picking;
+            writeln!(self.app.out, "Completed in {}", format_elapsed(elapsed))?;
         }
         Ok(())
     }
@@ -54,10 +83,10 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 Some("accounts") if is_listing(&words) => self.pick_account().await,
                 Some("containers") if is_listing(&words) => self.pick_container().await,
                 Some("output") => self.set_output(&words[1..]),
-                _ => Ok(Flow::Continue),
+                _ => Ok(Flow::Timed),
             },
             Input::Query(sql) => self.query(&sql).await,
-            Input::Empty => Ok(Flow::Continue),
+            Input::Empty => Ok(Flow::Untimed),
         }
     }
 
@@ -73,7 +102,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             OutputFormat::Json => render_json(&docs),
         };
         writeln!(self.app.out, "{rendered}")?;
-        Ok(Flow::Continue)
+        Ok(Flow::Timed)
     }
 
     fn set_output(&mut self, args: &[String]) -> anyhow::Result<Flow> {
@@ -83,7 +112,15 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             _ => anyhow::bail!("expected /output json or /output table"),
         };
         writeln!(self.app.out, "Query output is now {}", args[0])?;
-        Ok(Flow::Continue)
+        Ok(Flow::Timed)
+    }
+
+    /// Lets the user pick an item, keeping the time spent choosing out of the duration.
+    fn pick(&mut self, prompt: &str, items: &[String]) -> anyhow::Result<Option<usize>> {
+        let asked = self.clock.now();
+        let choice = self.picker.pick(prompt, items);
+        self.picking += self.clock.now() - asked;
+        choice
     }
 
     async fn pick_account(&mut self) -> anyhow::Result<Flow> {
@@ -94,20 +131,20 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             .iter()
             .map(|a| format!("{} ({}, {})", a.name, a.resource_group, a.location))
             .collect();
-        if let Some(index) = self.picker.pick("Select an account", &labels)? {
+        if let Some(index) = self.pick("Select an account", &labels)? {
             let account = accounts.swap_remove(index);
             writeln!(self.app.out, "Using account {}", account.name)?;
             self.account = Some(account);
             self.store = None;
         }
-        Ok(Flow::Continue)
+        Ok(Flow::Timed)
     }
 
     async fn pick_container(&mut self) -> anyhow::Result<Flow> {
-        let Some(account) = &self.account else {
+        let Some(account) = self.account.clone() else {
             anyhow::bail!("select an account with /accounts first");
         };
-        let mut containers = self.app.containers_of(account, None).await?;
+        let mut containers = self.app.containers_of(&account, None).await?;
         anyhow::ensure!(
             !containers.is_empty(),
             "no containers found on account {}",
@@ -120,11 +157,11 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
                 format!("{database}/{} ({pk})", c.name)
             })
             .collect();
-        if let Some(index) = self.picker.pick("Select a container", &labels)? {
+        if let Some(index) = self.pick("Select a container", &labels)? {
             let (database, container) = containers.swap_remove(index);
             let store = self
                 .app
-                .connect_to(account, &database, &container.name)
+                .connect_to(&account, &database, &container.name)
                 .await?;
             writeln!(
                 self.app.out,
@@ -133,7 +170,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             )?;
             self.store = Some(store);
         }
-        Ok(Flow::Continue)
+        Ok(Flow::Timed)
     }
 }
 
@@ -146,9 +183,10 @@ fn is_listing(words: &[String]) -> bool {
     }
 }
 
-/// Whether the session goes on after a line.
+/// Whether the session goes on after a line, and whether to show how long the line took.
 enum Flow {
-    Continue,
+    Timed,
+    Untimed,
     Exit,
 }
 
@@ -192,8 +230,8 @@ mod tests {
     use crate::cli::GlobalArgs;
     use crate::store::Credential;
     use crate::testing::{
-        FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker, account,
-        container,
+        FakeClock, FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker,
+        account, container,
     };
     use serde_json::json;
 
@@ -225,7 +263,12 @@ mod tests {
         let mut management = shop();
         management.accounts.push(account("inventory"));
         let app = App { management, ..app };
-        Repl::new(app, Box::new(lines.clone()), Box::new(picker.clone()))
+        Repl::new(
+            app,
+            Box::new(lines.clone()),
+            Box::new(picker.clone()),
+            Box::new(FakeClock::frozen()),
+        )
     }
 
     #[tokio::test]
@@ -259,7 +302,8 @@ mod tests {
 
         assert_eq!(
             output(&repl),
-            "error: select an account with /accounts and a container with /containers first\n"
+            "error: select an account with /accounts and a container with /containers first\n\
+             Completed in 0 ms\n"
         );
     }
 
@@ -279,7 +323,11 @@ mod tests {
                     "inventory (rg-data, West Europe)".to_string(),
                 ]]
             );
-            assert_eq!(output(&repl), "Using account inventory\n", "{command}");
+            assert_eq!(
+                output(&repl),
+                "Using account inventory\nCompleted in 0 ms\n",
+                "{command}"
+            );
             assert_eq!(repl.account, Some(account("inventory")));
         }
     }
@@ -293,7 +341,10 @@ mod tests {
         repl.run().await.unwrap();
 
         assert_eq!(repl.account, Some(account("orders")));
-        assert_eq!(output(&repl), "Using account orders\n");
+        assert_eq!(
+            output(&repl),
+            "Using account orders\nCompleted in 0 ms\nCompleted in 0 ms\n"
+        );
     }
 
     #[tokio::test]
@@ -306,7 +357,10 @@ mod tests {
         repl.run().await.unwrap();
 
         assert!(picker.shown.borrow().is_empty());
-        assert_eq!(output(&repl), "error: no Cosmos DB accounts found\n");
+        assert_eq!(
+            output(&repl),
+            "error: no Cosmos DB accounts found\nCompleted in 0 ms\n"
+        );
     }
 
     #[tokio::test]
@@ -320,7 +374,7 @@ mod tests {
         assert!(picker.shown.borrow().is_empty());
         assert_eq!(
             output(&repl),
-            "error: select an account with /accounts first\n"
+            "error: select an account with /accounts first\nCompleted in 0 ms\n"
         );
     }
 
@@ -338,7 +392,7 @@ mod tests {
         );
         assert_eq!(
             output(&repl),
-            "Using account orders\nUsing container audit/events\n"
+            "Using account orders\nCompleted in 0 ms\nUsing container audit/events\nCompleted in 0 ms\n"
         );
         assert_eq!(*repl.app.data.connections.borrow(), vec![Credential::Entra]);
     }
@@ -367,7 +421,7 @@ mod tests {
 ";
         assert_eq!(
             output(&repl),
-            format!("Using account orders\nUsing container shop/carts\n{table}{table}")
+            format!("{SELECTED}{table}Completed in 0 ms\n{table}Completed in 0 ms\n")
         );
         assert_eq!(
             repl.app.data.container.borrow().queries,
@@ -386,8 +440,9 @@ mod tests {
         repl.run().await.unwrap();
 
         assert!(output(&repl).ends_with(
-            "Using account inventory\n\
-             error: select an account with /accounts and a container with /containers first\n"
+            "Using account inventory\nCompleted in 0 ms\n\
+             error: select an account with /accounts and a container with /containers first\n\
+             Completed in 0 ms\n"
         ));
         assert!(repl.app.data.container.borrow().queries.is_empty());
     }
@@ -402,10 +457,14 @@ mod tests {
         repl.run().await.unwrap();
 
         assert_eq!(picker.shown.borrow().len(), 1);
-        assert!(output(&repl).ends_with("error: no containers found on account orders\n"));
+        assert!(
+            output(&repl)
+                .ends_with("error: no containers found on account orders\nCompleted in 0 ms\n")
+        );
     }
 
-    const SELECTED: &str = "Using account orders\nUsing container shop/carts\n";
+    const SELECTED: &str =
+        "Using account orders\nCompleted in 0 ms\nUsing container shop/carts\nCompleted in 0 ms\n";
 
     /// A session that picks the orders account and shop/carts container before the given lines.
     fn selected(lines: &[&str], docs: Vec<serde_json::Value>) -> TestRepl {
@@ -439,18 +498,22 @@ mod tests {
 
         let expected = "\
 Query output is now json
+Completed in 0 ms
 [
   {
     \"id\": \"c-1\",
     \"userId\": \"u-1\"
   }
 ]
+Completed in 0 ms
 Query output is now table
+Completed in 0 ms
 +-----+---------+
 | id  | /userId |
 +===============+
 | c-1 | u-1     |
 +-----+---------+
+Completed in 0 ms
 ";
         assert_eq!(output_after_selection(&repl), expected);
     }
@@ -463,8 +526,23 @@ Query output is now table
 
         assert_eq!(
             output_after_selection(&repl),
-            "error: expected /output json or /output table\n\
-             error: expected /output json or /output table\n"
+            "error: expected /output json or /output table\nCompleted in 0 ms\n\
+             error: expected /output json or /output table\nCompleted in 0 ms\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_command_and_query_reports_how_long_it_took_without_picking_time() {
+        let mut repl = selected(&["SELECT * FROM c", "", "/exit"], vec![]);
+        repl.clock = Box::new(FakeClock::stepping(Duration::from_millis(5)));
+
+        repl.run().await.unwrap();
+
+        assert_eq!(
+            output(&repl),
+            "Using account orders\nCompleted in 10 ms\n\
+             Using container shop/carts\nCompleted in 10 ms\n\
+             No documents found.\nCompleted in 5 ms\n"
         );
     }
 
@@ -475,7 +553,10 @@ Query output is now table
 
         repl.run().await.unwrap();
 
-        assert_eq!(output(&repl), "error: unbalanced quotes in command\n");
+        assert_eq!(
+            output(&repl),
+            "error: unbalanced quotes in command\nCompleted in 0 ms\n"
+        );
         assert_eq!(lines.lines.borrow().len(), 1);
     }
 

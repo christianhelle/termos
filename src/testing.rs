@@ -1,11 +1,13 @@
 //! In-memory fakes for testing command handlers.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::interactive::Clock;
 use crate::management::{Account, Container, Management};
 use crate::partition::value_at_path;
 use crate::prompt::{Confirm, LineReader, Picker};
@@ -318,5 +320,32 @@ impl Picker for ScriptedPicker {
     fn pick(&mut self, _prompt: &str, items: &[String]) -> anyhow::Result<Option<usize>> {
         self.shown.borrow_mut().push(items.to_vec());
         Ok(self.answers.borrow_mut().pop_front().flatten())
+    }
+}
+
+/// A clock that moves forward by a fixed step each time it is read.
+pub struct FakeClock {
+    now: Cell<Instant>,
+    step: Duration,
+}
+
+impl FakeClock {
+    pub fn stepping(step: Duration) -> Self {
+        FakeClock {
+            now: Cell::new(Instant::now()),
+            step,
+        }
+    }
+
+    pub fn frozen() -> Self {
+        Self::stepping(Duration::ZERO)
+    }
+}
+
+impl Clock for FakeClock {
+    fn now(&self) -> Instant {
+        let now = self.now.get();
+        self.now.set(now + self.step);
+        now
     }
 }
