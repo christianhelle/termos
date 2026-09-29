@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use crate::app::App;
 use clap::{CommandFactory, FromArgMatches};
 
-use crate::cli::{Cli, OutputFormat};
+use crate::cli::{Cli, Command, ItemsCommand, OutputFormat};
 use crate::management::{Account, Management};
 use crate::output::{render_json, render_table};
 use crate::prompt::{LineReader, Picker};
@@ -137,6 +137,10 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
         let Some(command) = Cli::from_arg_matches(&matches)?.command else {
             anyhow::bail!("type a command after /, see /help");
         };
+        anyhow::ensure!(
+            !reads_stdin(&command),
+            "pass --file with a JSON document in interactive mode"
+        );
         self.app.run(command).await?;
         Ok(Flow::Timed)
     }
@@ -239,6 +243,18 @@ Type SQL to query the current container, or one of these commands:
 
 CLI commands run as slash commands on the current account and container:
 ";
+
+/// Whether a command would read a document from stdin, which is the prompt here.
+fn reads_stdin(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Items {
+            command: ItemsCommand::Create { file: None, .. }
+                | ItemsCommand::Upsert { file: None, .. }
+                | ItemsCommand::Replace { file: None, .. }
+        }
+    )
+}
 
 /// Gives every required argument with a default a value, so it may be left out.
 fn with_defaults(command: clap::Command, defaults: &[(&str, String)]) -> clap::Command {
@@ -718,6 +734,24 @@ CLI commands run as slash commands on the current account and container:
 Add --help to a command to see its options, for example /items get --help
 ";
         assert_eq!(output(&repl), expected);
+    }
+
+    #[tokio::test]
+    async fn document_writes_need_a_file_since_stdin_is_the_prompt() {
+        for command in ["/items create", "/items upsert", "/items replace"] {
+            let mut repl = selected(&[command], vec![]);
+            repl.app.input = Box::new(r#"{ "id": "c-9", "userId": "u-1" }"#.as_bytes());
+
+            repl.run().await.unwrap();
+
+            assert_eq!(
+                output_after_selection(&repl),
+                "error: pass --file with a JSON document in interactive mode\n\
+                 Completed in 0 ms\n",
+                "{command}"
+            );
+            assert!(repl.app.data.container.borrow().docs.is_empty());
+        }
     }
 
     #[tokio::test]
