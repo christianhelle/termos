@@ -90,6 +90,11 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             anyhow::bail!("select an account with /accounts first");
         };
         let mut containers = self.app.containers_of(account, None).await?;
+        anyhow::ensure!(
+            !containers.is_empty(),
+            "no containers found on account {}",
+            account.name
+        );
         let labels: Vec<String> = containers
             .iter()
             .map(|(database, c)| {
@@ -367,6 +372,19 @@ mod tests {
              error: select an account with /accounts and a container with /containers first\n"
         ));
         assert!(repl.app.data.container.borrow().queries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn containers_says_so_when_the_account_has_none() {
+        let lines = ScriptedLines::new(&["/accounts", "/containers"]);
+        let picker = ScriptedPicker::answering(&[Some(0)]);
+        let mut repl = repl_picking(&lines, &picker);
+        repl.app.management.databases.borrow_mut().clear();
+
+        repl.run().await.unwrap();
+
+        assert_eq!(picker.shown.borrow().len(), 1);
+        assert!(output(&repl).ends_with("error: no containers found on account orders\n"));
     }
 
     #[tokio::test]
