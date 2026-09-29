@@ -6,6 +6,7 @@ pub mod partition;
 pub mod prompt;
 pub mod store;
 
+pub mod arm;
 pub mod cosmos;
 #[cfg(test)]
 mod testing;
