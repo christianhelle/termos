@@ -239,6 +239,12 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         self.management
             .delete_container(&account, &target.database, &target.container)
             .await?;
+        let key = (
+            account.name,
+            target.database.clone(),
+            target.container.clone(),
+        );
+        self.connections.borrow_mut().remove(&key);
         writeln!(self.out, "Deleted container {name}")?;
         Ok(())
     }
@@ -957,6 +963,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(app.data.connections.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_deleted_container_is_connected_to_afresh() {
+        let mut app = orders_app(vec![]);
+        app.confirm = Box::new(ScriptedConfirm::answering(true));
+
+        app.run(query_orders()).await.unwrap();
+        app.run(delete_carts(true)).await.unwrap();
+        app.run(query_orders()).await.unwrap();
+
+        assert_eq!(app.data.connections.borrow().len(), 2);
     }
 
     #[tokio::test]
