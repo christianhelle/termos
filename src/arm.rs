@@ -194,6 +194,14 @@ impl Management for Arm {
     }
 }
 
+/// How long to wait before retrying a throttled request.
+fn retry_delay(retry_after: Option<&str>) -> Duration {
+    let seconds = retry_after
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(5);
+    Duration::from_secs(seconds)
+}
+
 /// The Resource Manager id of a Cosmos DB account.
 fn account_id(account: &Account) -> String {
     format!(
@@ -222,6 +230,17 @@ fn create_container_body(name: &str, partition_key_path: &str, throughput: Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_delay_follows_retry_after_seconds() {
+        assert_eq!(retry_delay(Some("30")), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn retry_delay_defaults_to_five_seconds() {
+        assert_eq!(retry_delay(None), Duration::from_secs(5));
+        assert_eq!(retry_delay(Some("soon")), Duration::from_secs(5));
+    }
 
     #[test]
     fn builds_account_resource_id() {
