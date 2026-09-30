@@ -1,7 +1,7 @@
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// A Cosmos DB account as returned by Azure Resource Manager.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Account {
     pub name: String,
     pub subscription_id: String,

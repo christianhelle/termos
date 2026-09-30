@@ -1,4 +1,5 @@
 pub mod arm;
+pub mod cache;
 pub mod connector;
 pub mod cosmos;
 pub mod credential;

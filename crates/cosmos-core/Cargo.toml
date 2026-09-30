@@ -11,6 +11,7 @@ async-trait.workspace = true
 azure_core.workspace = true
 azure_data_cosmos.workspace = true
 clap = { workspace = true, optional = true }
+dirs = "7.0.0"
 futures.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -21,3 +22,6 @@ tokio.workspace = true
 [features]
 clap = ["dep:clap"]
 test-support = []
+
+[dev-dependencies]
+tempfile = "3.27.0"
