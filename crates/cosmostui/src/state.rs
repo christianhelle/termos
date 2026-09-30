@@ -104,6 +104,8 @@ pub struct TreeRow {
     pub node: Node,
     pub depth: usize,
     pub label: String,
+    /// Whether the node is open, for nodes that can open.
+    pub expanded: Option<bool>,
 }
 
 /// The message on the status line.
@@ -192,7 +194,10 @@ impl AppState {
         };
         let mut rows = Vec::new();
         for (a, node) in accounts.iter().enumerate() {
-            rows.push(row(Node::Account(a), 0, &node.account.name));
+            rows.push(TreeRow {
+                expanded: Some(node.expanded),
+                ..row(Node::Account(a), 0, &node.account.name)
+            });
             if !node.expanded {
                 continue;
             }
@@ -204,7 +209,10 @@ impl AppState {
                 }
                 Some(Load::Loaded(databases)) => {
                     for (d, database) in databases.iter().enumerate() {
-                        rows.push(row(Node::Database(a, d), 1, &database.name));
+                        rows.push(TreeRow {
+                            expanded: Some(database.expanded),
+                            ..row(Node::Database(a, d), 1, &database.name)
+                        });
                         if !database.expanded {
                             continue;
                         }
@@ -256,6 +264,7 @@ fn row(node: Node, depth: usize, label: &str) -> TreeRow {
         node,
         depth,
         label: label.to_string(),
+        expanded: None,
     }
 }
 

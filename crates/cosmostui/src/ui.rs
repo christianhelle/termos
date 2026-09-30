@@ -2,9 +2,9 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
 
 use crate::state::{AppState, Focus, Status};
 
@@ -19,11 +19,28 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     let [results, document] =
         Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(1)]).areas(body);
 
-    frame.render_widget(pane("Accounts", state, Focus::Tree), tree);
+    draw_tree(frame, state, tree);
     frame.render_widget(pane("Search", state, Focus::Search), search);
     frame.render_widget(pane("Results", state, Focus::Results), results);
     frame.render_widget(pane("Document", state, Focus::Document), document);
     draw_status(frame, state, status);
+}
+
+fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
+    let items = state.tree_rows().into_iter().map(|row| {
+        let marker = match row.expanded {
+            Some(true) => "▾ ",
+            Some(false) => "▸ ",
+            None => "  ",
+        };
+        let indent = "  ".repeat(row.depth);
+        ListItem::new(format!("{indent}{marker}{}", row.label))
+    });
+    let list = List::new(items)
+        .block(pane("Accounts", state, Focus::Tree))
+        .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
+    let mut list_state = ListState::default().with_selected(Some(state.tree_selected));
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// A bordered pane, highlighted when it has focus.
@@ -49,6 +66,9 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{Event, Msg, update};
+    use cosmos_core::testing::{account, container};
+    use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -84,6 +104,46 @@ mod tests {
             assert!(
                 shows(&screen, title),
                 "{title} missing from\n{}",
+                screen.join("\n")
+            );
+        }
+    }
+
+    fn send(state: &mut AppState, msg: Msg) {
+        update(state, Event::Msg(msg));
+    }
+
+    fn press(state: &mut AppState, code: KeyCode) {
+        update(state, Event::Key(KeyEvent::from(code)));
+    }
+
+    /// Orders expanded with its carts container open, and inventory collapsed.
+    fn browsing() -> AppState {
+        let (mut state, _) = AppState::new();
+        send(
+            &mut state,
+            Msg::AccountsLoaded(Ok(vec![account("orders"), account("inventory")])),
+        );
+        press(&mut state, KeyCode::Enter);
+        let containers = vec![("shop".to_string(), container("carts", "/tenantId"))];
+        send(
+            &mut state,
+            Msg::ContainersLoaded {
+                account: "orders".into(),
+                result: Ok(containers),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn draws_the_tree_with_markers_on_nodes_that_open() {
+        let screen = screen(&browsing());
+
+        for row in ["▾ orders", "  ▾ shop", "      carts", "▸ inventory"] {
+            assert!(
+                shows(&screen, row),
+                "{row} missing from\n{}",
                 screen.join("\n")
             );
         }
