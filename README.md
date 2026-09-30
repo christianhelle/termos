@@ -83,6 +83,7 @@ Completed in 143 ms
 ```
 
 - `/accounts` and `/containers` show a list you can filter by typing. The choice becomes the current account and container. Pick an account first, then a container. Queries only run once both are picked.
+- The account list is cached between runs, shared with `cosmostui`. If the list is still loading when you type `/accounts`, the cached one shows at once, and the next `/accounts` uses the fresh one.
 - Anything that doesn't start with `/` is a query against the current container. `/output json` shows full JSON documents and `/output table` switches back.
 - Every CLI command also works as a slash command, and `-a`, `-d` and `-c` default to the current account and container, for example `/items get --id o-1 --pk contoso` or `/containers show`. Document writes need `--file`, since stdin is the prompt.
 - Each command and query reports how long it took. Time spent choosing from a list isn't counted.
