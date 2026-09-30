@@ -23,3 +23,6 @@ serde_json.workspace = true
 shlex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+cosmos-core = { path = "../cosmos-core", features = ["clap", "test-support"] }
