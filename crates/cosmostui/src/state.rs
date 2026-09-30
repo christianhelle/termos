@@ -41,9 +41,17 @@ pub struct TreeRow {
     pub label: String,
 }
 
+/// The message on the status line.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Status {
+    Info(String),
+    Error(String),
+}
+
 /// Everything the screen shows.
 pub struct AppState {
     pub accounts: Load<Vec<AccountNode>>,
+    pub status: Status,
 }
 
 impl AppState {
@@ -51,6 +59,7 @@ impl AppState {
     pub fn new() -> (Self, Vec<Effect>) {
         let state = AppState {
             accounts: Load::Loading,
+            status: Status::Info("Loading accounts…".into()),
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -82,8 +91,12 @@ pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
                 .map(|account| AccountNode { account })
                 .collect();
             state.accounts = Load::Loaded(nodes);
+            state.status = Status::Info("Pick a container".into());
         }
-        Event::Msg(Msg::AccountsLoaded(Err(_))) => {}
+        Event::Msg(Msg::AccountsLoaded(Err(error))) => {
+            state.accounts = Load::Loaded(Vec::new());
+            state.status = Status::Error(error);
+        }
     }
     Vec::new()
 }
@@ -120,5 +133,18 @@ mod tests {
         );
 
         assert_eq!(outline(&state), vec!["orders", "inventory"]);
+    }
+
+    #[test]
+    fn reports_accounts_that_failed_to_load() {
+        let (mut state, _) = AppState::new();
+
+        update(
+            &mut state,
+            Event::Msg(Msg::AccountsLoaded(Err("az login first".into()))),
+        );
+
+        assert_eq!(state.status, Status::Error("az login first".into()));
+        assert!(outline(&state).is_empty());
     }
 }
