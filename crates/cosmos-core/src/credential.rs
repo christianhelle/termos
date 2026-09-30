@@ -62,6 +62,17 @@ impl TokenCredential for CachedCredential {
     }
 }
 
+/// Fetches tokens in the background, so the first requests find them in the cache.
+pub fn prefetch_tokens(credential: &Arc<dyn TokenCredential>, scopes: Vec<&'static str>) {
+    for scope in scopes {
+        let credential = credential.clone();
+        tokio::spawn(async move {
+            // A failure here resurfaces with context when the token is really needed
+            let _ = credential.get_token(&[scope], None).await;
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
