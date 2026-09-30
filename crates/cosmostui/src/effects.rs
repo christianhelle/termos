@@ -1,10 +1,14 @@
 //! Runs the background work that updates ask for.
 
+use std::pin::Pin;
 use std::time::Instant;
 
 use cosmos_core::connector::Connector;
 use cosmos_core::management::Management;
-use cosmos_core::store::{DataPlane, DataStore};
+use cosmos_core::store::{DataPlane, DataStore, Documents};
+use futures::StreamExt;
+use futures::stream::Peekable;
+use serde_json::Value;
 
 use crate::state::{Effect, Msg, QueryResult, Target};
 
@@ -44,8 +48,8 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
     }
 }
 
-/// The most documents a query shows.
-const MAX_DOCUMENTS: usize = 100;
+/// How many documents a query shows at a time.
+const PAGE_SIZE: usize = 100;
 
 async fn query<M: Management, D: DataPlane>(
     connector: &Connector<M, D>,
@@ -56,12 +60,27 @@ async fn query<M: Management, D: DataPlane>(
     let store = connector
         .connect_to(&target.account, &target.database, &target.container)
         .await?;
-    let docs = store.query(sql, Some(MAX_DOCUMENTS)).await?;
+    let mut docs = store.documents(sql).await?.peekable();
+    let (docs, more) = next_page(&mut docs).await?;
     Ok(QueryResult {
         docs,
+        more,
         pk_path: store.partition_key_path().to_string(),
         elapsed: started.elapsed(),
     })
+}
+
+/// Reads the next page of documents, and whether more follow it.
+async fn next_page(docs: &mut Peekable<Documents>) -> anyhow::Result<(Vec<Value>, bool)> {
+    let mut page = Vec::with_capacity(PAGE_SIZE);
+    while page.len() < PAGE_SIZE {
+        match docs.next().await {
+            Some(doc) => page.push(doc?),
+            None => return Ok((page, false)),
+        }
+    }
+    let more = Pin::new(docs).peek().await.is_some();
+    Ok((page, more))
 }
 
 /// An error with its causes, as one line for the status bar.
@@ -151,6 +170,7 @@ mod tests {
             panic!("unexpected {msg:?}");
         };
         assert_eq!(result.docs.len(), 100);
+        assert!(result.more);
         assert_eq!(result.pk_path, "/tenantId");
         assert_eq!(runner.connector.data.container.borrow().queries, vec![sql]);
     }
@@ -176,5 +196,36 @@ mod tests {
             panic!("unexpected {msg:?}");
         };
         assert!(error.starts_with("not authorized"), "{error}");
+    }
+
+    fn with_carts(count: usize) -> TestRunner {
+        let mut runner = runner();
+        let docs = (0..count)
+            .map(|i| json!({ "id": format!("c-{i}") }))
+            .collect();
+        runner.connector.data = FakeDataPlane::new("/tenantId", docs);
+        runner
+    }
+
+    fn query_carts(id: u64) -> Effect {
+        Effect::Query {
+            id,
+            target: carts(),
+            sql: "SELECT * FROM c".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_query_that_found_everything_has_no_more_documents() {
+        let msg = with_carts(100).run(query_carts(1)).await;
+
+        let Msg::QueryDone {
+            result: Ok(result), ..
+        } = msg
+        else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(result.docs.len(), 100);
+        assert!(!result.more);
     }
 }

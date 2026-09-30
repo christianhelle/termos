@@ -250,6 +250,7 @@ mod tests {
         ];
         let result = QueryResult {
             docs,
+            more: false,
             pk_path: "/tenantId".into(),
             elapsed: Duration::from_millis(40),
         };

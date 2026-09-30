@@ -49,6 +49,8 @@ pub enum Msg {
 #[derive(Debug)]
 pub struct QueryResult {
     pub docs: Vec<Value>,
+    /// Whether the query found more documents than these.
+    pub more: bool,
     /// The partition key path of the queried container.
     pub pk_path: String,
     pub elapsed: Duration,
@@ -824,6 +826,7 @@ mod tests {
     fn query_done(state: &mut AppState, id: u64, result: Result<Vec<Value>, String>) {
         let result = result.map(|docs| QueryResult {
             docs,
+            more: false,
             pk_path: "/tenantId".into(),
             elapsed: Duration::from_millis(250),
         });
