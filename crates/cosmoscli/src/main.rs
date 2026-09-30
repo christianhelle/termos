@@ -6,6 +6,7 @@ use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
 use cosmos_core::arm::Arm;
+use cosmos_core::cache::AccountCache;
 use cosmos_core::connector::Connector;
 use cosmos_core::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use cosmos_core::credential::{CachedCredential, prefetch_tokens};
@@ -45,7 +46,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             app.run(command).await
         }
         None => {
-            let accounts = prefetch_accounts(&credential, cli.global.subscription.clone());
+            let subscription = cli.global.subscription.clone();
+            let accounts = prefetch_accounts(&credential, subscription.clone());
             // Unlocked stdout, so the line editor and pickers can draw on the terminal too
             let app = app(credential, cli.global, std::io::stdout());
             println!("Type /help for commands, /exit or Ctrl-C to leave.");
@@ -56,18 +58,29 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 Box::new(SystemClock),
             )
             .with_account_prefetch(accounts);
+            if let Some(cache) = AccountCache::for_user(subscription.as_deref()) {
+                repl = repl.with_account_cache(cache);
+            }
             repl.run().await
         }
     }
 }
 
 /// Starts listing accounts in the background, so the first `/accounts` finds them ready.
+/// The list is also cached for the next run, even when `/accounts` is never used.
 fn prefetch_accounts(
     credential: &Arc<dyn TokenCredential>,
     subscription: Option<String>,
 ) -> AccountList {
     let arm = Arm::new(credential.clone());
-    let listing = tokio::spawn(async move { arm.list_accounts(subscription.as_deref()).await });
+    let listing = tokio::spawn(async move {
+        let accounts = arm.list_accounts(subscription.as_deref()).await?;
+        if let Some(cache) = AccountCache::for_user(subscription.as_deref()) {
+            // A cache that cannot be written only costs the next run its head start
+            let _ = cache.save(&accounts);
+        }
+        Ok(accounts)
+    });
     Box::pin(async move { listing.await? })
 }
 
