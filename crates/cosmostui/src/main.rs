@@ -1,1 +1,3 @@
+mod query;
+
 fn main() {}
