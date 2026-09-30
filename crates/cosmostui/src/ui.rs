@@ -178,7 +178,7 @@ fn draw_help(frame: &mut Frame) {
         .iter()
         .map(|(keys, action)| {
             Line::from(vec![
-                Span::styled(format!("{keys:<16}"), Style::new().fg(Color::Cyan)),
+                Span::styled(format!("{keys:<20}"), Style::new().fg(Color::Cyan)),
                 Span::raw(*action),
             ])
         })
