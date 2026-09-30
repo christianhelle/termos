@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 use crate::app::App;
 use clap::{CommandFactory, FromArgMatches};
+use cosmos_core::cache::AccountCache;
+use futures::FutureExt;
 
 use crate::cli::{Cli, Command, ItemsCommand, OutputFormat};
 use crate::output::{render_json, render_table};
@@ -52,6 +54,8 @@ pub struct Repl<M, D: DataPlane, W> {
     output: OutputFormat,
     /// An account list started ahead of time, used by the first `/accounts`.
     account_prefetch: Option<AccountList>,
+    /// Where account lists are saved, to show at once while a fresh one loads.
+    account_cache: Option<AccountCache>,
 }
 
 /// A list of accounts that may still be loading.
@@ -74,7 +78,14 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             current: None,
             output: OutputFormat::Table,
             account_prefetch: None,
+            account_cache: None,
         }
+    }
+
+    /// Saves account lists to a cache, and shows the cached list while a prefetch is running.
+    pub fn with_account_cache(mut self, cache: AccountCache) -> Self {
+        self.account_cache = Some(cache);
+        self
     }
 
     /// Lets the first `/accounts` use a list that started loading ahead of time.
@@ -206,14 +217,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
     }
 
     async fn pick_account(&mut self) -> anyhow::Result<Flow> {
-        let mut accounts = match self.account_prefetch.take() {
-            Some(prefetched) => {
-                let accounts = prefetched.await?;
-                self.app.connector.remember_accounts(&accounts);
-                accounts
-            }
-            None => self.app.connector.list_accounts().await?,
-        };
+        let mut accounts = self.accounts().await?;
         anyhow::ensure!(!accounts.is_empty(), "no Cosmos DB accounts found");
         let labels: Vec<String> = accounts
             .iter()
@@ -226,6 +230,41 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             self.current = None;
         }
         Ok(Flow::Timed)
+    }
+
+    /// The accounts to pick from: a finished prefetch, the cached list while the
+    /// prefetch is still running, or a fresh listing.
+    async fn accounts(&mut self) -> anyhow::Result<Vec<Account>> {
+        let accounts = match self
+            .account_prefetch
+            .as_mut()
+            .map(|p| p.as_mut().now_or_never())
+        {
+            Some(Some(prefetched)) => {
+                self.account_prefetch = None;
+                prefetched?
+            }
+            Some(None) => match self.account_cache.as_ref().and_then(AccountCache::load) {
+                Some(cached) => {
+                    // The prefetch keeps running for the next `/accounts`
+                    self.app.connector.remember_accounts(&cached);
+                    return Ok(cached);
+                }
+                None => {
+                    self.account_prefetch
+                        .take()
+                        .expect("prefetch is running")
+                        .await?
+                }
+            },
+            None => self.app.connector.list_accounts().await?,
+        };
+        self.app.connector.remember_accounts(&accounts);
+        if let Some(cache) = &self.account_cache {
+            // A cache that cannot be written only costs the next run its head start
+            let _ = cache.save(&accounts);
+        }
+        Ok(accounts)
     }
 
     async fn pick_container(&mut self) -> anyhow::Result<Flow> {
@@ -367,6 +406,7 @@ mod tests {
         FakeClock, FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker,
         account, container,
     };
+    use cosmos_core::cache::AccountCache;
     use cosmos_core::connector::{Connector, Settings};
     use cosmos_core::store::Credential;
     use serde_json::json;
@@ -512,6 +552,61 @@ mod tests {
             vec!["prefetched (rg-data, West Europe)"]
         );
         assert_eq!(picker.shown.borrow()[1].len(), 2);
+    }
+
+    fn labels(names: &[&str]) -> Vec<String> {
+        names
+            .iter()
+            .map(|name| format!("{name} (rg-data, West Europe)"))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn cached_accounts_show_at_once_while_the_prefetch_is_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AccountCache::in_dir(dir.path(), None);
+        cache.save(&[account("cached")]).unwrap();
+        let lines = ScriptedLines::new(&["/accounts"]);
+        let picker = ScriptedPicker::answering(&[None]);
+        let mut repl = repl_picking(&lines, &picker)
+            .with_account_cache(AccountCache::in_dir(dir.path(), None))
+            .with_account_prefetch(Box::pin(futures::future::pending()));
+
+        repl.run().await.unwrap();
+
+        assert_eq!(picker.shown.borrow()[0], labels(&["cached"]));
+    }
+
+    #[tokio::test]
+    async fn a_finished_prefetch_wins_over_the_cache_and_updates_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AccountCache::in_dir(dir.path(), None);
+        cache.save(&[account("cached")]).unwrap();
+        let lines = ScriptedLines::new(&["/accounts"]);
+        let picker = ScriptedPicker::answering(&[None]);
+        let prefetched = async { Ok(vec![account("prefetched")]) };
+        let mut repl = repl_picking(&lines, &picker)
+            .with_account_cache(AccountCache::in_dir(dir.path(), None))
+            .with_account_prefetch(Box::pin(prefetched));
+
+        repl.run().await.unwrap();
+
+        assert_eq!(picker.shown.borrow()[0], labels(&["prefetched"]));
+        assert_eq!(cache.load(), Some(vec![account("prefetched")]));
+    }
+
+    #[tokio::test]
+    async fn listing_accounts_updates_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let lines = ScriptedLines::new(&["/accounts"]);
+        let picker = ScriptedPicker::answering(&[None]);
+        let mut repl = repl_picking(&lines, &picker)
+            .with_account_cache(AccountCache::in_dir(dir.path(), None));
+
+        repl.run().await.unwrap();
+
+        let cached = AccountCache::in_dir(dir.path(), None).load().unwrap();
+        assert_eq!(cached.len(), 2);
     }
 
     #[tokio::test]
