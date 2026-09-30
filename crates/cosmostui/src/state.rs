@@ -89,6 +89,17 @@ pub struct AccountNode {
     pub databases: Option<Load<Vec<DatabaseNode>>>,
 }
 
+impl AccountNode {
+    /// An account whose databases were not asked for yet.
+    fn closed(account: Account) -> Self {
+        AccountNode {
+            account,
+            expanded: false,
+            databases: None,
+        }
+    }
+}
+
 /// A database in the tree, under its account.
 #[derive(Debug)]
 pub struct DatabaseNode {
@@ -206,6 +217,17 @@ impl AppState {
             loading_more: false,
         };
         (state, vec![Effect::LoadAccounts])
+    }
+
+    /// The state on startup, showing accounts saved by an earlier run while they refresh.
+    pub fn with_cached_accounts(cached: Option<Vec<Account>>) -> (Self, Vec<Effect>) {
+        let (mut state, effects) = Self::new();
+        if let Some(accounts) = cached {
+            let nodes = accounts.into_iter().map(AccountNode::closed).collect();
+            state.accounts = Load::Loaded(nodes);
+            state.status = Status::Info("Refreshing accounts…".into());
+        }
+        (state, effects)
     }
 
     /// The tree lines that are visible, top to bottom.
@@ -1272,5 +1294,22 @@ mod tests {
         press(&mut state, KeyCode::PageDown);
 
         assert_eq!(state.doc_scroll, 0);
+    }
+
+    #[test]
+    fn shows_cached_accounts_at_once_while_refreshing_them() {
+        let (state, effects) =
+            AppState::with_cached_accounts(Some(vec![account("orders"), account("inventory")]));
+
+        assert_eq!(effects, vec![Effect::LoadAccounts]);
+        assert_eq!(outline(&state), vec!["orders", "inventory"]);
+        assert_eq!(state.status, Status::Info("Refreshing accounts…".into()));
+    }
+
+    #[test]
+    fn without_cached_accounts_they_load_as_usual() {
+        let (state, _) = AppState::with_cached_accounts(None);
+
+        assert_eq!(outline(&state), vec!["loading accounts…"]);
     }
 }
