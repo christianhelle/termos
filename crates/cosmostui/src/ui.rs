@@ -50,6 +50,20 @@ fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
+/// The results title, with how many documents are shown and whether more can load.
+fn results_title(state: &AppState) -> String {
+    let count = state.results.len();
+    if state.loading_more {
+        format!("Results ({count}, loading…)")
+    } else if state.more {
+        format!("Results ({count}, more ↓)")
+    } else if state.target.is_some() {
+        format!("Results ({count})")
+    } else {
+        "Results".to_string()
+    }
+}
+
 fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
     let header = Row::new([Cell::from("id"), Cell::from(state.pk_path.as_str())])
         .style(Style::new().add_modifier(Modifier::BOLD));
@@ -61,7 +75,7 @@ fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
     });
     let table = Table::new(rows, [Constraint::Fill(1), Constraint::Fill(1)])
         .header(header)
-        .block(pane("Results", state, Focus::Results))
+        .block(pane(results_title(state), state, Focus::Results))
         .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED));
     let mut table_state = TableState::default().with_selected(Some(state.result_selected));
     frame.render_stateful_widget(table, area, &mut table_state);
@@ -88,7 +102,7 @@ fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// A bordered pane, highlighted when it has focus.
-fn pane<'a>(title: &'a str, state: &AppState, focus: Focus) -> Block<'a> {
+fn pane<'a>(title: impl Into<Line<'a>>, state: &AppState, focus: Focus) -> Block<'a> {
     let colour = if state.focus == focus {
         Color::Cyan
     } else {
@@ -335,5 +349,20 @@ mod tests {
     #[test]
     fn the_status_line_hints_at_the_help() {
         assert!(shows(&screen(&browsing()), "? help"));
+    }
+
+    #[test]
+    fn the_results_title_counts_documents_and_says_when_more_can_load() {
+        let mut state = with_results();
+        assert!(shows(&screen(&state), "Results (2)"));
+
+        state.more = true;
+        assert!(shows(
+            &screen(&state),
+            "Results (2, more ↓)"
+        ));
+
+        state.loading_more = true;
+        assert!(shows(&screen(&state), "Results (2, loading…)"));
     }
 }
