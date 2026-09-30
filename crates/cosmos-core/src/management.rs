@@ -30,16 +30,6 @@ pub trait Management {
     /// Lists accounts in one subscription, or in every accessible subscription.
     async fn list_accounts(&self, subscription: Option<&str>) -> anyhow::Result<Vec<Account>>;
 
-    /// Finds an account by name in one subscription, or in every accessible subscription.
-    async fn find_account(
-        &self,
-        name: &str,
-        subscription: Option<&str>,
-    ) -> anyhow::Result<Account> {
-        let accounts = self.list_accounts(subscription).await?;
-        resolve_account(&accounts, name).cloned()
-    }
-
     async fn list_databases(&self, account: &Account) -> anyhow::Result<Vec<String>>;
 
     async fn list_containers(
@@ -145,59 +135,6 @@ struct ArmKeys {
 pub fn parse_primary_key(json: &str) -> anyhow::Result<String> {
     let keys: ArmKeys = serde_json::from_str(json)?;
     Ok(keys.primary_master_key)
-}
-
-/// Finds an account by name. Account names are globally unique in Azure.
-pub fn resolve_account<'a>(accounts: &'a [Account], name: &str) -> anyhow::Result<&'a Account> {
-    accounts
-        .iter()
-        .find(|account| account.name.eq_ignore_ascii_case(name))
-        .ok_or_else(|| anyhow::anyhow!("Cosmos DB account '{name}' not found"))
-}
-
-/// Builds a Resource Graph query that finds one Cosmos DB account by name.
-pub fn account_query(name: &str) -> anyhow::Result<String> {
-    let name = name.to_ascii_lowercase();
-    let valid = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    anyhow::ensure!(valid, "'{name}' is not a valid Cosmos DB account name");
-    Ok(format!(
-        "resources \
-         | where type =~ 'microsoft.documentdb/databaseaccounts' and name =~ '{name}' \
-         | project id, name, location, documentEndpoint = tostring(properties.documentEndpoint)"
-    ))
-}
-
-/// Parses the accounts in a Resource Graph response to [`account_query`].
-#[derive(Deserialize)]
-struct GraphResponse {
-    data: Vec<GraphAccount>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GraphAccount {
-    id: String,
-    name: String,
-    location: String,
-    document_endpoint: String,
-}
-
-pub fn parse_resource_graph_accounts(json: &str) -> anyhow::Result<Vec<Account>> {
-    let response: GraphResponse = serde_json::from_str(json)?;
-    Ok(response
-        .data
-        .into_iter()
-        .map(|graph| Account {
-            subscription_id: id_segment(&graph.id, "subscriptions"),
-            resource_group: id_segment(&graph.id, "resourceGroups"),
-            name: graph.name,
-            location: graph.location,
-            endpoint: graph.document_endpoint,
-        })
-        .collect())
 }
 
 fn parse_page<A: DeserializeOwned, T>(
@@ -319,76 +256,5 @@ mod tests {
         }"#;
 
         assert_eq!(parse_primary_key(json).unwrap(), "primary==");
-    }
-
-    fn account(name: &str) -> Account {
-        Account {
-            name: name.into(),
-            subscription_id: "sub-1".into(),
-            resource_group: "rg".into(),
-            location: "West Europe".into(),
-            endpoint: format!("https://{name}.documents.azure.com:443/"),
-        }
-    }
-
-    #[test]
-    fn resolves_account_by_name_ignoring_case() {
-        let accounts = vec![account("orders"), account("inventory")];
-
-        let found = resolve_account(&accounts, "Inventory").unwrap();
-
-        assert_eq!(found.name, "inventory");
-    }
-
-    #[test]
-    fn unknown_account_is_an_error() {
-        let accounts = vec![account("orders")];
-
-        let error = resolve_account(&accounts, "billing").unwrap_err();
-
-        assert_eq!(error.to_string(), "Cosmos DB account 'billing' not found");
-    }
-
-    #[test]
-    fn account_query_finds_the_named_account() {
-        assert_eq!(
-            account_query("Orders-EU").unwrap(),
-            "resources \
-             | where type =~ 'microsoft.documentdb/databaseaccounts' and name =~ 'orders-eu' \
-             | project id, name, location, documentEndpoint = tostring(properties.documentEndpoint)"
-        );
-    }
-
-    #[test]
-    fn account_query_rejects_names_that_are_not_valid_account_names() {
-        assert!(account_query("x' or name != '").is_err());
-        assert!(account_query("").is_err());
-    }
-
-    #[test]
-    fn parses_resource_graph_accounts() {
-        let json = r#"{
-            "totalRecords": 1,
-            "count": 1,
-            "data": [{
-                "id": "/subscriptions/sub-1/resourceGroups/rg-data/providers/Microsoft.DocumentDB/databaseAccounts/orders",
-                "name": "orders",
-                "location": "swedencentral",
-                "documentEndpoint": "https://orders.documents.azure.com:443/"
-            }],
-            "facets": [],
-            "resultTruncated": "false"
-        }"#;
-
-        assert_eq!(
-            parse_resource_graph_accounts(json).unwrap(),
-            vec![Account {
-                name: "orders".into(),
-                subscription_id: "sub-1".into(),
-                resource_group: "rg-data".into(),
-                location: "swedencentral".into(),
-                endpoint: "https://orders.documents.azure.com:443/".into(),
-            }]
-        );
     }
 }

@@ -1,10 +1,10 @@
-//! Finds accounts and opens container connections, remembering both.
+//! Lists accounts and opens container connections, remembering the connections.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::management::{Account, Container, Management, resolve_account};
+use crate::management::{Account, Container, Management};
 use crate::store::{AuthMode, Credential, DataPlane, Unauthorized};
 
 /// Identifies a container across accounts: account, database and container names.
@@ -25,8 +25,6 @@ pub struct Connector<M, D: DataPlane> {
     pub management: M,
     pub data: D,
     pub settings: Settings,
-    /// Accounts found so far, so each name is only looked up once.
-    known_accounts: RefCell<Vec<Account>>,
     /// Open container connections, so each container is only connected to once.
     connections: RefCell<HashMap<ContainerKey, Rc<D::Store>>>,
     /// Account keys fetched so far, by account name.
@@ -39,41 +37,19 @@ impl<M: Management, D: DataPlane> Connector<M, D> {
             management,
             data,
             settings,
-            known_accounts: RefCell::default(),
             connections: RefCell::default(),
             account_keys: RefCell::default(),
         }
     }
 
-    /// Lists every account and remembers them, so later lookups by name need no request.
+    /// Lists every account, or those in the subscription the settings name.
     pub async fn list_accounts(&self) -> anyhow::Result<Vec<Account>> {
-        let accounts = self
-            .management
+        self.management
             .list_accounts(self.settings.subscription.as_deref())
-            .await?;
-        self.remember_accounts(&accounts);
-        Ok(accounts)
+            .await
     }
 
-    /// Remembers accounts listed elsewhere, such as ahead of time.
-    pub fn remember_accounts(&self, accounts: &[Account]) {
-        *self.known_accounts.borrow_mut() = accounts.to_vec();
-    }
-
-    /// Finds an account by name, looking each name up only once.
-    pub async fn resolve(&self, name: &str) -> anyhow::Result<Account> {
-        if let Ok(account) = resolve_account(&self.known_accounts.borrow(), name) {
-            return Ok(account.clone());
-        }
-        let account = self
-            .management
-            .find_account(name, self.settings.subscription.as_deref())
-            .await?;
-        self.known_accounts.borrow_mut().push(account.clone());
-        Ok(account)
-    }
-
-    /// Connects to a container of an already resolved account, reusing an earlier connection.
+    /// Connects to a container of an account, reusing an earlier connection.
     pub async fn connect_to(
         &self,
         account: &Account,
@@ -205,8 +181,9 @@ mod tests {
         database: &str,
         container: &str,
     ) -> anyhow::Result<()> {
-        let account = connector.resolve("orders").await?;
-        connector.connect_to(&account, database, container).await?;
+        connector
+            .connect_to(&account("orders"), database, container)
+            .await?;
         Ok(())
     }
 
@@ -276,26 +253,6 @@ mod tests {
             *connector.data.connections.borrow(),
             vec![Credential::Key("given==".into())]
         );
-    }
-
-    #[tokio::test]
-    async fn an_account_is_looked_up_once() {
-        let connector = connector(AuthMode::Auto, true);
-
-        connector.resolve("orders").await.unwrap();
-        connector.resolve("orders").await.unwrap();
-
-        assert_eq!(connector.management.lookups.get(), 1);
-    }
-
-    #[tokio::test]
-    async fn listed_accounts_need_no_lookup() {
-        let connector = connector(AuthMode::Auto, true);
-
-        connector.list_accounts().await.unwrap();
-        connector.resolve("orders").await.unwrap();
-
-        assert_eq!(connector.management.lookups.get(), 0);
     }
 
     #[tokio::test]
