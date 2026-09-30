@@ -5,11 +5,11 @@ use std::sync::Arc;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
+use cosmos_core::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use cosmos_core::credential::CachedCredential;
 use cosmoscli::app::App;
 use cosmoscli::arm::Arm;
 use cosmoscli::cli::{Cli, GlobalArgs};
-use cosmoscli::cosmos::CosmosDataPlane;
 use cosmoscli::credential::scopes_needed;
 use cosmoscli::interactive::{AccountList, Repl, SystemClock};
 use cosmoscli::management::Management;
@@ -17,7 +17,8 @@ use cosmoscli::prompt::{TerminalConfirm, TerminalLines, TerminalPicker};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    skip_vm_metadata_probe();
+    // SAFETY: called before the runtime starts, while this is the only thread
+    unsafe { skip_vm_metadata_probe() };
     let result = tokio::runtime::Runtime::new()
         .map_err(anyhow::Error::from)
         .and_then(|runtime| runtime.block_on(run(cli)));
@@ -27,15 +28,6 @@ fn main() -> ExitCode {
             eprintln!("error: {error:#}");
             ExitCode::FAILURE
         }
-    }
-}
-
-/// Stops the Cosmos DB SDK probing the Azure VM metadata service, which it only uses
-/// for diagnostics. Off Azure the probe waits 2 seconds to time out on the first connection.
-fn skip_vm_metadata_probe() {
-    if std::env::var_os("COSMOS_DISABLE_IMDS").is_none() {
-        // SAFETY: called before the runtime starts, while this is the only thread
-        unsafe { std::env::set_var("COSMOS_DISABLE_IMDS", "1") };
     }
 }
 

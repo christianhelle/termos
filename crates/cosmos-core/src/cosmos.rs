@@ -96,6 +96,19 @@ impl DataPlane for CosmosDataPlane {
     }
 }
 
+/// Stops the Cosmos DB SDK probing the Azure VM metadata service, which it only uses
+/// for diagnostics. Off Azure the probe waits 2 seconds to time out on the first connection.
+///
+/// # Safety
+///
+/// Sets an environment variable, so it must run before any other thread starts.
+pub unsafe fn skip_vm_metadata_probe() {
+    if std::env::var_os("COSMOS_DISABLE_IMDS").is_none() {
+        // SAFETY: the caller guarantees this is the only thread
+        unsafe { std::env::set_var("COSMOS_DISABLE_IMDS", "1") };
+    }
+}
+
 /// Drops the diagnostics JSON the SDK appends to service error messages.
 fn short_message(message: &str) -> &str {
     match message.find(", {\"Summary\"") {
