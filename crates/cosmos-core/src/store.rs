@@ -1,3 +1,5 @@
+use futures::stream::LocalBoxStream;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::Value;
 
 use crate::management::Account;
@@ -45,13 +47,23 @@ pub trait DataPlane {
     async fn prepare(&self, _account: &Account, _credential: Credential) {}
 }
 
+/// The documents a query finds, read as they are needed.
+pub type Documents = LocalBoxStream<'static, anyhow::Result<Value>>;
+
 /// Document operations on a single container.
 #[allow(async_fn_in_trait)]
 pub trait DataStore {
     /// The container's partition key path, for example `/tenantId`.
     fn partition_key_path(&self) -> &str;
 
-    async fn query(&self, sql: &str, max: Option<usize>) -> anyhow::Result<Vec<Value>>;
+    /// Runs a query, handing out its documents as they are read, page by page.
+    async fn documents(&self, sql: &str) -> anyhow::Result<Documents>;
+
+    /// Runs a query and collects up to `max` documents, or every document without a max.
+    async fn query(&self, sql: &str, max: Option<usize>) -> anyhow::Result<Vec<Value>> {
+        let docs = self.documents(sql).await?;
+        docs.take(max.unwrap_or(usize::MAX)).try_collect().await
+    }
 
     async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value>;
 

@@ -13,7 +13,7 @@ use futures::{StreamExt, TryStreamExt};
 use serde_json::Value;
 
 use crate::management::Account;
-use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
+use crate::store::{Credential, DataPlane, DataStore, Documents, Unauthorized};
 
 /// Connects to containers with the Cosmos DB SDK.
 pub struct CosmosDataPlane {
@@ -137,18 +137,13 @@ impl DataStore for CosmosStore {
         &self.pk_path
     }
 
-    async fn query(&self, sql: &str, max: Option<usize>) -> anyhow::Result<Vec<Value>> {
+    async fn documents(&self, sql: &str) -> anyhow::Result<Documents> {
         let items = self
             .client
             .query_items::<Value>(Query::from(sql), FeedScope::full_container(), None)
             .await
             .map_err(classify)?;
-        let docs = items
-            .take(max.unwrap_or(usize::MAX))
-            .try_collect()
-            .await
-            .map_err(classify)?;
-        Ok(docs)
+        Ok(items.map_err(classify).boxed_local())
     }
 
     async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value> {

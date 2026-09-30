@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use crate::management::{Account, Container, Management, resolve_account};
 use crate::partition::value_at_path;
-use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
+use crate::store::{Credential, DataPlane, DataStore, Documents, Unauthorized};
+use futures::StreamExt;
 
 pub fn account(name: &str) -> Account {
     Account {
@@ -213,11 +214,11 @@ impl DataStore for FakeStore {
     }
 
     /// Records the SQL and returns every document, since the fake cannot run SQL.
-    async fn query(&self, sql: &str, max: Option<usize>) -> anyhow::Result<Vec<Value>> {
+    async fn documents(&self, sql: &str) -> anyhow::Result<Documents> {
         let mut container = self.container.borrow_mut();
         container.queries.push(sql.to_string());
-        let limit = max.unwrap_or(usize::MAX);
-        Ok(container.docs.iter().take(limit).cloned().collect())
+        let docs = container.docs.clone();
+        Ok(futures::stream::iter(docs.into_iter().map(Ok)).boxed_local())
     }
 
     async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value> {
