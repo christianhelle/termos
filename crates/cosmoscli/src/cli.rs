@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use cosmos_core::connector::Settings;
 pub use cosmos_core::store::AuthMode;
 
 #[derive(Parser, Debug)]
@@ -31,6 +32,17 @@ pub struct GlobalArgs {
     /// Account key to use instead of fetching one from Resource Manager
     #[arg(long, global = true)]
     pub key: Option<String>,
+}
+
+impl GlobalArgs {
+    /// The connection settings these options ask for.
+    pub fn settings(&self) -> Settings {
+        Settings {
+            subscription: self.subscription.clone(),
+            auth: self.auth,
+            key: self.key.clone(),
+        }
+    }
 }
 
 #[derive(Subcommand, Debug, PartialEq)]

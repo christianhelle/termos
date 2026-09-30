@@ -1,40 +1,28 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::rc::Rc;
 
 use anyhow::Context;
+use cosmos_core::connector::Connector;
 use serde_json::Value;
 
 use crate::cli::{
-    AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
-    GlobalArgs, ItemsCommand, OutputFormat,
+    AccountsCommand, Command, ContainerRef, ContainersCommand, DatabasesCommand, ItemsCommand,
+    OutputFormat,
 };
 use crate::output::{render_json, render_rows, render_table};
 use crate::prompt::Confirm;
-use cosmos_core::management::{Account, Container, Management, resolve_account};
+use cosmos_core::management::Management;
 use cosmos_core::partition::value_at_path;
-use cosmos_core::store::{Credential, DataPlane, DataStore, Unauthorized};
-
-/// Identifies a container across accounts: account, database and container names.
-type ContainerKey = (String, String, String);
+use cosmos_core::store::{DataPlane, DataStore};
 
 /// Runs CLI commands against the control and data planes.
 pub struct App<M, D: DataPlane, W> {
-    pub management: M,
-    pub data: D,
+    pub connector: Connector<M, D>,
     /// Where documents are read from when no file is given.
     pub input: Box<dyn Read>,
     pub confirm: Box<dyn Confirm>,
     pub out: W,
-    pub global: GlobalArgs,
-    /// Accounts found so far, so each name is only looked up once.
-    pub known_accounts: RefCell<Vec<Account>>,
-    /// Open container connections, so each container is only connected to once.
-    pub connections: RefCell<HashMap<ContainerKey, Rc<D::Store>>>,
-    /// Account keys fetched so far, by account name.
-    pub account_keys: RefCell<HashMap<String, String>>,
 }
 
 impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
@@ -63,8 +51,9 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 self.list_containers(&account, database).await
             }
             ContainersCommand::Show { target } => {
-                let account = self.resolve(&target.account).await?;
+                let account = self.connector.resolve(&target.account).await?;
                 let container = self
+                    .connector
                     .management
                     .get_container(&account, &target.database, &target.container)
                     .await?;
@@ -82,8 +71,9 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
                 partition_key,
                 throughput,
             } => {
-                let account = self.resolve(&target.account).await?;
-                self.management
+                let account = self.connector.resolve(&target.account).await?;
+                self.connector
+                    .management
                     .create_container(
                         &account,
                         &target.database,
@@ -101,100 +91,6 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
             }
             ContainersCommand::Delete { target, yes } => self.delete_container(&target, yes).await,
         }
-    }
-
-    async fn resolve(&self, name: &str) -> anyhow::Result<Account> {
-        if let Ok(account) = resolve_account(&self.known_accounts.borrow(), name) {
-            return Ok(account.clone());
-        }
-        let account = self
-            .management
-            .find_account(name, self.global.subscription.as_deref())
-            .await?;
-        self.known_accounts.borrow_mut().push(account.clone());
-        Ok(account)
-    }
-
-    async fn connect(&self, target: &ContainerRef) -> anyhow::Result<Rc<D::Store>> {
-        let account = self.resolve(&target.account).await?;
-        self.connect_to(&account, &target.database, &target.container)
-            .await
-    }
-
-    /// Connects to a container of an already resolved account, reusing an earlier connection.
-    pub(crate) async fn connect_to(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-    ) -> anyhow::Result<Rc<D::Store>> {
-        let key = (
-            account.name.clone(),
-            database.to_string(),
-            container.to_string(),
-        );
-        if let Some(store) = self.connections.borrow().get(&key) {
-            return Ok(store.clone());
-        }
-        let store = Rc::new(self.open(account, database, container).await?);
-        self.connections.borrow_mut().insert(key, store.clone());
-        Ok(store)
-    }
-
-    /// Opens a new connection to a container, honouring the auth mode.
-    async fn open(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-    ) -> anyhow::Result<D::Store> {
-        let credential = self.first_credential(account).await?;
-        let tried_entra_first =
-            self.global.auth == AuthMode::Auto && credential == Credential::Entra;
-        let result = self
-            .data
-            .connect(account, database, container, credential)
-            .await;
-        match result {
-            Err(error) if tried_entra_first && error.is::<Unauthorized>() => {
-                let key = self.primary_key(account).await?;
-                self.data
-                    .connect(account, database, container, Credential::Key(key))
-                    .await
-            }
-            result => result,
-        }
-    }
-
-    /// Gets the data plane ready for the account's containers. Failures surface on connect.
-    pub(crate) async fn prepare(&self, account: &Account) {
-        if let Ok(credential) = self.first_credential(account).await {
-            self.data.prepare(account, credential).await;
-        }
-    }
-
-    /// The credential to try first for an account's documents, honouring the auth mode.
-    async fn first_credential(&self, account: &Account) -> anyhow::Result<Credential> {
-        // In auto mode a key is only fetched after Entra ID was refused for the account
-        let known_key = self.account_keys.borrow().get(&account.name).cloned();
-        Ok(match (&self.global.key, self.global.auth, known_key) {
-            (Some(key), _, _) => Credential::Key(key.clone()),
-            (None, AuthMode::Key, _) => Credential::Key(self.primary_key(account).await?),
-            (None, AuthMode::Auto, Some(key)) => Credential::Key(key),
-            (None, AuthMode::Entra | AuthMode::Auto, _) => Credential::Entra,
-        })
-    }
-
-    /// Fetches the account key once per account.
-    async fn primary_key(&self, account: &Account) -> anyhow::Result<String> {
-        if let Some(key) = self.account_keys.borrow().get(&account.name) {
-            return Ok(key.clone());
-        }
-        let key = self.management.primary_key(account).await?;
-        self.account_keys
-            .borrow_mut()
-            .insert(account.name.clone(), key.clone());
-        Ok(key)
     }
 
     async fn query(
@@ -257,23 +153,27 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         }
     }
 
+    async fn connect(&self, target: &ContainerRef) -> anyhow::Result<Rc<D::Store>> {
+        let account = self.connector.resolve(&target.account).await?;
+        self.connector
+            .connect_to(&account, &target.database, &target.container)
+            .await
+    }
+
     async fn delete_container(&mut self, target: &ContainerRef, yes: bool) -> anyhow::Result<()> {
-        let account = self.resolve(&target.account).await?;
+        let account = self.connector.resolve(&target.account).await?;
         let name = format!("{}/{}", target.database, target.container);
         let question = format!("Delete container {name} and all of its documents?");
         if !yes && !self.confirm.confirm(&question)? {
             writeln!(self.out, "Aborted, nothing was deleted")?;
             return Ok(());
         }
-        self.management
+        self.connector
+            .management
             .delete_container(&account, &target.database, &target.container)
             .await?;
-        let key = (
-            account.name,
-            target.database.clone(),
-            target.container.clone(),
-        );
-        self.connections.borrow_mut().remove(&key);
+        self.connector
+            .forget_container(&account, &target.database, &target.container);
         writeln!(self.out, "Deleted container {name}")?;
         Ok(())
     }
@@ -330,8 +230,8 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
     }
 
     async fn list_databases(&mut self, account: &str) -> anyhow::Result<()> {
-        let account = self.resolve(account).await?;
-        for database in self.management.list_databases(&account).await? {
+        let account = self.connector.resolve(account).await?;
+        for database in self.connector.management.list_databases(&account).await? {
             writeln!(self.out, "{database}")?;
         }
         Ok(())
@@ -342,8 +242,9 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         account: &str,
         database: Option<String>,
     ) -> anyhow::Result<()> {
-        let account = self.resolve(account).await?;
+        let account = self.connector.resolve(account).await?;
         let rows = self
+            .connector
             .containers_of(&account, database)
             .await?
             .into_iter()
@@ -357,30 +258,8 @@ impl<M: Management, D: DataPlane, W: Write> App<M, D, W> {
         Ok(())
     }
 
-    /// Lists the containers of one database, or of every database, with their database names.
-    pub(crate) async fn containers_of(
-        &self,
-        account: &Account,
-        database: Option<String>,
-    ) -> anyhow::Result<Vec<(String, Container)>> {
-        let databases = match database {
-            Some(database) => vec![database],
-            None => self.management.list_databases(account).await?,
-        };
-        let listings = databases.iter().map(|database| async move {
-            let containers = self.management.list_containers(account, database).await?;
-            anyhow::Ok(containers.into_iter().map(|c| (database.clone(), c)))
-        });
-        // Every database is listed at once, and results keep the database order
-        let containers = futures::future::try_join_all(listings).await?;
-        Ok(containers.into_iter().flatten().collect())
-    }
-
     async fn list_accounts(&mut self) -> anyhow::Result<()> {
-        let accounts = self
-            .management
-            .list_accounts(self.global.subscription.as_deref())
-            .await?;
+        let accounts = self.connector.list_accounts().await?;
         let rows = accounts
             .into_iter()
             .map(|a| [a.name, a.resource_group, a.location, a.subscription_id])
@@ -415,6 +294,7 @@ mod tests {
     use super::*;
     use crate::cli::PartitionKeyArg;
     use crate::testing::{FakeDataPlane, FakeManagement, ScriptedConfirm, account, container};
+    use cosmos_core::connector::Settings;
     use serde_json::json;
 
     type TestApp = App<FakeManagement, FakeDataPlane, Vec<u8>>;
@@ -425,15 +305,10 @@ mod tests {
 
     fn app_with_data(management: FakeManagement, data: FakeDataPlane) -> TestApp {
         App {
-            management,
-            data,
+            connector: Connector::new(management, data, Settings::default()),
             input: Box::new(std::io::empty()),
             confirm: Box::new(ScriptedConfirm::answering(false)),
             out: Vec::new(),
-            global: GlobalArgs::default(),
-            known_accounts: RefCell::default(),
-            connections: RefCell::default(),
-            account_keys: RefCell::default(),
         }
     }
 
@@ -564,7 +439,10 @@ mod tests {
 +-----+-----------+
 ";
         assert_eq!(output(&app), expected);
-        assert_eq!(app.data.container.borrow().queries, vec!["SELECT * FROM c"]);
+        assert_eq!(
+            app.connector.data.container.borrow().queries,
+            vec!["SELECT * FROM c"]
+        );
     }
 
     #[tokio::test]
@@ -636,7 +514,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            app.data.container.borrow().docs,
+            app.connector.data.container.borrow().docs,
             vec![json!({ "id": "c-2", "tenantId": "contoso" })]
         );
         assert_eq!(output(&app), "Deleted document 'c-1'\n");
@@ -657,7 +535,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            app.data.container.borrow().docs,
+            app.connector.data.container.borrow().docs,
             vec![json!({ "id": "c-9", "tenantId": "contoso" })]
         );
         assert_eq!(output(&app), "Created document 'c-9'\n");
@@ -688,7 +566,7 @@ mod tests {
 
         result.unwrap();
         assert_eq!(
-            app.data.container.borrow().docs,
+            app.connector.data.container.borrow().docs,
             vec![json!({ "id": "c-1", "tenantId": "contoso", "total": 2 })]
         );
         assert_eq!(output(&app), "Upserted document 'c-1'\n");
@@ -711,7 +589,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            app.data.container.borrow().docs,
+            app.connector.data.container.borrow().docs,
             vec![json!({ "id": "c-1", "tenantId": "contoso", "total": 3 })]
         );
         assert_eq!(output(&app), "Replaced document 'c-1'\n");
@@ -732,7 +610,7 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(app.data.container.borrow().docs.is_empty());
+        assert!(app.connector.data.container.borrow().docs.is_empty());
     }
 
     fn contoso_partition() -> Vec<serde_json::Value> {
@@ -765,7 +643,10 @@ mod tests {
             *confirm.asked.borrow(),
             vec!["Delete 2 documents with partition key \"contoso\" from shop/carts?"]
         );
-        assert_eq!(app.data.container.borrow().docs, contoso_partition());
+        assert_eq!(
+            app.connector.data.container.borrow().docs,
+            contoso_partition()
+        );
         assert_eq!(output(&app), "Aborted, nothing was deleted\n");
     }
 
@@ -777,7 +658,7 @@ mod tests {
         app.run(delete_contoso(false)).await.unwrap();
 
         assert_eq!(
-            app.data.container.borrow().docs,
+            app.connector.data.container.borrow().docs,
             vec![json!({ "id": "f-1", "tenantId": "fabrikam" })]
         );
         assert_eq!(output(&app), "Deleted 2 documents\n");
@@ -792,7 +673,7 @@ mod tests {
         app.run(delete_contoso(true)).await.unwrap();
 
         assert!(confirm.asked.borrow().is_empty());
-        assert_eq!(app.data.container.borrow().docs.len(), 1);
+        assert_eq!(app.connector.data.container.borrow().docs.len(), 1);
     }
 
     #[tokio::test]
@@ -832,7 +713,7 @@ mod tests {
         .await
         .unwrap();
 
-        let databases = app.management.databases.borrow();
+        let databases = app.connector.management.databases.borrow();
         assert_eq!(
             databases[0].1,
             vec![
@@ -867,7 +748,7 @@ mod tests {
             *confirm.asked.borrow(),
             vec!["Delete container shop/carts and all of its documents?"]
         );
-        assert_eq!(app.management.databases.borrow()[0].1.len(), 1);
+        assert_eq!(app.connector.management.databases.borrow()[0].1.len(), 1);
         assert_eq!(output(&app), "Aborted, nothing was deleted\n");
     }
 
@@ -878,7 +759,7 @@ mod tests {
 
         app.run(delete_carts(false)).await.unwrap();
 
-        assert!(app.management.databases.borrow()[0].1.is_empty());
+        assert!(app.connector.management.databases.borrow()[0].1.is_empty());
         assert_eq!(output(&app), "Deleted container shop/carts\n");
     }
 
@@ -912,119 +793,6 @@ mod tests {
         }
     }
 
-    fn entra_forbidden_app() -> TestApp {
-        let mut data = FakeDataPlane::new("/tenantId", vec![]);
-        data.entra_allowed = false;
-        app_with_data(shop(), data)
-    }
-
-    #[tokio::test]
-    async fn auto_auth_falls_back_to_the_account_key_when_entra_is_forbidden() {
-        let mut app = entra_forbidden_app();
-
-        app.run(query_orders()).await.unwrap();
-
-        assert_eq!(
-            *app.data.connections.borrow(),
-            vec![Credential::Entra, Credential::Key("primary==".into())]
-        );
-    }
-
-    #[tokio::test]
-    async fn auto_auth_remembers_entra_was_refused_for_the_account() {
-        let mut app = entra_forbidden_app();
-        let events = ContainerRef {
-            account: "orders".into(),
-            database: "audit".into(),
-            container: "events".into(),
-        };
-
-        app.run(query_orders()).await.unwrap();
-        app.run(Command::Query {
-            target: events,
-            sql: "SELECT * FROM c".into(),
-            output: OutputFormat::Json,
-            max: None,
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(
-            *app.data.connections.borrow(),
-            vec![
-                Credential::Entra,
-                Credential::Key("primary==".into()),
-                Credential::Key("primary==".into())
-            ]
-        );
-        assert_eq!(app.management.key_fetches.get(), 1);
-    }
-
-    #[tokio::test]
-    async fn entra_auth_does_not_fall_back_to_keys() {
-        let mut app = entra_forbidden_app();
-        app.global.auth = AuthMode::Entra;
-
-        let result = app.run(query_orders()).await;
-
-        assert!(result.is_err());
-        assert_eq!(*app.data.connections.borrow(), vec![Credential::Entra]);
-    }
-
-    #[tokio::test]
-    async fn key_auth_fetches_the_key_without_trying_entra() {
-        let mut app = orders_app(vec![]);
-        app.global.auth = AuthMode::Key;
-
-        app.run(query_orders()).await.unwrap();
-
-        assert_eq!(
-            *app.data.connections.borrow(),
-            vec![Credential::Key("primary==".into())]
-        );
-    }
-
-    #[tokio::test]
-    async fn explicit_key_is_used_as_is() {
-        let mut app = orders_app(vec![]);
-        app.global.key = Some("given==".into());
-
-        app.run(query_orders()).await.unwrap();
-
-        assert_eq!(
-            *app.data.connections.borrow(),
-            vec![Credential::Key("given==".into())]
-        );
-    }
-
-    #[tokio::test]
-    async fn an_account_is_looked_up_once_for_many_commands() {
-        let mut app = orders_app(vec![]);
-
-        app.run(query_orders()).await.unwrap();
-        app.run(query_orders()).await.unwrap();
-
-        assert_eq!(app.management.lookups.get(), 1);
-    }
-
-    #[tokio::test]
-    async fn commands_on_the_same_container_share_one_connection() {
-        let mut app = orders_app(vec![json!({ "id": "c-1", "tenantId": "contoso" })]);
-
-        app.run(query_orders()).await.unwrap();
-        app.run(Command::Items {
-            command: ItemsCommand::Get {
-                target: orders(),
-                id: "c-1".into(),
-                pk: contoso_pk(),
-            },
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(app.data.connections.borrow().len(), 1);
-    }
-
     #[tokio::test]
     async fn a_deleted_container_is_connected_to_afresh() {
         let mut app = orders_app(vec![]);
@@ -1034,7 +802,7 @@ mod tests {
         app.run(delete_carts(true)).await.unwrap();
         app.run(query_orders()).await.unwrap();
 
-        assert_eq!(app.data.connections.borrow().len(), 2);
+        assert_eq!(app.connector.data.connections.borrow().len(), 2);
     }
 
     #[tokio::test]

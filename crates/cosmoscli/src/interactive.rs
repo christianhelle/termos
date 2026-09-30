@@ -207,18 +207,18 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
 
     async fn pick_account(&mut self) -> anyhow::Result<Flow> {
         let mut accounts = match self.account_prefetch.take() {
-            Some(prefetched) => prefetched.await?,
-            None => {
-                let subscription = self.app.global.subscription.as_deref();
-                self.app.management.list_accounts(subscription).await?
+            Some(prefetched) => {
+                let accounts = prefetched.await?;
+                self.app.connector.remember_accounts(&accounts);
+                accounts
             }
+            None => self.app.connector.list_accounts().await?,
         };
         anyhow::ensure!(!accounts.is_empty(), "no Cosmos DB accounts found");
         let labels: Vec<String> = accounts
             .iter()
             .map(|a| format!("{} ({}, {})", a.name, a.resource_group, a.location))
             .collect();
-        *self.app.known_accounts.borrow_mut() = accounts.clone();
         if let Some(index) = self.pick("Select an account", &labels)? {
             let account = accounts.swap_remove(index);
             writeln!(self.app.out, "Using account {}", account.name)?;
@@ -234,8 +234,8 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
         };
         // Set up the data plane client while the containers are listed
         let (containers, ()) = futures::join!(
-            self.app.containers_of(&account, None),
-            self.app.prepare(&account)
+            self.app.connector.containers_of(&account, None),
+            self.app.connector.prepare(&account)
         );
         let mut containers = containers?;
         anyhow::ensure!(
@@ -254,6 +254,7 @@ impl<M: Management, D: DataPlane, W: Write> Repl<M, D, W> {
             let (database, container) = containers.swap_remove(index);
             let store = self
                 .app
+                .connector
                 .connect_to(&account, &database, &container.name)
                 .await?;
             writeln!(
@@ -362,11 +363,11 @@ pub fn format_elapsed(elapsed: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::GlobalArgs;
     use crate::testing::{
         FakeClock, FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker,
         account, container,
     };
+    use cosmos_core::connector::{Connector, Settings};
     use cosmos_core::store::Credential;
     use serde_json::json;
 
@@ -387,20 +388,15 @@ mod tests {
     }
 
     fn repl_picking(lines: &ScriptedLines, picker: &ScriptedPicker) -> TestRepl {
+        let mut management = shop();
+        management.accounts.push(account("inventory"));
+        let data = FakeDataPlane::new("/userId", vec![]);
         let app = App {
-            management: shop(),
-            data: FakeDataPlane::new("/userId", vec![]),
+            connector: Connector::new(management, data, Settings::default()),
             input: Box::new(std::io::empty()),
             confirm: Box::new(ScriptedConfirm::answering(false)),
             out: Vec::new(),
-            global: GlobalArgs::default(),
-            known_accounts: Default::default(),
-            connections: Default::default(),
-            account_keys: Default::default(),
         };
-        let mut management = shop();
-        management.accounts.push(account("inventory"));
-        let app = App { management, ..app };
         Repl::new(
             app,
             Box::new(lines.clone()),
@@ -490,7 +486,7 @@ mod tests {
         let lines = ScriptedLines::new(&["/accounts"]);
         let picker = ScriptedPicker::default();
         let mut repl = repl_picking(&lines, &picker);
-        repl.app.management.accounts.clear();
+        repl.app.connector.management.accounts.clear();
 
         repl.run().await.unwrap();
 
@@ -549,7 +545,10 @@ mod tests {
             output(&repl),
             "Using account orders\nCompleted in 0 ms\nUsing container audit/events\nCompleted in 0 ms\n"
         );
-        assert_eq!(*repl.app.data.connections.borrow(), vec![Credential::Entra]);
+        assert_eq!(
+            *repl.app.connector.data.connections.borrow(),
+            vec![Credential::Entra]
+        );
     }
 
     #[tokio::test]
@@ -560,7 +559,10 @@ mod tests {
 
         repl.run().await.unwrap();
 
-        assert_eq!(*repl.app.data.prepared.borrow(), vec![Credential::Entra]);
+        assert_eq!(
+            *repl.app.connector.data.prepared.borrow(),
+            vec![Credential::Entra]
+        );
     }
 
     #[tokio::test]
@@ -573,7 +575,7 @@ mod tests {
         ]);
         let picker = ScriptedPicker::answering(&[Some(0), Some(0)]);
         let mut repl = repl_picking(&lines, &picker);
-        repl.app.data =
+        repl.app.connector.data =
             FakeDataPlane::new("/userId", vec![json!({ "id": "c-1", "userId": "u-1" })]);
 
         repl.run().await.unwrap();
@@ -590,10 +592,10 @@ mod tests {
             format!("{SELECTED}{table}Completed in 0 ms\n{table}Completed in 0 ms\n")
         );
         assert_eq!(
-            repl.app.data.container.borrow().queries,
+            repl.app.connector.data.container.borrow().queries,
             vec!["SELECT * FROM c", "SELECT * FROM c WHERE c.userId = 'u-1'"]
         );
-        assert_eq!(repl.app.data.connections.borrow().len(), 1);
+        assert_eq!(repl.app.connector.data.connections.borrow().len(), 1);
     }
 
     #[tokio::test]
@@ -610,7 +612,15 @@ mod tests {
              error: select an account with /accounts and a container with /containers first\n\
              Completed in 0 ms\n"
         ));
-        assert!(repl.app.data.container.borrow().queries.is_empty());
+        assert!(
+            repl.app
+                .connector
+                .data
+                .container
+                .borrow()
+                .queries
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -618,7 +628,7 @@ mod tests {
         let lines = ScriptedLines::new(&["/accounts", "/containers"]);
         let picker = ScriptedPicker::answering(&[Some(0)]);
         let mut repl = repl_picking(&lines, &picker);
-        repl.app.management.databases.borrow_mut().clear();
+        repl.app.connector.management.databases.borrow_mut().clear();
 
         repl.run().await.unwrap();
 
@@ -640,7 +650,7 @@ mod tests {
             .collect();
         let picker = ScriptedPicker::answering(&[Some(0), Some(0)]);
         let mut repl = repl_picking(&ScriptedLines::new(&lines), &picker);
-        repl.app.data = FakeDataPlane::new("/userId", docs);
+        repl.app.connector.data = FakeDataPlane::new("/userId", docs);
         repl
     }
 
@@ -736,7 +746,7 @@ Completed in 0 ms
 
         repl.run().await.unwrap();
 
-        assert_eq!(repl.app.data.connections.borrow().len(), 1);
+        assert_eq!(repl.app.connector.data.connections.borrow().len(), 1);
     }
 
     #[tokio::test]
@@ -776,7 +786,7 @@ Completed in 0 ms
 
         repl.run().await.unwrap();
 
-        assert_eq!(repl.app.management.lookups.get(), 0);
+        assert_eq!(repl.app.connector.management.lookups.get(), 0);
     }
 
     #[tokio::test]
@@ -846,7 +856,7 @@ Add --help to a command to see its options, for example /items get --help
                  Completed in 0 ms\n",
                 "{command}"
             );
-            assert!(repl.app.data.container.borrow().docs.is_empty());
+            assert!(repl.app.connector.data.container.borrow().docs.is_empty());
         }
     }
 

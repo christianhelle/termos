@@ -6,6 +6,7 @@ use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
 use cosmos_core::arm::Arm;
+use cosmos_core::connector::Connector;
 use cosmos_core::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use cosmos_core::credential::{CachedCredential, prefetch_tokens};
 use cosmos_core::management::Management;
@@ -76,14 +77,13 @@ fn app<W: Write>(
     out: W,
 ) -> App<Arm, CosmosDataPlane, W> {
     App {
-        management: Arm::new(credential.clone()),
-        data: CosmosDataPlane::new(credential),
+        connector: Connector::new(
+            Arm::new(credential.clone()),
+            CosmosDataPlane::new(credential),
+            global.settings(),
+        ),
         input: Box::new(std::io::stdin()),
         confirm: Box::new(TerminalConfirm),
         out,
-        global,
-        known_accounts: Default::default(),
-        connections: Default::default(),
-        account_keys: Default::default(),
     }
 }
