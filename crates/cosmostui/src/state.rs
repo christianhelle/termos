@@ -148,6 +148,20 @@ impl AppState {
             Load::Loading | Load::Failed(_) => None,
         }
     }
+
+    fn database_mut(&mut self, account: usize, index: usize) -> Option<&mut DatabaseNode> {
+        match &mut self.account_mut(account)?.databases {
+            Some(Load::Loaded(databases)) => databases.get_mut(index),
+            _ => None,
+        }
+    }
+
+    /// Selects the tree row of a node, if it is visible.
+    fn select_node(&mut self, node: Node) {
+        if let Some(index) = self.tree_rows().iter().position(|row| row.node == node) {
+            self.tree_selected = index;
+        }
+    }
 }
 
 fn row(node: Node, depth: usize, label: &str) -> TreeRow {
@@ -178,26 +192,76 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Up | KeyCode::Char('k') => {
             state.tree_selected = state.tree_selected.saturating_sub(1);
         }
-        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => return expand(state),
+        KeyCode::Enter => return toggle(state),
+        KeyCode::Right | KeyCode::Char('l') => return expand(state),
+        KeyCode::Left | KeyCode::Char('h') => collapse(state),
         _ => {}
     }
     Vec::new()
 }
 
+/// Opens a closed tree node, or closes an open one.
+fn toggle(state: &mut AppState) -> Vec<Effect> {
+    let expanded = match state.selected_node() {
+        Some(Node::Account(a)) => state.account_mut(a).is_some_and(|node| node.expanded),
+        Some(Node::Database(a, d)) => state.database_mut(a, d).is_some_and(|node| node.expanded),
+        _ => false,
+    };
+    if expanded {
+        collapse(state);
+        Vec::new()
+    } else {
+        expand(state)
+    }
+}
+
 /// Opens the selected tree node, loading an account's containers the first time.
 fn expand(state: &mut AppState) -> Vec<Effect> {
-    let Some(Node::Account(a)) = state.selected_node() else {
-        return Vec::new();
-    };
-    let Some(node) = state.account_mut(a) else {
-        return Vec::new();
-    };
-    node.expanded = true;
-    if node.databases.is_some() {
-        return Vec::new();
+    match state.selected_node() {
+        Some(Node::Account(a)) => {
+            let Some(node) = state.account_mut(a) else {
+                return Vec::new();
+            };
+            node.expanded = true;
+            if node.databases.is_some() {
+                return Vec::new();
+            }
+            node.databases = Some(Load::Loading);
+            vec![Effect::LoadContainers(node.account.clone())]
+        }
+        Some(Node::Database(a, d)) => {
+            if let Some(node) = state.database_mut(a, d) {
+                node.expanded = true;
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
     }
-    node.databases = Some(Load::Loading);
-    vec![Effect::LoadContainers(node.account.clone())]
+}
+
+/// Closes the selected tree node, or moves to its parent when it is closed already.
+fn collapse(state: &mut AppState) {
+    let parent = match state.selected_node() {
+        Some(Node::Account(a)) => {
+            if let Some(node) = state.account_mut(a) {
+                node.expanded = false;
+            }
+            None
+        }
+        Some(Node::Database(a, d)) => match state.database_mut(a, d) {
+            Some(node) if node.expanded => {
+                node.expanded = false;
+                None
+            }
+            _ => Some(Node::Account(a)),
+        },
+        Some(Node::Container(a, d, _)) => Some(Node::Database(a, d)),
+        Some(Node::Note(a)) => Some(Node::Account(a)),
+        Some(Node::AccountsNote) | None => None,
+    };
+    if let Some(parent) = parent {
+        state.select_node(parent);
+    }
 }
 
 /// Puts an account's containers under it, grouped by database in listing order.
@@ -410,5 +474,50 @@ mod tests {
 
         assert_eq!(outline(&state), vec!["orders", "  error: forbidden"]);
         assert_eq!(state.status, Status::Error("forbidden".into()));
+    }
+
+    fn with_orders_expanded() -> AppState {
+        let mut state = with_accounts(&["orders", "inventory"]);
+        press(&mut state, KeyCode::Enter);
+        containers_loaded(&mut state, "orders", Ok(shop_containers()));
+        state
+    }
+
+    fn selected_label(state: &AppState) -> String {
+        state.tree_rows()[state.tree_selected].label.clone()
+    }
+
+    #[test]
+    fn left_goes_to_the_parent_then_collapses_it() {
+        let mut state = with_orders_expanded();
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Down);
+        assert_eq!(selected_label(&state), "carts");
+
+        press(&mut state, KeyCode::Left);
+        assert_eq!(selected_label(&state), "shop");
+
+        press(&mut state, KeyCode::Char('h'));
+        assert_eq!(
+            outline(&state),
+            vec!["orders", "  shop", "  audit", "    events", "inventory"]
+        );
+
+        press(&mut state, KeyCode::Left);
+        press(&mut state, KeyCode::Left);
+        assert_eq!(outline(&state), vec!["orders", "inventory"]);
+        assert_eq!(selected_label(&state), "orders");
+    }
+
+    #[test]
+    fn enter_toggles_a_loaded_account_without_reloading_it() {
+        let mut state = with_orders_expanded();
+
+        let effects = press(&mut state, KeyCode::Enter);
+        assert_eq!(outline(&state), vec!["orders", "inventory"]);
+
+        let effects = [effects, press(&mut state, KeyCode::Enter)].concat();
+        assert!(effects.is_empty());
+        assert_eq!(outline(&state).len(), 7);
     }
 }
