@@ -6,6 +6,7 @@ use std::time::Duration;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value;
 
+use crate::input::TextInput;
 use crate::query::{DEFAULT_QUERY, build_query};
 
 /// Work for the runtime to do in the background.
@@ -142,7 +143,7 @@ pub struct AppState {
     pub quit: bool,
     pub focus: Focus,
     /// What is typed in the search bar.
-    pub search: String,
+    pub search: TextInput,
     /// Index of the selected tree row.
     pub tree_selected: usize,
     /// The container that queries run against.
@@ -163,7 +164,7 @@ impl AppState {
             status: Status::Info("Loading accounts…".into()),
             quit: false,
             focus: Focus::Tree,
-            search: String::new(),
+            search: TextInput::default(),
             tree_selected: 0,
             target: None,
             query_id: 0,
@@ -285,10 +286,17 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 
 fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
-        KeyCode::Char(c) => state.search.push(c),
+        KeyCode::Char(c) => state.search.insert(c),
+        KeyCode::Backspace => state.search.backspace(),
+        KeyCode::Delete => state.search.delete(),
+        KeyCode::Left => state.search.left(),
+        KeyCode::Right => state.search.right(),
+        KeyCode::Home => state.search.home(),
+        KeyCode::End => state.search.end(),
+        KeyCode::Esc => state.focus = Focus::Results,
         KeyCode::Enter => {
             state.focus = Focus::Results;
-            return run_query(state, build_query(&state.search));
+            return run_query(state, build_query(state.search.text()));
         }
         _ => {}
     }
@@ -849,5 +857,44 @@ mod tests {
             }]
         );
         assert_eq!(state.focus, Focus::Results);
+    }
+
+    #[test]
+    fn the_search_bar_edits_at_the_cursor() {
+        let (mut state, _) = AppState::new();
+        press(&mut state, KeyCode::Char('/'));
+        type_text(&mut state, "c.q > 1");
+
+        press(&mut state, KeyCode::Home);
+        type_text(&mut state, "qx");
+        press(&mut state, KeyCode::Backspace);
+        press(&mut state, KeyCode::End);
+        press(&mut state, KeyCode::Left);
+        press(&mut state, KeyCode::Delete);
+        type_text(&mut state, "2");
+
+        assert_eq!(state.search.text(), "qc.q > 2");
+        assert_eq!(state.search.cursor(), 8);
+    }
+
+    #[test]
+    fn escape_leaves_the_search_bar() {
+        let (mut state, _) = AppState::new();
+        press(&mut state, KeyCode::Char('/'));
+
+        press(&mut state, KeyCode::Esc);
+
+        assert_eq!(state.focus, Focus::Results);
+    }
+
+    #[test]
+    fn searching_without_a_container_asks_for_one() {
+        let mut state = with_accounts(&["orders"]);
+        press(&mut state, KeyCode::Char('/'));
+
+        let effects = press(&mut state, KeyCode::Enter);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.status, Status::Error("pick a container first".into()));
     }
 }
