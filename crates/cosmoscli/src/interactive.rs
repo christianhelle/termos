@@ -10,10 +10,10 @@ use crate::app::App;
 use clap::{CommandFactory, FromArgMatches};
 
 use crate::cli::{Cli, Command, ItemsCommand, OutputFormat};
-use crate::management::{Account, Management};
 use crate::output::{render_json, render_table};
 use crate::prompt::{LineReader, Picker};
-use crate::store::{DataPlane, DataStore};
+use cosmos_core::management::{Account, Management};
+use cosmos_core::store::{DataPlane, DataStore};
 
 /// The container queries run against, with its open connection.
 struct Current<S> {
@@ -363,11 +363,11 @@ pub fn format_elapsed(elapsed: Duration) -> String {
 mod tests {
     use super::*;
     use crate::cli::GlobalArgs;
-    use crate::store::Credential;
     use crate::testing::{
         FakeClock, FakeDataPlane, FakeManagement, ScriptedConfirm, ScriptedLines, ScriptedPicker,
         account, container,
     };
+    use cosmos_core::store::Credential;
     use serde_json::json;
 
     type TestRepl = Repl<FakeManagement, FakeDataPlane, Vec<u8>>;

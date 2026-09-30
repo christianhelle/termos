@@ -11,11 +11,11 @@ use crate::cli::{
     AccountsCommand, AuthMode, Command, ContainerRef, ContainersCommand, DatabasesCommand,
     GlobalArgs, ItemsCommand, OutputFormat,
 };
-use crate::management::{Account, Container, Management, resolve_account};
 use crate::output::{render_json, render_rows, render_table};
-use crate::partition::value_at_path;
 use crate::prompt::Confirm;
-use crate::store::{Credential, DataPlane, DataStore, Unauthorized};
+use cosmos_core::management::{Account, Container, Management, resolve_account};
+use cosmos_core::partition::value_at_path;
+use cosmos_core::store::{Credential, DataPlane, DataStore, Unauthorized};
 
 /// Identifies a container across accounts: account, database and container names.
 type ContainerKey = (String, String, String);

@@ -5,14 +5,14 @@ use std::sync::Arc;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
+use cosmos_core::arm::Arm;
 use cosmos_core::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use cosmos_core::credential::{CachedCredential, prefetch_tokens};
+use cosmos_core::management::Management;
 use cosmoscli::app::App;
-use cosmoscli::arm::Arm;
 use cosmoscli::cli::{Cli, GlobalArgs};
 use cosmoscli::credential::scopes_needed;
 use cosmoscli::interactive::{AccountList, Repl, SystemClock};
-use cosmoscli::management::Management;
 use cosmoscli::prompt::{TerminalConfirm, TerminalLines, TerminalPicker};
 
 fn main() -> ExitCode {

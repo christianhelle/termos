@@ -1,7 +1,7 @@
 use comfy_table::{Table, presets::ASCII_FULL};
 use serde_json::Value;
 
-use crate::partition::value_at_path;
+use cosmos_core::partition::value_at_path;
 
 /// Renders documents as a table with the id and partition key columns.
 pub fn render_table(docs: &[Value], pk_path: &str) -> String {
