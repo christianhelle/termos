@@ -103,30 +103,6 @@ impl Arm {
         Ok(items)
     }
 
-    /// Waits for a long running operation started by `response` to finish.
-    async fn wait_for(&self, response: Response) -> anyhow::Result<()> {
-        if response.status() != StatusCode::ACCEPTED {
-            return Ok(());
-        }
-        let Some(status_url) = response
-            .headers()
-            .get("azure-asyncoperation")
-            .and_then(|value| value.to_str().ok())
-            .map(String::from)
-        else {
-            return Ok(());
-        };
-        loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            let status: Value = serde_json::from_str(&self.get(&status_url).await?)?;
-            match status["status"].as_str() {
-                Some("Succeeded") => return Ok(()),
-                Some("Failed" | "Canceled") => anyhow::bail!("operation did not succeed: {status}"),
-                _ => continue,
-            }
-        }
-    }
-
     fn cosmos_url(&self, account: &Account, path: &str) -> String {
         format!(
             "{ENDPOINT}{}{path}?api-version={COSMOS_API_VERSION}",
@@ -205,31 +181,6 @@ impl Management for Arm {
         parse_container(&self.get(&url).await?)
     }
 
-    async fn create_container(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-        partition_key_path: &str,
-        throughput: Option<u32>,
-    ) -> anyhow::Result<()> {
-        let url = self.container_url(account, database, container);
-        let body = create_container_body(container, partition_key_path, throughput);
-        let response = self.send(Method::PUT, &url, Some(&body)).await?;
-        self.wait_for(response).await
-    }
-
-    async fn delete_container(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-    ) -> anyhow::Result<()> {
-        let url = self.container_url(account, database, container);
-        let response = self.send(Method::DELETE, &url, None).await?;
-        self.wait_for(response).await
-    }
-
     async fn primary_key(&self, account: &Account) -> anyhow::Result<String> {
         let url = self.cosmos_url(account, "/listKeys");
         let response = self.send(Method::POST, &url, None).await?;
@@ -251,23 +202,6 @@ fn account_id(account: &Account) -> String {
         "/subscriptions/{}/resourceGroups/{}/providers/Microsoft.DocumentDB/databaseAccounts/{}",
         account.subscription_id, account.resource_group, account.name
     )
-}
-
-/// The request body for creating a SQL container.
-fn create_container_body(name: &str, partition_key_path: &str, throughput: Option<u32>) -> Value {
-    let options = match throughput {
-        Some(throughput) => json!({ "throughput": throughput }),
-        None => json!({}),
-    };
-    json!({
-        "properties": {
-            "resource": {
-                "id": name,
-                "partitionKey": { "paths": [partition_key_path], "kind": "Hash" }
-            },
-            "options": options
-        }
-    })
 }
 
 #[cfg(test)]
@@ -299,28 +233,5 @@ mod tests {
             account_id(&account),
             "/subscriptions/sub-1/resourceGroups/rg-data/providers/Microsoft.DocumentDB/databaseAccounts/orders"
         );
-    }
-
-    #[test]
-    fn create_container_body_sets_partition_key_and_throughput() {
-        assert_eq!(
-            create_container_body("carts", "/userId", Some(400)),
-            json!({
-                "properties": {
-                    "resource": {
-                        "id": "carts",
-                        "partitionKey": { "paths": ["/userId"], "kind": "Hash" }
-                    },
-                    "options": { "throughput": 400 }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn create_container_body_omits_throughput_when_not_given() {
-        let body = create_container_body("carts", "/userId", None);
-
-        assert_eq!(body["properties"]["options"], json!({}));
     }
 }

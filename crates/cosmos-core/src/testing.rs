@@ -30,7 +30,7 @@ pub fn container(name: &str, pk_path: &str) -> Container {
 pub struct FakeManagement {
     pub accounts: Vec<Account>,
     /// Databases and their containers, shared by every account.
-    pub databases: RefCell<Vec<(String, Vec<Container>)>>,
+    pub databases: Vec<(String, Vec<Container>)>,
     /// How many times an account was looked up by name.
     pub lookups: Cell<usize>,
     /// How many times an account key was fetched.
@@ -41,12 +41,10 @@ impl FakeManagement {
     pub fn with_databases(account: Account, databases: &[(&str, &[Container])]) -> Self {
         FakeManagement {
             accounts: vec![account],
-            databases: RefCell::new(
-                databases
-                    .iter()
-                    .map(|(name, containers)| (name.to_string(), containers.to_vec()))
-                    .collect(),
-            ),
+            databases: databases
+                .iter()
+                .map(|(name, containers)| (name.to_string(), containers.to_vec()))
+                .collect(),
             ..Default::default()
         }
     }
@@ -75,7 +73,6 @@ impl Management for FakeManagement {
     async fn list_databases(&self, _account: &Account) -> anyhow::Result<Vec<String>> {
         Ok(self
             .databases
-            .borrow()
             .iter()
             .map(|(name, _)| name.clone())
             .collect())
@@ -88,7 +85,6 @@ impl Management for FakeManagement {
     ) -> anyhow::Result<Vec<Container>> {
         Ok(self
             .databases
-            .borrow()
             .iter()
             .find(|(name, _)| name == database)
             .map(|(_, containers)| containers.clone())
@@ -106,37 +102,6 @@ impl Management for FakeManagement {
             .into_iter()
             .find(|c| c.name == name)
             .ok_or_else(|| anyhow::anyhow!("container '{database}/{name}' not found"))
-    }
-
-    async fn create_container(
-        &self,
-        _account: &Account,
-        database: &str,
-        name: &str,
-        partition_key_path: &str,
-        _throughput: Option<u32>,
-    ) -> anyhow::Result<()> {
-        let mut databases = self.databases.borrow_mut();
-        let (_, containers) = databases
-            .iter_mut()
-            .find(|(db, _)| db == database)
-            .ok_or_else(|| anyhow::anyhow!("database '{database}' not found"))?;
-        containers.push(container(name, partition_key_path));
-        Ok(())
-    }
-
-    async fn delete_container(
-        &self,
-        _account: &Account,
-        database: &str,
-        name: &str,
-    ) -> anyhow::Result<()> {
-        for (db, containers) in self.databases.borrow_mut().iter_mut() {
-            if db == database {
-                containers.retain(|c| c.name != name);
-            }
-        }
-        Ok(())
     }
 
     async fn primary_key(&self, _account: &Account) -> anyhow::Result<String> {

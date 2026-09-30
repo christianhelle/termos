@@ -55,22 +55,6 @@ pub trait Management {
         container: &str,
     ) -> anyhow::Result<Container>;
 
-    async fn create_container(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-        partition_key_path: &str,
-        throughput: Option<u32>,
-    ) -> anyhow::Result<()>;
-
-    async fn delete_container(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-    ) -> anyhow::Result<()>;
-
     async fn primary_key(&self, account: &Account) -> anyhow::Result<String>;
 }
 
