@@ -14,6 +14,11 @@ pub enum Effect {
 #[derive(Debug)]
 pub enum Msg {
     AccountsLoaded(Result<Vec<Account>, String>),
+    /// The containers of an account, with their database names.
+    ContainersLoaded {
+        account: String,
+        result: Result<Vec<(String, Container)>, String>,
+    },
 }
 
 /// Something that happened, for [`update`] to act on.
@@ -190,6 +195,38 @@ fn expand(state: &mut AppState) -> Vec<Effect> {
     vec![Effect::LoadContainers(node.account.clone())]
 }
 
+/// Puts an account's containers under it, grouped by database in listing order.
+fn containers_loaded(
+    state: &mut AppState,
+    account: &str,
+    result: Result<Vec<(String, Container)>, String>,
+) {
+    let Load::Loaded(accounts) = &mut state.accounts else {
+        return;
+    };
+    let Some(node) = accounts
+        .iter_mut()
+        .find(|node| node.account.name == account)
+    else {
+        return;
+    };
+    let Ok(containers) = result else {
+        return;
+    };
+    let mut databases: Vec<DatabaseNode> = Vec::new();
+    for (database, container) in containers {
+        match databases.iter_mut().find(|d| d.name == database) {
+            Some(node) => node.containers.push(container),
+            None => databases.push(DatabaseNode {
+                name: database,
+                expanded: true,
+                containers: vec![container],
+            }),
+        }
+    }
+    node.databases = Some(Load::Loaded(databases));
+}
+
 fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::AccountsLoaded(Ok(accounts)) => {
@@ -208,6 +245,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
             state.accounts = Load::Loaded(Vec::new());
             state.status = Status::Error(error);
         }
+        Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
     }
     Vec::new()
 }
@@ -215,7 +253,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmos_core::testing::account;
+    use cosmos_core::testing::{account, container};
 
     /// The tree as indented text, one line per row.
     fn outline(state: &AppState) -> Vec<String> {
@@ -308,5 +346,48 @@ mod tests {
 
         assert_eq!(effects, vec![Effect::LoadContainers(account("orders"))]);
         assert_eq!(outline(&state), vec!["orders", "  loading…", "inventory"]);
+    }
+
+    fn shop_containers() -> Vec<(String, Container)> {
+        vec![
+            ("shop".into(), container("carts", "/tenantId")),
+            ("shop".into(), container("orders", "/tenantId")),
+            ("audit".into(), container("events", "/day")),
+        ]
+    }
+
+    fn containers_loaded(
+        state: &mut AppState,
+        name: &str,
+        result: Result<Vec<(String, Container)>, String>,
+    ) {
+        update(
+            state,
+            Event::Msg(Msg::ContainersLoaded {
+                account: name.into(),
+                result,
+            }),
+        );
+    }
+
+    #[test]
+    fn shows_the_containers_of_an_expanded_account_by_database() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+        press(&mut state, KeyCode::Enter);
+
+        containers_loaded(&mut state, "orders", Ok(shop_containers()));
+
+        assert_eq!(
+            outline(&state),
+            vec![
+                "orders",
+                "  shop",
+                "    carts",
+                "    orders",
+                "  audit",
+                "    events",
+                "inventory"
+            ]
+        );
     }
 }
