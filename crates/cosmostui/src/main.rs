@@ -13,9 +13,11 @@ use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
 use cosmos_core::arm::Arm;
+use cosmos_core::cache::AccountCache;
 use cosmos_core::connector::{Connector, Settings};
 use cosmos_core::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use cosmos_core::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefetch_tokens};
+use cosmos_core::management::Account;
 use cosmos_core::store::AuthMode;
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
 use futures::StreamExt;
@@ -81,22 +83,31 @@ async fn run(args: Args) -> anyhow::Result<()> {
     } else {
         prefetch_tokens(&credential, vec![MANAGEMENT_SCOPE]);
     }
-    let runner = Rc::new(Runner::new(Connector::new(
+    let cache = AccountCache::for_user(settings.subscription.as_deref());
+    let cached = cache.as_ref().and_then(AccountCache::load);
+    let mut runner = Runner::new(Connector::new(
         Arm::new(credential.clone()),
         CosmosDataPlane::new(credential),
         settings,
-    )));
+    ));
+    if let Some(cache) = cache {
+        runner = runner.with_account_cache(cache);
+    }
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, runner).await;
+    let result = event_loop(&mut terminal, Rc::new(runner), cached).await;
     ratatui::restore();
     result
 }
 
 /// Draws the state, then waits for a key or finished work, until the user quits.
-async fn event_loop(terminal: &mut DefaultTerminal, runner: Rc<AppRunner>) -> anyhow::Result<()> {
+async fn event_loop(
+    terminal: &mut DefaultTerminal,
+    runner: Rc<AppRunner>,
+    cached_accounts: Option<Vec<Account>>,
+) -> anyhow::Result<()> {
     let (sender, mut finished) = mpsc::unbounded_channel();
     let mut keys = EventStream::new();
-    let (mut state, effects) = AppState::new();
+    let (mut state, effects) = AppState::with_cached_accounts(cached_accounts);
     start(&runner, &sender, effects);
     while !state.quit {
         state.doc_height = ui::document_height(terminal.size()?);

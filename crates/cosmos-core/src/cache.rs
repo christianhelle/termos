@@ -10,6 +10,12 @@ pub struct AccountCache {
 }
 
 impl AccountCache {
+    /// The cache in the user's cache folder, such as `%LOCALAPPDATA%smoscli` on Windows.
+    pub fn for_user(subscription: Option<&str>) -> Option<Self> {
+        let dir = dirs::cache_dir()?.join("cosmoscli");
+        Some(Self::in_dir(dir, subscription))
+    }
+
     /// A cache kept in the given folder, with one file per subscription filter.
     pub fn in_dir(dir: impl Into<PathBuf>, subscription: Option<&str>) -> Self {
         let name = match subscription {
@@ -82,7 +88,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let every = AccountCache::in_dir(dir.path(), None);
         let one = AccountCache::in_dir(dir.path(), Some("sub-2"));
-        every.save(&[account("orders"), account("inventory")]).unwrap();
+        every
+            .save(&[account("orders"), account("inventory")])
+            .unwrap();
 
         one.save(&[account("inventory")]).unwrap();
 
