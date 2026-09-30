@@ -386,7 +386,9 @@ fn containers_loaded(
 
 /// Shows the documents a query found.
 fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>) {
-    let _ = id;
+    if id != state.query_id {
+        return;
+    }
     if let Ok(result) = result {
         state.status = Status::Info(format!(
             "{} in {:.2}s",
@@ -687,5 +689,27 @@ mod tests {
         assert_eq!(state.results, cart_docs());
         assert_eq!(state.pk_path, "/tenantId");
         assert_eq!(state.status, Status::Info("2 documents in 0.25s".into()));
+    }
+
+    #[test]
+    fn ignores_results_of_a_query_that_was_superseded() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        press(&mut state, KeyCode::Enter);
+
+        query_done(&mut state, 1, Ok(cart_docs()));
+
+        assert!(state.results.is_empty());
+        assert_eq!(state.status, Status::Info("Querying shop/carts…".into()));
+    }
+
+    #[test]
+    fn reports_a_failed_query() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+
+        query_done(&mut state, 1, Err("syntax error".into()));
+
+        assert_eq!(state.status, Status::Error("syntax error".into()));
     }
 }
