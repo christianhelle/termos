@@ -3,7 +3,13 @@ name = "termos"
 description = "Terminal user interface for Azure Cosmos DB"
 version = "0.1.0"
 edition = "2024"
+authors = ["Christian Helle"]
 license = "MIT"
+homepage = "https://github.com/christianhelle/termos"
+repository = "https://github.com/christianhelle/termos"
+readme = "README.md"
+keywords = ["azure", "cosmosdb", "tui", "terminal", "database"]
+categories = ["command-line-utilities", "database"]
 
 [dependencies]
 anyhow = "1.0.104"
