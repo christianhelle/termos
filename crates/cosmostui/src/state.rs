@@ -3,11 +3,27 @@
 use cosmos_core::management::{Account, Container};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::query::DEFAULT_QUERY;
+
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     LoadAccounts,
     LoadContainers(Account),
+    /// Runs a query on a container. Only the latest query's results are shown.
+    Query {
+        id: u64,
+        target: Target,
+        sql: String,
+    },
+}
+
+/// A container to query.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Target {
+    pub account: Account,
+    pub database: String,
+    pub container: String,
 }
 
 /// Finished background work.
@@ -87,6 +103,10 @@ pub struct AppState {
     pub quit: bool,
     /// Index of the selected tree row.
     pub tree_selected: usize,
+    /// The container that queries run against.
+    pub target: Option<Target>,
+    /// The id of the latest query.
+    pub query_id: u64,
 }
 
 impl AppState {
@@ -97,6 +117,8 @@ impl AppState {
             status: Status::Info("Loading accounts…".into()),
             quit: false,
             tree_selected: 0,
+            target: None,
+            query_id: 0,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -205,6 +227,7 @@ fn toggle(state: &mut AppState) -> Vec<Effect> {
     let expanded = match state.selected_node() {
         Some(Node::Account(a)) => state.account_mut(a).is_some_and(|node| node.expanded),
         Some(Node::Database(a, d)) => state.database_mut(a, d).is_some_and(|node| node.expanded),
+        Some(Node::Container(a, d, c)) => return open_container(state, a, d, c),
         _ => false,
     };
     if expanded {
@@ -213,6 +236,44 @@ fn toggle(state: &mut AppState) -> Vec<Effect> {
     } else {
         expand(state)
     }
+}
+
+/// Makes a container the one queries run against, and lists its documents.
+fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Effect> {
+    let Some(account) = state.account_mut(a).map(|node| node.account.clone()) else {
+        return Vec::new();
+    };
+    let Some(database) = state.database_mut(a, d) else {
+        return Vec::new();
+    };
+    let Some(container) = database.containers.get(c) else {
+        return Vec::new();
+    };
+    let target = Target {
+        account,
+        database: database.name.clone(),
+        container: container.name.clone(),
+    };
+    state.target = Some(target);
+    run_query(state, DEFAULT_QUERY.to_string())
+}
+
+/// Queries the current container, if there is one.
+fn run_query(state: &mut AppState, sql: String) -> Vec<Effect> {
+    let Some(target) = state.target.clone() else {
+        state.status = Status::Error("pick a container first".into());
+        return Vec::new();
+    };
+    state.query_id += 1;
+    state.status = Status::Info(format!(
+        "Querying {}/{}…",
+        target.database, target.container
+    ));
+    vec![Effect::Query {
+        id: state.query_id,
+        target,
+        sql,
+    }]
 }
 
 /// Opens the selected tree node, loading an account's containers the first time.
@@ -519,5 +580,37 @@ mod tests {
         let effects = [effects, press(&mut state, KeyCode::Enter)].concat();
         assert!(effects.is_empty());
         assert_eq!(outline(&state).len(), 7);
+    }
+
+    fn carts() -> Target {
+        Target {
+            account: account("orders"),
+            database: "shop".into(),
+            container: "carts".into(),
+        }
+    }
+
+    /// Opens orders/shop/carts, returning the work that starts.
+    fn open_carts(state: &mut AppState) -> Vec<Effect> {
+        press(state, KeyCode::Down);
+        press(state, KeyCode::Down);
+        press(state, KeyCode::Enter)
+    }
+
+    #[test]
+    fn opening_a_container_queries_every_document() {
+        let mut state = with_orders_expanded();
+
+        let effects = open_carts(&mut state);
+
+        assert_eq!(
+            effects,
+            vec![Effect::Query {
+                id: 1,
+                target: carts(),
+                sql: "SELECT * FROM c".into()
+            }]
+        );
+        assert_eq!(state.target, Some(carts()));
     }
 }
