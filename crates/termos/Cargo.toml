@@ -1,5 +1,5 @@
 [package]
-name = "cosmostui"
+name = "termos"
 description = "Terminal user interface for Azure Cosmos DB"
 version.workspace = true
 edition.workspace = true

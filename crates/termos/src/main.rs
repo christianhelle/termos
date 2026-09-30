@@ -29,7 +29,7 @@ use crate::state::{AppState, Effect, Event, Msg, update};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "cosmostui",
+    name = "termos",
     version,
     about = "Terminal user interface for Azure Cosmos DB"
 )]
