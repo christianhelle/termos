@@ -1,0 +1,9 @@
+[package]
+name = "cosmos-core"
+description = "Azure Cosmos DB access shared by the cosmoscli front ends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true

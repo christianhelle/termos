@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+cosmos-core = { path = "../cosmos-core" }
 anyhow.workspace = true
 async-trait.workspace = true
 azure_core.workspace = true

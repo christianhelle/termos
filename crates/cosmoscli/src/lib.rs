@@ -4,7 +4,7 @@ pub mod credential;
 pub mod interactive;
 pub mod management;
 pub mod output;
-pub mod partition;
+pub use cosmos_core::partition;
 pub mod prompt;
 pub mod store;
 
