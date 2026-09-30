@@ -1,5 +1,6 @@
 //! Pretty-printed JSON with syntax colours.
 
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use serde_json::Value;
 
@@ -22,6 +23,11 @@ impl Writer {
         self.current.push(Span::raw(text.into()));
     }
 
+    fn styled(&mut self, text: String, colour: Color) {
+        self.current
+            .push(Span::styled(text, Style::new().fg(colour)));
+    }
+
     fn newline(&mut self, indent: usize) {
         let spans = std::mem::take(&mut self.current);
         self.lines.push(Line::from(spans));
@@ -42,7 +48,7 @@ impl Writer {
                         self.push(",");
                     }
                     self.newline(indent + 1);
-                    self.push(Value::from(key.as_str()).to_string());
+                    self.styled(Value::from(key.as_str()).to_string(), Color::Cyan);
                     self.push(": ");
                     self.value(value, indent + 1);
                 }
@@ -61,13 +67,18 @@ impl Writer {
                 self.newline(indent);
                 self.push("]");
             }
-            other => self.push(other.to_string()),
+            Value::String(_) => self.styled(value.to_string(), Color::Green),
+            Value::Number(_) => self.styled(value.to_string(), Color::Yellow),
+            Value::Bool(_) | Value::Null => self.styled(value.to_string(), Color::Magenta),
+            Value::Object(_) | Value::Array(_) => self.push(value.to_string()),
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use serde_json::json;
 
     fn text(lines: &[Line]) -> String {
@@ -91,5 +102,26 @@ mod tests {
             text(&highlight_json(&doc)),
             serde_json::to_string_pretty(&doc).unwrap()
         );
+    }
+
+    fn colour_of(lines: &[Line], content: &str) -> Option<Color> {
+        lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .find(|span| span.content == content)
+            .and_then(|span| span.style.fg)
+    }
+
+    #[test]
+    fn colours_keys_strings_numbers_and_literals() {
+        let lines =
+            highlight_json(&json!({ "id": "o-1", "total": 3, "paid": false, "note": null }));
+
+        assert_eq!(colour_of(&lines, "\"id\""), Some(Color::Cyan));
+        assert_eq!(colour_of(&lines, "\"o-1\""), Some(Color::Green));
+        assert_eq!(colour_of(&lines, "3"), Some(Color::Yellow));
+        assert_eq!(colour_of(&lines, "false"), Some(Color::Magenta));
+        assert_eq!(colour_of(&lines, "null"), Some(Color::Magenta));
+        assert_eq!(colour_of(&lines, "{"), None);
     }
 }

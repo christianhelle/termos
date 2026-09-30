@@ -13,7 +13,10 @@ pub fn build_query(text: &str) -> String {
     if starts_with_keyword(text, "SELECT") {
         return text.to_string();
     }
-    if CLAUSES.iter().any(|clause| starts_with_keyword(text, clause)) {
+    if CLAUSES
+        .iter()
+        .any(|clause| starts_with_keyword(text, clause))
+    {
         return format!("{DEFAULT_QUERY} {text}");
     }
     format!("{DEFAULT_QUERY} WHERE {text}")
