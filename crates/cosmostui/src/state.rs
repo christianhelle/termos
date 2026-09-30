@@ -158,6 +158,8 @@ pub struct AppState {
     pub result_selected: usize,
     /// The SQL of the latest query, to run again on refresh.
     pub last_sql: String,
+    /// How many lines the document pane is scrolled down.
+    pub doc_scroll: u16,
 }
 
 impl AppState {
@@ -176,6 +178,7 @@ impl AppState {
             pk_path: String::new(),
             result_selected: 0,
             last_sql: String::new(),
+            doc_scroll: 0,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -289,7 +292,8 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
                 Focus::Results => on_results_key(state, key),
-                Focus::Search | Focus::Document => Vec::new(),
+                Focus::Document => on_document_key(state, key),
+                Focus::Search => Vec::new(),
             };
         }
     }
@@ -297,6 +301,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let selected = state.result_selected;
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
             let last = state.results.len().saturating_sub(1);
@@ -308,6 +313,22 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
         _ => {}
     }
+    if state.result_selected != selected {
+        state.doc_scroll = 0;
+    }
+    Vec::new()
+}
+
+fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    const PAGE: u16 = 10;
+    state.doc_scroll = match key.code {
+        KeyCode::Down | KeyCode::Char('j') => state.doc_scroll.saturating_add(1),
+        KeyCode::Up | KeyCode::Char('k') => state.doc_scroll.saturating_sub(1),
+        KeyCode::PageDown => state.doc_scroll.saturating_add(PAGE),
+        KeyCode::PageUp => state.doc_scroll.saturating_sub(PAGE),
+        KeyCode::Home => 0,
+        _ => state.doc_scroll,
+    };
     Vec::new()
 }
 
@@ -504,6 +525,7 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
             ));
             state.results = result.docs;
             state.result_selected = 0;
+            state.doc_scroll = 0;
             state.pk_path = result.pk_path;
         }
         Err(error) => state.status = Status::Error(error),
@@ -970,5 +992,26 @@ mod tests {
         press(&mut state, KeyCode::Enter);
 
         assert!(state.results.is_empty());
+    }
+
+    #[test]
+    fn the_document_pane_scrolls_and_starts_at_the_top_for_another_document() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char('j'));
+        press(&mut state, KeyCode::PageDown);
+        press(&mut state, KeyCode::Up);
+        assert_eq!(state.doc_scroll, 11);
+        press(&mut state, KeyCode::PageUp);
+        assert_eq!(state.doc_scroll, 1);
+        press(&mut state, KeyCode::Home);
+        assert_eq!(state.doc_scroll, 0);
+
+        press(&mut state, KeyCode::PageDown);
+        state.focus = Focus::Results;
+        press(&mut state, KeyCode::Down);
+        assert_eq!(state.doc_scroll, 0);
     }
 }
