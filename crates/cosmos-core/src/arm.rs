@@ -6,7 +6,6 @@ use std::time::Duration;
 use anyhow::Context;
 use azure_core::credentials::TokenCredential;
 use reqwest::{Method, Response, StatusCode};
-use serde_json::Value;
 
 use crate::credential::MANAGEMENT_SCOPE;
 use crate::management::{
@@ -33,12 +32,7 @@ impl Arm {
         }
     }
 
-    async fn send(
-        &self,
-        method: Method,
-        url: &str,
-        body: Option<&Value>,
-    ) -> anyhow::Result<Response> {
+    async fn send(&self, method: Method, url: &str) -> anyhow::Result<Response> {
         let token = self
             .credential
             .get_token(&[MANAGEMENT_SCOPE], None)
@@ -46,14 +40,12 @@ impl Arm {
             .context("getting an Azure Resource Manager token, try `az login`")?;
         let mut attempt = 1;
         loop {
-            let mut request = self
+            let response = self
                 .http
                 .request(method.clone(), url)
-                .bearer_auth(token.token.secret());
-            if let Some(body) = body {
-                request = request.json(body);
-            }
-            let response = request.send().await?;
+                .bearer_auth(token.token.secret())
+                .send()
+                .await?;
             let status = response.status();
             let throttled = matches!(
                 status,
@@ -82,7 +74,7 @@ impl Arm {
     }
 
     async fn get(&self, url: &str) -> anyhow::Result<String> {
-        Ok(self.send(Method::GET, url, None).await?.text().await?)
+        Ok(self.send(Method::GET, url).await?.text().await?)
     }
 
     /// Follows `nextLink` until every page has been read.
@@ -146,7 +138,7 @@ impl Management for Arm {
 
     async fn primary_key(&self, account: &Account) -> anyhow::Result<String> {
         let url = self.cosmos_url(account, "/listKeys");
-        let response = self.send(Method::POST, &url, None).await?;
+        let response = self.send(Method::POST, &url).await?;
         parse_primary_key(&response.text().await?)
     }
 }
