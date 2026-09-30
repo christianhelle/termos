@@ -1,9 +1,10 @@
 //! Runs the background work that updates ask for.
 
+use std::time::Instant;
+
 use cosmos_core::connector::Connector;
 use cosmos_core::management::Management;
 use cosmos_core::store::{DataPlane, DataStore};
-use std::time::Instant;
 
 use crate::state::{Effect, Msg, QueryResult, Target};
 
