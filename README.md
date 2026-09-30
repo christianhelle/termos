@@ -15,7 +15,7 @@ A command line tool for Azure Cosmos DB (NoSQL API). It can:
 ## Install
 
 ```sh
-cargo install --path .
+cargo install --path crates/cosmoscli
 ```
 
 ## Authentication
