@@ -101,7 +101,7 @@ cargo install --path crates/cosmostui
 cosmostui [--subscription <ID>] [--auth auto|entra|key] [--key <KEY>]
 ```
 
-- **Accounts** (left): a tree of accounts, databases and containers. Open an account with Enter or → to load its containers. Opening a container lists its first 100 documents.
+- **Accounts** (left): a tree of accounts, databases and containers. Open an account with Enter or → to load its containers. Opening a container lists its first 100 documents. The account list from the last run shows at once while a fresh one loads in the background. It is cached in `%LOCALAPPDATA%smoscli` on Windows, `~/Library/Caches/cosmoscli` on macOS and `~/.cache/cosmoscli` on Linux.
 - **Results** (middle): the id and partition key of each document found, 100 at a time. When the title says `more ↓`, press ↓ on the last result to load the next 100.
 - **Document** (right): the selected document as JSON.
 - **Search** (top): press `/` and type a query, then Enter. A `SELECT` statement runs as typed. Clauses like `WHERE c.status = 'open'` or `ORDER BY c._ts DESC` follow `SELECT * FROM c`. A bare condition like `c.total > 10` becomes a `WHERE` clause.
