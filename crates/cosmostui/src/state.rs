@@ -454,6 +454,8 @@ fn run_query(state: &mut AppState, sql: String) -> Vec<Effect> {
         return Vec::new();
     };
     state.query_id += 1;
+    state.more = false;
+    state.loading_more = false;
     state.last_sql.clone_from(&sql);
     state.status = Status::Info(format!(
         "Querying {}/{}…",
@@ -575,6 +577,34 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
     }
 }
 
+/// Adds the next page of a query to the results, selecting its first document.
+fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String>) {
+    if id != state.query_id {
+        return;
+    }
+    state.loading_more = false;
+    match result {
+        Ok(result) => {
+            if !result.docs.is_empty() {
+                state.result_selected = state.results.len();
+                state.doc_scroll = 0;
+            }
+            state.results.extend(result.docs);
+            state.more = result.more;
+            state.status = Status::Info(format!(
+                "{} in {:.2}s",
+                documents(state.results.len()),
+                result.elapsed.as_secs_f64()
+            ));
+        }
+        Err(error) => {
+            // The open query is gone, so only running it again gets the rest
+            state.more = false;
+            state.status = Status::Error(format!("{error}, press r to run the query again"));
+        }
+    }
+}
+
 /// Counts documents in words, such as "1 document" or "3 documents".
 fn documents(count: usize) -> String {
     match count {
@@ -603,7 +633,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         }
         Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
         Msg::QueryDone { id, result } => query_done(state, id, result),
-        Msg::MoreLoaded { .. } => {}
+        Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
     }
     Vec::new()
 }
@@ -1117,6 +1147,50 @@ mod tests {
         let mut state = with_cart_results();
         press(&mut state, KeyCode::Down);
 
+        assert!(press(&mut state, KeyCode::Down).is_empty());
+    }
+
+    fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String>) {
+        update(state, Event::Msg(Msg::MoreLoaded { id, result }));
+    }
+
+    #[test]
+    fn more_documents_follow_the_results_and_the_first_of_them_is_selected() {
+        let mut state = with_first_page();
+        state.result_selected = 2;
+        press(&mut state, KeyCode::Down);
+
+        more_loaded(&mut state, 1, Ok(page(3, 5, false)));
+
+        assert_eq!(state.results.len(), 5);
+        assert_eq!(state.selected_document(), Some(&json!({ "id": "c-3" })));
+        assert!(!state.more);
+        assert!(!state.loading_more);
+        assert_eq!(state.status, Status::Info("5 documents in 0.25s".into()));
+    }
+
+    #[test]
+    fn more_documents_of_a_superseded_query_are_ignored() {
+        let mut state = with_first_page();
+        press(&mut state, KeyCode::Char('r'));
+
+        more_loaded(&mut state, 1, Ok(page(3, 5, false)));
+
+        assert_eq!(state.results.len(), 3);
+    }
+
+    #[test]
+    fn failing_to_load_more_suggests_running_the_query_again() {
+        let mut state = with_first_page();
+        state.result_selected = 2;
+        press(&mut state, KeyCode::Down);
+
+        more_loaded(&mut state, 1, Err("throttled".into()));
+
+        assert_eq!(
+            state.status,
+            Status::Error("throttled, press r to run the query again".into())
+        );
         assert!(press(&mut state, KeyCode::Down).is_empty());
     }
 }
