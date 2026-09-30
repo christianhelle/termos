@@ -6,7 +6,7 @@ use std::time::Duration;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value;
 
-use crate::query::DEFAULT_QUERY;
+use crate::query::{DEFAULT_QUERY, build_query};
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +141,8 @@ pub struct AppState {
     pub status: Status,
     pub quit: bool,
     pub focus: Focus,
+    /// What is typed in the search bar.
+    pub search: String,
     /// Index of the selected tree row.
     pub tree_selected: usize,
     /// The container that queries run against.
@@ -161,6 +163,7 @@ impl AppState {
             status: Status::Info("Loading accounts…".into()),
             quit: false,
             focus: Focus::Tree,
+            search: String::new(),
             tree_selected: 0,
             target: None,
             query_id: 0,
@@ -255,6 +258,19 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Tab => state.focus = state.focus.next(),
         KeyCode::BackTab => state.focus = state.focus.previous(),
+        _ => {
+            return match state.focus {
+                Focus::Search => on_search_key(state, key),
+                _ => on_pane_key(state, key),
+            };
+        }
+    }
+    Vec::new()
+}
+
+/// Keys that work in every pane but the search bar, where they are typed instead.
+fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    match key.code {
         KeyCode::Char('q') => state.quit = true,
         KeyCode::Char('/') => state.focus = Focus::Search,
         _ => {
@@ -263,6 +279,18 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
                 Focus::Search | Focus::Results | Focus::Document => Vec::new(),
             };
         }
+    }
+    Vec::new()
+}
+
+fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    match key.code {
+        KeyCode::Char(c) => state.search.push(c),
+        KeyCode::Enter => {
+            state.focus = Focus::Results;
+            return run_query(state, build_query(&state.search));
+        }
+        _ => {}
     }
     Vec::new()
 }
@@ -795,5 +823,31 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(state.tree_selected, 0);
+    }
+
+    fn type_text(state: &mut AppState, text: &str) {
+        for c in text.chars() {
+            press(state, KeyCode::Char(c));
+        }
+    }
+
+    #[test]
+    fn enter_in_the_search_bar_runs_the_typed_filter() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        press(&mut state, KeyCode::Char('/'));
+        type_text(&mut state, "c.qty > 1");
+
+        let effects = press(&mut state, KeyCode::Enter);
+
+        assert_eq!(
+            effects,
+            vec![Effect::Query {
+                id: 2,
+                target: carts(),
+                sql: "SELECT * FROM c WHERE c.qty > 1".into()
+            }]
+        );
+        assert_eq!(state.focus, Focus::Results);
     }
 }
