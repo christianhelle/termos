@@ -89,12 +89,6 @@ impl<M: Management, D: DataPlane> Connector<M, D> {
         Ok(store)
     }
 
-    /// Drops the connection to a container, such as after it was deleted.
-    pub fn forget_container(&self, account: &Account, database: &str, container: &str) {
-        let key = container_key(account, database, container);
-        self.connections.borrow_mut().remove(&key);
-    }
-
     /// Opens a new connection to a container, honouring the auth mode.
     async fn open(
         &self,
@@ -312,18 +306,6 @@ mod tests {
         connect(&connector, "shop", "carts").await.unwrap();
 
         assert_eq!(connector.data.connections.borrow().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_forgotten_container_is_connected_to_afresh() {
-        let connector = connector(AuthMode::Auto, true);
-        let orders = account("orders");
-
-        connect(&connector, "shop", "carts").await.unwrap();
-        connector.forget_container(&orders, "shop", "carts");
-        connect(&connector, "shop", "carts").await.unwrap();
-
-        assert_eq!(connector.data.connections.borrow().len(), 2);
     }
 
     #[tokio::test]
