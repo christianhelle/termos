@@ -6,7 +6,7 @@ pub use cosmos_core::management;
 pub mod output;
 pub use cosmos_core::partition;
 pub mod prompt;
-pub mod store;
+pub use cosmos_core::store;
 
 pub mod arm;
 pub mod cosmos;
