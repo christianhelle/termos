@@ -389,14 +389,17 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
     if id != state.query_id {
         return;
     }
-    if let Ok(result) = result {
-        state.status = Status::Info(format!(
-            "{} in {:.2}s",
-            documents(result.docs.len()),
-            result.elapsed.as_secs_f64()
-        ));
-        state.results = result.docs;
-        state.pk_path = result.pk_path;
+    match result {
+        Ok(result) => {
+            state.status = Status::Info(format!(
+                "{} in {:.2}s",
+                documents(result.docs.len()),
+                result.elapsed.as_secs_f64()
+            ));
+            state.results = result.docs;
+            state.pk_path = result.pk_path;
+        }
+        Err(error) => state.status = Status::Error(error),
     }
 }
 
