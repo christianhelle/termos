@@ -9,6 +9,6 @@ pub mod prompt;
 pub use cosmos_core::store;
 
 pub use cosmos_core::arm;
-pub mod cosmos;
+pub use cosmos_core::cosmos;
 #[cfg(test)]
 mod testing;
