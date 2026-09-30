@@ -154,6 +154,8 @@ pub struct AppState {
     pub results: Vec<Value>,
     /// The partition key path of the container the results came from.
     pub pk_path: String,
+    /// Index of the selected document in the results.
+    pub result_selected: usize,
 }
 
 impl AppState {
@@ -170,6 +172,7 @@ impl AppState {
             query_id: 0,
             results: Vec::new(),
             pk_path: String::new(),
+            result_selected: 0,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -207,6 +210,11 @@ impl AppState {
             }
         }
         rows
+    }
+
+    /// The document shown in the document pane.
+    pub fn selected_document(&self) -> Option<&Value> {
+        self.results.get(self.result_selected)
     }
 
     /// What the selected tree row stands for.
@@ -277,9 +285,24 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
-                Focus::Search | Focus::Results | Focus::Document => Vec::new(),
+                Focus::Results => on_results_key(state, key),
+                Focus::Search | Focus::Document => Vec::new(),
             };
         }
+    }
+    Vec::new()
+}
+
+fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    match key.code {
+        KeyCode::Down | KeyCode::Char('j') => {
+            let last = state.results.len().saturating_sub(1);
+            state.result_selected = (state.result_selected + 1).min(last);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.result_selected = state.result_selected.saturating_sub(1);
+        }
+        _ => {}
     }
     Vec::new()
 }
@@ -896,5 +919,26 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(state.status, Status::Error("pick a container first".into()));
+    }
+
+    fn with_cart_results() -> AppState {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        query_done(&mut state, 1, Ok(cart_docs()));
+        state.focus = Focus::Results;
+        state
+    }
+
+    #[test]
+    fn moving_through_results_selects_the_document_to_show() {
+        let mut state = with_cart_results();
+        assert_eq!(state.selected_document(), Some(&cart_docs()[0]));
+
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char('j'));
+        assert_eq!(state.selected_document(), Some(&cart_docs()[1]));
+
+        press(&mut state, KeyCode::Up);
+        assert_eq!(state.selected_document(), Some(&cart_docs()[0]));
     }
 }
