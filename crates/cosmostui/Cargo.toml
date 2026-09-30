@@ -1,0 +1,21 @@
+[package]
+name = "cosmostui"
+description = "Terminal user interface for Azure Cosmos DB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cosmos-core = { path = "../cosmos-core", features = ["clap"] }
+anyhow.workspace = true
+azure_core.workspace = true
+azure_identity.workspace = true
+clap.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+ratatui = "0.30.2"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
+
+[dev-dependencies]
+cosmos-core = { path = "../cosmos-core", features = ["clap", "test-support"] }
