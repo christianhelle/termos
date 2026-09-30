@@ -9,7 +9,6 @@ use cosmos_core::management::Management;
 use cosmos_core::store::{DataPlane, DataStore, Documents};
 use futures::StreamExt;
 use futures::stream::Peekable;
-use serde_json::Value;
 
 use crate::state::{Effect, Msg, QueryResult, Target};
 
@@ -129,7 +128,7 @@ mod tests {
     use cosmos_core::connector::Settings;
     use cosmos_core::store::{AuthMode, Credential};
     use cosmos_core::testing::{FakeDataPlane, FakeManagement, account, container};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     type TestRunner = Runner<FakeManagement, FakeDataPlane>;
 
