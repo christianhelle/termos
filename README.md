@@ -12,13 +12,44 @@ A terminal UI for Azure Cosmos DB (NoSQL API). It browses accounts, containers a
 
 ## Install
 
-Download a build for Windows, macOS or Linux from [Releases](https://github.com/christianhelle/termos/releases), or install from [crates.io](https://crates.io/crates/termos):
+### macOS/Linux
 
-```sh
+```bash
+curl -fsSL https://christianhelle.com/termos/install | bash
+```
+
+This installs the latest release to `~/.local/bin`. To install somewhere else, or to pin a release:
+
+```bash
+curl -fsSL https://christianhelle.com/termos/install | INSTALL_DIR="$HOME/bin" bash
+curl -fsSL https://christianhelle.com/termos/install | VERSION="<tag>" bash
+```
+
+### Windows PowerShell
+
+```powershell
+irm https://christianhelle.com/termos/install.ps1 | iex
+```
+
+This installs the latest release to `%LOCALAPPDATA%\Programs\termos` and adds it to your user `PATH`. To install somewhere else, or to pin a release:
+
+```powershell
+$install = irm https://christianhelle.com/termos/install.ps1
+& ([scriptblock]::Create($install)) -InstallDir "$env:USERPROFILE\bin"
+& ([scriptblock]::Create($install)) -Version "<tag>"
+```
+
+### Cargo
+
+```bash
 cargo install termos
 ```
 
 To build from a clone of this repository, run `cargo install --path .`.
+
+### Release archives
+
+Download a build from [Releases](https://github.com/christianhelle/termos/releases). Archives are available for Linux, macOS and Windows, on x64 and ARM64.
 
 ## Usage
 
