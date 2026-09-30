@@ -1,6 +1,6 @@
 [package]
 name = "cosmos-core"
-description = "Azure Cosmos DB access shared by the cosmoscli front ends"
+description = "Azure Cosmos DB access used by termos"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
