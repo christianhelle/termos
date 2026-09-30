@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState};
 
+use crate::json::highlight_json;
 use crate::state::{AppState, Focus, Status};
 
 /// Draws the tree, search bar, results, document and status line.
@@ -21,9 +22,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(1)]).areas(body);
 
     draw_tree(frame, state, tree);
-    frame.render_widget(pane("Search", state, Focus::Search), search);
+    draw_search(frame, state, search);
     draw_results(frame, state, results);
-    frame.render_widget(pane("Document", state, Focus::Document), document);
+    draw_document(frame, state, document);
     draw_status(frame, state, status);
 }
 
@@ -61,6 +62,26 @@ fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_stateful_widget(table, area, &mut table_state);
 }
 
+fn draw_search(frame: &mut Frame, state: &AppState, area: Rect) {
+    let input = Paragraph::new(state.search.text()).block(pane("Search", state, Focus::Search));
+    frame.render_widget(input, area);
+    if state.focus == Focus::Search {
+        let cursor = u16::try_from(state.search.cursor()).unwrap_or(u16::MAX);
+        frame.set_cursor_position((area.x + 1 + cursor, area.y + 1));
+    }
+}
+
+fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
+    let lines = state
+        .selected_document()
+        .map(highlight_json)
+        .unwrap_or_default();
+    let document = Paragraph::new(lines)
+        .block(pane("Document", state, Focus::Document))
+        .scroll((state.doc_scroll, 0));
+    frame.render_widget(document, area);
+}
+
 /// A bordered pane, highlighted when it has focus.
 fn pane<'a>(title: &'a str, state: &AppState, focus: Focus) -> Block<'a> {
     let colour = if state.focus == focus {
@@ -84,7 +105,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Event, Msg, QueryResult, update};
+    use crate::state::{Event, Focus, Msg, QueryResult, update};
     use cosmos_core::testing::{account, container};
     use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
@@ -216,5 +237,33 @@ mod tests {
             "{}",
             screen.join("\n")
         );
+    }
+
+    #[test]
+    fn draws_the_selected_document_scrolled_to_its_place() {
+        let mut state = with_results();
+        state.focus = Focus::Results;
+        press(&mut state, KeyCode::Down);
+
+        let screen = screen(&state);
+        assert!(shows(&screen, r#""id": "c-2","#), "{}", screen.join("\n"));
+
+        state.focus = Focus::Document;
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Down);
+        let screen = self::screen(&state);
+        assert!(!shows(&screen, r#""id": "c-2","#), "{}", screen.join("\n"));
+        assert!(shows(&screen, r#""tenantId": "fabrikam""#));
+    }
+
+    #[test]
+    fn draws_the_search_text() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('/'));
+        for c in "c.qty > 1".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+
+        assert!(shows(&screen(&state), "c.qty > 1"));
     }
 }
