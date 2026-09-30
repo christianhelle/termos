@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::pin::Pin;
 use std::time::Instant;
 
+use cosmos_core::cache::AccountCache;
 use cosmos_core::connector::Connector;
 use cosmos_core::management::Management;
 use cosmos_core::store::{DataPlane, DataStore, Documents};
@@ -17,6 +18,8 @@ pub struct Runner<M, D: DataPlane> {
     pub connector: Connector<M, D>,
     /// The latest query, kept open while it has documents left to show.
     open_query: RefCell<Option<OpenQuery>>,
+    /// Where listed accounts are saved for the next run.
+    account_cache: Option<AccountCache>,
 }
 
 /// A query with documents left to read.
@@ -31,7 +34,14 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         Runner {
             connector,
             open_query: RefCell::default(),
+            account_cache: None,
         }
+    }
+
+    /// Saves every account list to the cache, so the next run can show it at once.
+    pub fn with_account_cache(mut self, cache: AccountCache) -> Self {
+        self.account_cache = Some(cache);
+        self
     }
 
     /// Does the work, reporting how it went as a message for the state.
@@ -39,7 +49,12 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         let connector = &self.connector;
         match effect {
             Effect::LoadAccounts => {
-                Msg::AccountsLoaded(connector.list_accounts().await.map_err(describe))
+                let result = connector.list_accounts().await;
+                if let (Ok(accounts), Some(cache)) = (&result, &self.account_cache) {
+                    // A cache that cannot be written only costs the next run its head start
+                    let _ = cache.save(accounts);
+                }
+                Msg::AccountsLoaded(result.map_err(describe))
             }
             Effect::LoadContainers(account) => {
                 // Set up the data plane client while the containers are listed
@@ -125,6 +140,7 @@ fn describe(error: anyhow::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use cosmos_core::connector::Settings;
     use cosmos_core::store::{AuthMode, Credential};
     use cosmos_core::testing::{FakeDataPlane, FakeManagement, account, container};
@@ -316,5 +332,16 @@ mod tests {
         else {
             panic!("unexpected {msg:?}");
         };
+    }
+
+    #[tokio::test]
+    async fn saves_the_listed_accounts_for_the_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = runner().with_account_cache(AccountCache::in_dir(dir.path(), None));
+
+        runner.run(Effect::LoadAccounts).await;
+
+        let cached = AccountCache::in_dir(dir.path(), None).load();
+        assert_eq!(cached, Some(vec![account("orders")]));
     }
 }
