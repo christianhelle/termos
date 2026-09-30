@@ -1,6 +1,6 @@
 //! What the screen shows, and how keys and finished work change it.
 
-use cosmos_core::management::Account;
+use cosmos_core::management::{Account, Container};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Work for the runtime to do in the background.
@@ -34,11 +34,35 @@ pub enum Load<T> {
 #[derive(Debug)]
 pub struct AccountNode {
     pub account: Account,
+    pub expanded: bool,
+    /// The account's databases, once they were asked for.
+    pub databases: Option<Load<Vec<DatabaseNode>>>,
+}
+
+/// A database in the tree, under its account.
+#[derive(Debug)]
+pub struct DatabaseNode {
+    pub name: String,
+    pub expanded: bool,
+    pub containers: Vec<Container>,
+}
+
+/// What a tree row stands for, by position in the tree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Node {
+    Account(usize),
+    Database(usize, usize),
+    Container(usize, usize, usize),
+    /// A line about the account's databases, such as that they are loading.
+    Note(usize),
+    /// A line about the account list.
+    AccountsNote,
 }
 
 /// One visible line of the tree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeRow {
+    pub node: Node,
     pub depth: usize,
     pub label: String,
 }
@@ -73,19 +97,54 @@ impl AppState {
 
     /// The tree lines that are visible, top to bottom.
     pub fn tree_rows(&self) -> Vec<TreeRow> {
-        match &self.accounts {
-            Load::Loading => vec![TreeRow {
-                depth: 0,
-                label: "loading accounts…".into(),
-            }],
-            Load::Loaded(accounts) => accounts
-                .iter()
-                .map(|node| TreeRow {
-                    depth: 0,
-                    label: node.account.name.clone(),
-                })
-                .collect(),
+        let accounts = match &self.accounts {
+            Load::Loading => return vec![row(Node::AccountsNote, 0, "loading accounts…")],
+            Load::Loaded(accounts) => accounts,
+        };
+        let mut rows = Vec::new();
+        for (a, node) in accounts.iter().enumerate() {
+            rows.push(row(Node::Account(a), 0, &node.account.name));
+            if !node.expanded {
+                continue;
+            }
+            match &node.databases {
+                None => {}
+                Some(Load::Loading) => rows.push(row(Node::Note(a), 1, "loading…")),
+                Some(Load::Loaded(databases)) => {
+                    for (d, database) in databases.iter().enumerate() {
+                        rows.push(row(Node::Database(a, d), 1, &database.name));
+                        if !database.expanded {
+                            continue;
+                        }
+                        for (c, container) in database.containers.iter().enumerate() {
+                            rows.push(row(Node::Container(a, d, c), 2, &container.name));
+                        }
+                    }
+                }
+            }
         }
+        rows
+    }
+
+    /// What the selected tree row stands for.
+    fn selected_node(&self) -> Option<Node> {
+        let rows = self.tree_rows();
+        rows.get(self.tree_selected).map(|row| row.node)
+    }
+
+    fn account_mut(&mut self, index: usize) -> Option<&mut AccountNode> {
+        match &mut self.accounts {
+            Load::Loaded(accounts) => accounts.get_mut(index),
+            Load::Loading => None,
+        }
+    }
+}
+
+fn row(node: Node, depth: usize, label: &str) -> TreeRow {
+    TreeRow {
+        node,
+        depth,
+        label: label.to_string(),
     }
 }
 
@@ -109,9 +168,26 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Up | KeyCode::Char('k') => {
             state.tree_selected = state.tree_selected.saturating_sub(1);
         }
+        KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => return expand(state),
         _ => {}
     }
     Vec::new()
+}
+
+/// Opens the selected tree node, loading an account's containers the first time.
+fn expand(state: &mut AppState) -> Vec<Effect> {
+    let Some(Node::Account(a)) = state.selected_node() else {
+        return Vec::new();
+    };
+    let Some(node) = state.account_mut(a) else {
+        return Vec::new();
+    };
+    node.expanded = true;
+    if node.databases.is_some() {
+        return Vec::new();
+    }
+    node.databases = Some(Load::Loading);
+    vec![Effect::LoadContainers(node.account.clone())]
 }
 
 fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
@@ -119,7 +195,11 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::AccountsLoaded(Ok(accounts)) => {
             let nodes = accounts
                 .into_iter()
-                .map(|account| AccountNode { account })
+                .map(|account| AccountNode {
+                    account,
+                    expanded: false,
+                    databases: None,
+                })
                 .collect();
             state.accounts = Load::Loaded(nodes);
             state.status = Status::Info("Pick a container".into());
@@ -218,5 +298,15 @@ mod tests {
         assert_eq!(state.tree_selected, 0);
         press(&mut state, KeyCode::Up);
         assert_eq!(state.tree_selected, 0);
+    }
+
+    #[test]
+    fn expanding_an_account_loads_its_containers() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+
+        let effects = press(&mut state, KeyCode::Enter);
+
+        assert_eq!(effects, vec![Effect::LoadContainers(account("orders"))]);
+        assert_eq!(outline(&state), vec!["orders", "  loading…", "inventory"]);
     }
 }
