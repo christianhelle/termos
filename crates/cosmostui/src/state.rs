@@ -143,6 +143,8 @@ pub struct AppState {
     pub accounts: Load<Vec<AccountNode>>,
     pub status: Status,
     pub quit: bool,
+    /// Whether the key help covers the screen.
+    pub show_help: bool,
     pub focus: Focus,
     /// What is typed in the search bar.
     pub search: TextInput,
@@ -171,6 +173,7 @@ impl AppState {
             accounts: Load::Loading,
             status: Status::Info("Loading accounts…".into()),
             quit: false,
+            show_help: false,
             focus: Focus::Tree,
             search: TextInput::default(),
             tree_selected: 0,
@@ -278,6 +281,12 @@ pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
 
 fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let ctrl_c = ctrl && key.code == KeyCode::Char('c');
+    if state.show_help && !ctrl_c {
+        // Any other key closes the help, and only that
+        state.show_help = false;
+        return Vec::new();
+    }
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Tab => state.focus = state.focus.next(),
@@ -297,6 +306,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('q') => state.quit = true,
         KeyCode::Char('/') => state.focus = Focus::Search,
+        KeyCode::Char('?') => state.show_help = true,
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
@@ -1022,5 +1032,17 @@ mod tests {
         state.focus = Focus::Results;
         press(&mut state, KeyCode::Down);
         assert_eq!(state.doc_scroll, 0);
+    }
+
+    #[test]
+    fn question_mark_shows_help_until_the_next_key() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+
+        press(&mut state, KeyCode::Char('?'));
+        assert!(state.show_help);
+
+        press(&mut state, KeyCode::Down);
+        assert!(!state.show_help);
+        assert_eq!(state.tree_selected, 0);
     }
 }
