@@ -175,6 +175,8 @@ pub struct AppState {
     pub last_sql: String,
     /// How many lines the document pane is scrolled down.
     pub doc_scroll: u16,
+    /// How many lines of a document the document pane shows at once.
+    pub doc_height: u16,
     /// Whether the latest query found more documents than the results show.
     pub more: bool,
     /// Whether the next page of results is being read.
@@ -199,6 +201,7 @@ impl AppState {
             result_selected: 0,
             last_sql: String::new(),
             doc_scroll: 0,
+            doc_height: 0,
             more: false,
             loading_more: false,
         };
@@ -249,6 +252,16 @@ impl AppState {
     /// The document shown in the document pane.
     pub fn selected_document(&self) -> Option<&Value> {
         self.results.get(self.result_selected)
+    }
+
+    /// How far the document pane scrolls: until the last line is at the bottom.
+    pub fn max_doc_scroll(&self) -> u16 {
+        let lines = self.selected_document().map_or(0, |doc| {
+            let pretty = serde_json::to_string_pretty(doc).unwrap_or_default();
+            pretty.lines().count()
+        });
+        let lines = u16::try_from(lines).unwrap_or(u16::MAX);
+        lines.saturating_sub(self.doc_height)
     }
 
     /// What the selected tree row stands for.
@@ -369,8 +382,10 @@ fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::PageDown => state.doc_scroll.saturating_add(PAGE),
         KeyCode::PageUp => state.doc_scroll.saturating_sub(PAGE),
         KeyCode::Home => 0,
+        KeyCode::End => u16::MAX,
         _ => state.doc_scroll,
     };
+    state.doc_scroll = state.doc_scroll.min(state.max_doc_scroll());
     Vec::new()
 }
 
@@ -1074,6 +1089,8 @@ mod tests {
     fn the_document_pane_scrolls_and_starts_at_the_top_for_another_document() {
         let mut state = with_cart_results();
         state.focus = Focus::Document;
+        state.results[0] = long_document(40);
+        state.doc_height = 10;
 
         press(&mut state, KeyCode::Down);
         press(&mut state, KeyCode::Char('j'));
@@ -1213,5 +1230,43 @@ mod tests {
         press(&mut state, KeyCode::Enter);
 
         assert_eq!(state.focus, Focus::Results);
+    }
+
+    /// A document that pretty-prints as one line per field, plus its braces.
+    fn long_document(fields: usize) -> Value {
+        let fields = (0..fields).map(|i| (format!("f{i:02}"), json!(i)));
+        Value::Object(fields.collect())
+    }
+
+    #[test]
+    fn the_document_scrolls_no_further_than_its_last_line_at_the_bottom() {
+        let mut state = with_cart_results();
+        state.results[0] = long_document(10);
+        state.doc_height = 5;
+        state.focus = Focus::Document;
+
+        for _ in 0..20 {
+            press(&mut state, KeyCode::Down);
+        }
+        assert_eq!(state.doc_scroll, 7);
+
+        press(&mut state, KeyCode::Home);
+        press(&mut state, KeyCode::PageDown);
+        assert_eq!(state.doc_scroll, 7);
+
+        press(&mut state, KeyCode::Home);
+        press(&mut state, KeyCode::End);
+        assert_eq!(state.doc_scroll, 7);
+    }
+
+    #[test]
+    fn a_document_that_fits_does_not_scroll() {
+        let mut state = with_cart_results();
+        state.doc_height = 10;
+        state.focus = Focus::Document;
+
+        press(&mut state, KeyCode::PageDown);
+
+        assert_eq!(state.doc_scroll, 0);
     }
 }
