@@ -31,7 +31,7 @@ curl -fsSL https://christianhelle.com/termos/install | VERSION="<tag>" bash
 irm https://christianhelle.com/termos/install.ps1 | iex
 ```
 
-This installs the latest release to `%LOCALAPPDATA%\Programs\termos` and adds it to your user `PATH`. To install somewhere else, or to pin a release:
+This installs the latest release to `%LOCALAPPDATA%\Programs\termos`, or to `~\.local\bin` or `~\bin` if one of those already exists, and adds it to your user `PATH`. To install somewhere else, or to pin a release:
 
 ```powershell
 $install = irm https://christianhelle.com/termos/install.ps1
