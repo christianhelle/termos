@@ -3,7 +3,8 @@
 /// The query every container starts with.
 pub const DEFAULT_QUERY: &str = "SELECT * FROM c";
 
-/// The query for the search bar text: a full `SELECT`, or a filter on every document.
+/// The query for the search bar text: a full `SELECT`, clauses after `SELECT * FROM c`,
+/// or a bare condition to filter every document by.
 pub fn build_query(text: &str) -> String {
     let text = text.trim();
     if text.is_empty() {
@@ -12,8 +13,14 @@ pub fn build_query(text: &str) -> String {
     if starts_with_keyword(text, "SELECT") {
         return text.to_string();
     }
-    format!("{DEFAULT_QUERY} {text}")
+    if CLAUSES.iter().any(|clause| starts_with_keyword(text, clause)) {
+        return format!("{DEFAULT_QUERY} {text}");
+    }
+    format!("{DEFAULT_QUERY} WHERE {text}")
 }
+
+/// Keywords that start a clause which can follow `SELECT * FROM c`.
+const CLAUSES: [&str; 5] = ["WHERE", "ORDER", "GROUP", "OFFSET", "JOIN"];
 
 /// Whether the text starts with the keyword as a whole word, ignoring case.
 fn starts_with_keyword(text: &str, keyword: &str) -> bool {
@@ -48,6 +55,14 @@ mod tests {
         assert_eq!(
             build_query("order by c._ts DESC"),
             "SELECT * FROM c order by c._ts DESC"
+        );
+    }
+
+    #[test]
+    fn a_bare_condition_becomes_a_where_clause() {
+        assert_eq!(
+            build_query("c.total > 10"),
+            "SELECT * FROM c WHERE c.total > 10"
         );
     }
 }
