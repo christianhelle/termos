@@ -1,6 +1,7 @@
 //! What the screen shows, and how keys and finished work change it.
 
 use cosmos_core::management::Account;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +19,7 @@ pub enum Msg {
 /// Something that happened, for [`update`] to act on.
 #[derive(Debug)]
 pub enum Event {
+    Key(KeyEvent),
     Msg(Msg),
 }
 
@@ -52,6 +54,7 @@ pub enum Status {
 pub struct AppState {
     pub accounts: Load<Vec<AccountNode>>,
     pub status: Status,
+    pub quit: bool,
 }
 
 impl AppState {
@@ -60,6 +63,7 @@ impl AppState {
         let state = AppState {
             accounts: Load::Loading,
             status: Status::Info("Loading accounts…".into()),
+            quit: false,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -85,7 +89,24 @@ impl AppState {
 /// Applies an event to the state, returning the background work it starts.
 pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
     match event {
-        Event::Msg(Msg::AccountsLoaded(Ok(accounts))) => {
+        Event::Key(key) => on_key(state, key),
+        Event::Msg(msg) => on_msg(state, msg),
+    }
+}
+
+fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('c') if ctrl => state.quit = true,
+        KeyCode::Char('q') => state.quit = true,
+        _ => {}
+    }
+    Vec::new()
+}
+
+fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
+    match msg {
+        Msg::AccountsLoaded(Ok(accounts)) => {
             let nodes = accounts
                 .into_iter()
                 .map(|account| AccountNode { account })
@@ -93,7 +114,7 @@ pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
             state.accounts = Load::Loaded(nodes);
             state.status = Status::Info("Pick a container".into());
         }
-        Event::Msg(Msg::AccountsLoaded(Err(error))) => {
+        Msg::AccountsLoaded(Err(error)) => {
             state.accounts = Load::Loaded(Vec::new());
             state.status = Status::Error(error);
         }
@@ -129,7 +150,10 @@ mod tests {
 
         update(
             &mut state,
-            Event::Msg(Msg::AccountsLoaded(Ok(vec![account("orders"), account("inventory")]))),
+            Event::Msg(Msg::AccountsLoaded(Ok(vec![
+                account("orders"),
+                account("inventory"),
+            ]))),
         );
 
         assert_eq!(outline(&state), vec!["orders", "inventory"]);
@@ -146,5 +170,21 @@ mod tests {
 
         assert_eq!(state.status, Status::Error("az login first".into()));
         assert!(outline(&state).is_empty());
+    }
+
+    fn press(state: &mut AppState, code: KeyCode) -> Vec<Effect> {
+        update(state, Event::Key(KeyEvent::from(code)))
+    }
+
+    #[test]
+    fn q_and_ctrl_c_quit() {
+        let (mut state, _) = AppState::new();
+        press(&mut state, KeyCode::Char('q'));
+        assert!(state.quit);
+
+        let (mut state, _) = AppState::new();
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        update(&mut state, Event::Key(ctrl_c));
+        assert!(state.quit);
     }
 }
