@@ -1,10 +1,11 @@
 //! Draws the state on the terminal.
 
+use cosmos_core::partition::{display_value, value_at_path};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState};
 
 use crate::state::{AppState, Focus, Status};
 
@@ -21,7 +22,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 
     draw_tree(frame, state, tree);
     frame.render_widget(pane("Search", state, Focus::Search), search);
-    frame.render_widget(pane("Results", state, Focus::Results), results);
+    draw_results(frame, state, results);
     frame.render_widget(pane("Document", state, Focus::Document), document);
     draw_status(frame, state, status);
 }
@@ -41,6 +42,23 @@ fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
     let mut list_state = ListState::default().with_selected(Some(state.tree_selected));
     frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
+    let header = Row::new([Cell::from("id"), Cell::from(state.pk_path.as_str())])
+        .style(Style::new().add_modifier(Modifier::BOLD));
+    let rows = state.results.iter().map(|doc| {
+        Row::new([
+            display_value(doc.get("id")),
+            display_value(value_at_path(doc, &state.pk_path)),
+        ])
+    });
+    let table = Table::new(rows, [Constraint::Fill(1), Constraint::Fill(1)])
+        .header(header)
+        .block(pane("Results", state, Focus::Results))
+        .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED));
+    let mut table_state = TableState::default().with_selected(Some(state.result_selected));
+    frame.render_stateful_widget(table, area, &mut table_state);
 }
 
 /// A bordered pane, highlighted when it has focus.
@@ -66,11 +84,13 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Event, Msg, update};
+    use crate::state::{Event, Msg, QueryResult, update};
     use cosmos_core::testing::{account, container};
     use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use serde_json::json;
+    use std::time::Duration;
 
     /// Draws the state on a small terminal and returns its lines.
     fn screen(state: &AppState) -> Vec<String> {
@@ -147,5 +167,54 @@ mod tests {
                 screen.join("\n")
             );
         }
+    }
+
+    /// Browsing with two carts found in orders/shop/carts.
+    fn with_results() -> AppState {
+        let mut state = browsing();
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Enter);
+        let docs = vec![
+            json!({ "id": "c-1", "tenantId": "contoso" }),
+            json!({ "id": "c-2", "tenantId": "fabrikam" }),
+        ];
+        let result = QueryResult {
+            docs,
+            pk_path: "/tenantId".into(),
+            elapsed: Duration::from_millis(40),
+        };
+        send(
+            &mut state,
+            Msg::QueryDone {
+                id: 1,
+                result: Ok(result),
+            },
+        );
+        state
+    }
+
+    fn cells(screen: &[String], words: &[&str]) -> bool {
+        screen.iter().any(|line| {
+            let found: Vec<&str> = line.split([' ', '│']).filter(|w| !w.is_empty()).collect();
+            found.windows(words.len()).any(|window| window == words)
+        })
+    }
+
+    #[test]
+    fn draws_the_id_and_partition_key_of_each_result() {
+        let screen = screen(&with_results());
+
+        assert!(
+            cells(&screen, &["id", "/tenantId"]),
+            "{}",
+            screen.join("\n")
+        );
+        assert!(cells(&screen, &["c-1", "contoso"]), "{}", screen.join("\n"));
+        assert!(
+            cells(&screen, &["c-2", "fabrikam"]),
+            "{}",
+            screen.join("\n")
+        );
     }
 }
