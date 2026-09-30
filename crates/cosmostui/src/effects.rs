@@ -8,27 +8,39 @@ use cosmos_core::store::{DataPlane, DataStore};
 
 use crate::state::{Effect, Msg, QueryResult, Target};
 
-/// Does the work, reporting how it went as a message for the state.
-pub async fn run<M: Management, D: DataPlane>(connector: &Connector<M, D>, effect: Effect) -> Msg {
-    match effect {
-        Effect::LoadAccounts => {
-            Msg::AccountsLoaded(connector.list_accounts().await.map_err(describe))
-        }
-        Effect::LoadContainers(account) => {
-            // Set up the data plane client while the containers are listed
-            let (result, ()) = futures::join!(
-                connector.containers_of(&account, None),
-                connector.prepare(&account)
-            );
-            Msg::ContainersLoaded {
-                account: account.name,
-                result: result.map_err(describe),
+/// Does background work against the control and data planes.
+pub struct Runner<M, D: DataPlane> {
+    pub connector: Connector<M, D>,
+}
+
+impl<M: Management, D: DataPlane> Runner<M, D> {
+    pub fn new(connector: Connector<M, D>) -> Self {
+        Runner { connector }
+    }
+
+    /// Does the work, reporting how it went as a message for the state.
+    pub async fn run(&self, effect: Effect) -> Msg {
+        let connector = &self.connector;
+        match effect {
+            Effect::LoadAccounts => {
+                Msg::AccountsLoaded(connector.list_accounts().await.map_err(describe))
             }
+            Effect::LoadContainers(account) => {
+                // Set up the data plane client while the containers are listed
+                let (result, ()) = futures::join!(
+                    connector.containers_of(&account, None),
+                    connector.prepare(&account)
+                );
+                Msg::ContainersLoaded {
+                    account: account.name,
+                    result: result.map_err(describe),
+                }
+            }
+            Effect::Query { id, target, sql } => Msg::QueryDone {
+                id,
+                result: query(connector, &target, &sql).await.map_err(describe),
+            },
         }
-        Effect::Query { id, target, sql } => Msg::QueryDone {
-            id,
-            result: query(connector, &target, &sql).await.map_err(describe),
-        },
     }
 }
 
@@ -65,20 +77,20 @@ mod tests {
     use cosmos_core::testing::{FakeDataPlane, FakeManagement, account, container};
     use serde_json::json;
 
-    type TestConnector = Connector<FakeManagement, FakeDataPlane>;
+    type TestRunner = Runner<FakeManagement, FakeDataPlane>;
 
-    fn connector() -> TestConnector {
+    fn runner() -> TestRunner {
         let management = FakeManagement::with_databases(
             account("orders"),
             &[("shop", &[container("carts", "/tenantId")])],
         );
         let data = FakeDataPlane::new("/tenantId", vec![]);
-        Connector::new(management, data, Settings::default())
+        Runner::new(Connector::new(management, data, Settings::default()))
     }
 
     #[tokio::test]
     async fn loads_the_accounts() {
-        let msg = run(&connector(), Effect::LoadAccounts).await;
+        let msg = runner().run(Effect::LoadAccounts).await;
 
         let Msg::AccountsLoaded(Ok(accounts)) = msg else {
             panic!("unexpected {msg:?}");
@@ -88,9 +100,9 @@ mod tests {
 
     #[tokio::test]
     async fn loads_containers_and_prepares_the_data_plane_meanwhile() {
-        let connector = connector();
+        let runner = runner();
 
-        let msg = run(&connector, Effect::LoadContainers(account("orders"))).await;
+        let msg = runner.run(Effect::LoadContainers(account("orders"))).await;
 
         let Msg::ContainersLoaded { account, result } = msg else {
             panic!("unexpected {msg:?}");
@@ -100,7 +112,10 @@ mod tests {
             result.unwrap(),
             vec![("shop".to_string(), container("carts", "/tenantId"))]
         );
-        assert_eq!(*connector.data.prepared.borrow(), vec![Credential::Entra]);
+        assert_eq!(
+            *runner.connector.data.prepared.borrow(),
+            vec![Credential::Entra]
+        );
     }
 
     fn carts() -> Target {
@@ -113,22 +128,20 @@ mod tests {
 
     #[tokio::test]
     async fn queries_up_to_a_hundred_documents_with_the_partition_key_path() {
-        let mut connector = connector();
+        let mut runner = runner();
         let docs: Vec<_> = (0..150)
             .map(|i| json!({ "id": format!("c-{i}") }))
             .collect();
-        connector.data = FakeDataPlane::new("/tenantId", docs);
+        runner.connector.data = FakeDataPlane::new("/tenantId", docs);
         let sql = "SELECT * FROM c WHERE c.qty > 1".to_string();
 
-        let msg = run(
-            &connector,
-            Effect::Query {
+        let msg = runner
+            .run(Effect::Query {
                 id: 7,
                 target: carts(),
                 sql: sql.clone(),
-            },
-        )
-        .await;
+            })
+            .await;
 
         let Msg::QueryDone {
             id: 7,
@@ -139,24 +152,22 @@ mod tests {
         };
         assert_eq!(result.docs.len(), 100);
         assert_eq!(result.pk_path, "/tenantId");
-        assert_eq!(connector.data.container.borrow().queries, vec![sql]);
+        assert_eq!(runner.connector.data.container.borrow().queries, vec![sql]);
     }
 
     #[tokio::test]
     async fn reports_a_container_it_could_not_connect_to() {
-        let mut connector = connector();
-        connector.data.entra_allowed = false;
-        connector.settings.auth = AuthMode::Entra;
+        let mut runner = runner();
+        runner.connector.data.entra_allowed = false;
+        runner.connector.settings.auth = AuthMode::Entra;
 
-        let msg = run(
-            &connector,
-            Effect::Query {
+        let msg = runner
+            .run(Effect::Query {
                 id: 1,
                 target: carts(),
                 sql: "SELECT * FROM c".into(),
-            },
-        )
-        .await;
+            })
+            .await;
 
         let Msg::QueryDone {
             result: Err(error), ..

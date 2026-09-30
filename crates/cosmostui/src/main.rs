@@ -22,6 +22,7 @@ use futures::StreamExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc;
 
+use crate::effects::Runner;
 use crate::state::{AppState, Effect, Event, Msg, update};
 
 #[derive(Parser, Debug)]
@@ -44,7 +45,7 @@ struct Args {
     key: Option<String>,
 }
 
-type AppConnector = Connector<Arm, CosmosDataPlane>;
+type AppRunner = Runner<Arm, CosmosDataPlane>;
 
 fn main() -> ExitCode {
     let args = Args::parse();
@@ -80,26 +81,23 @@ async fn run(args: Args) -> anyhow::Result<()> {
     } else {
         prefetch_tokens(&credential, vec![MANAGEMENT_SCOPE]);
     }
-    let connector = Rc::new(Connector::new(
+    let runner = Rc::new(Runner::new(Connector::new(
         Arm::new(credential.clone()),
         CosmosDataPlane::new(credential),
         settings,
-    ));
+    )));
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, connector).await;
+    let result = event_loop(&mut terminal, runner).await;
     ratatui::restore();
     result
 }
 
 /// Draws the state, then waits for a key or finished work, until the user quits.
-async fn event_loop(
-    terminal: &mut DefaultTerminal,
-    connector: Rc<AppConnector>,
-) -> anyhow::Result<()> {
+async fn event_loop(terminal: &mut DefaultTerminal, runner: Rc<AppRunner>) -> anyhow::Result<()> {
     let (sender, mut finished) = mpsc::unbounded_channel();
     let mut keys = EventStream::new();
     let (mut state, effects) = AppState::new();
-    start(&connector, &sender, effects);
+    start(&runner, &sender, effects);
     while !state.quit {
         terminal.draw(|frame| ui::draw(frame, &state))?;
         let event = tokio::select! {
@@ -111,19 +109,19 @@ async fn event_loop(
             Some(msg) = finished.recv() => Event::Msg(msg),
         };
         let effects = update(&mut state, event);
-        start(&connector, &sender, effects);
+        start(&runner, &sender, effects);
     }
     Ok(())
 }
 
 /// Starts background work, which reports back through the sender when done.
-fn start(connector: &Rc<AppConnector>, sender: &mpsc::UnboundedSender<Msg>, effects: Vec<Effect>) {
+fn start(runner: &Rc<AppRunner>, sender: &mpsc::UnboundedSender<Msg>, effects: Vec<Effect>) {
     for effect in effects {
-        let connector = connector.clone();
+        let runner = runner.clone();
         let sender = sender.clone();
         tokio::task::spawn_local(async move {
             // The receiver only goes away when the app quits
-            let _ = sender.send(effects::run(&connector, effect).await);
+            let _ = sender.send(runner.run(effect).await);
         });
     }
 }
