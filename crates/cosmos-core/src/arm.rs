@@ -10,9 +10,9 @@ use serde_json::{Value, json};
 
 use crate::credential::MANAGEMENT_SCOPE;
 use crate::management::{
-    Account, Container, Management, Page, account_query, parse_accounts, parse_container,
-    parse_containers, parse_databases, parse_primary_key, parse_resource_graph_accounts,
-    parse_subscriptions, resolve_account,
+    Account, Container, Management, Page, account_query, parse_accounts, parse_containers,
+    parse_databases, parse_primary_key, parse_resource_graph_accounts, parse_subscriptions,
+    resolve_account,
 };
 
 const ENDPOINT: &str = "https://management.azure.com";
@@ -109,13 +109,6 @@ impl Arm {
             account_id(account)
         )
     }
-
-    fn container_url(&self, account: &Account, database: &str, container: &str) -> String {
-        self.cosmos_url(
-            account,
-            &format!("/sqlDatabases/{database}/containers/{container}"),
-        )
-    }
 }
 
 impl Management for Arm {
@@ -169,16 +162,6 @@ impl Management for Arm {
     ) -> anyhow::Result<Vec<Container>> {
         let url = self.cosmos_url(account, &format!("/sqlDatabases/{database}/containers"));
         self.list_all(url, parse_containers).await
-    }
-
-    async fn get_container(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-    ) -> anyhow::Result<Container> {
-        let url = self.container_url(account, database, container);
-        parse_container(&self.get(&url).await?)
     }
 
     async fn primary_key(&self, account: &Account) -> anyhow::Result<String> {

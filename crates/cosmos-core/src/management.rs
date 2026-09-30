@@ -48,13 +48,6 @@ pub trait Management {
         database: &str,
     ) -> anyhow::Result<Vec<Container>>;
 
-    async fn get_container(
-        &self,
-        account: &Account,
-        database: &str,
-        container: &str,
-    ) -> anyhow::Result<Container>;
-
     async fn primary_key(&self, account: &Account) -> anyhow::Result<String>;
 }
 
@@ -152,11 +145,6 @@ struct ArmKeys {
 pub fn parse_primary_key(json: &str) -> anyhow::Result<String> {
     let keys: ArmKeys = serde_json::from_str(json)?;
     Ok(keys.primary_master_key)
-}
-
-pub fn parse_container(json: &str) -> anyhow::Result<Container> {
-    let arm: ArmContainer = serde_json::from_str(json)?;
-    Ok(arm.into())
 }
 
 /// Finds an account by name. Account names are globally unique in Azure.
@@ -331,22 +319,6 @@ mod tests {
         }"#;
 
         assert_eq!(parse_primary_key(json).unwrap(), "primary==");
-    }
-
-    #[test]
-    fn parses_single_container() {
-        let json = r#"{ "name": "events", "properties": { "resource": {
-            "id": "events",
-            "partitionKey": { "paths": ["/deviceId"], "kind": "Hash" }
-        } } }"#;
-
-        assert_eq!(
-            parse_container(json).unwrap(),
-            Container {
-                name: "events".into(),
-                partition_key_paths: vec!["/deviceId".into()],
-            }
-        );
     }
 
     fn account(name: &str) -> Account {

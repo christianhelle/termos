@@ -91,19 +91,6 @@ impl Management for FakeManagement {
             .unwrap_or_default())
     }
 
-    async fn get_container(
-        &self,
-        account: &Account,
-        database: &str,
-        name: &str,
-    ) -> anyhow::Result<Container> {
-        self.list_containers(account, database)
-            .await?
-            .into_iter()
-            .find(|c| c.name == name)
-            .ok_or_else(|| anyhow::anyhow!("container '{database}/{name}' not found"))
-    }
-
     async fn primary_key(&self, _account: &Account) -> anyhow::Result<String> {
         self.key_fetches.set(self.key_fetches.get() + 1);
         Ok("primary==".into())
