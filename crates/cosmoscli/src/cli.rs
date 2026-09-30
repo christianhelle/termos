@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+pub use cosmos_core::store::AuthMode;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -30,17 +31,6 @@ pub struct GlobalArgs {
     /// Account key to use instead of fetching one from Resource Manager
     #[arg(long, global = true)]
     pub key: Option<String>,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Default)]
-pub enum AuthMode {
-    /// Try Entra ID first and fall back to the account key
-    #[default]
-    Auto,
-    /// Only use Entra ID
-    Entra,
-    /// Only use the account key
-    Key,
 }
 
 #[derive(Subcommand, Debug, PartialEq)]

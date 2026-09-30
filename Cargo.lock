@@ -487,6 +487,7 @@ dependencies = [
  "async-trait",
  "azure_core",
  "azure_data_cosmos",
+ "clap",
  "futures",
  "reqwest",
  "serde",

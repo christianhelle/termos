@@ -10,9 +10,13 @@ anyhow.workspace = true
 async-trait.workspace = true
 azure_core.workspace = true
 azure_data_cosmos.workspace = true
+clap = { workspace = true, optional = true }
 futures.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[features]
+clap = ["dep:clap"]
