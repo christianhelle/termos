@@ -7,6 +7,8 @@ A command line tool for Azure Cosmos DB (NoSQL API). It can:
 - delete everything under a partition key
 - create and delete containers
 
+It comes with `cosmostui`, a terminal UI for browsing accounts and documents.
+
 ## Requirements
 
 - Rust 1.88 or later
@@ -90,12 +92,31 @@ Partition key values given with `--pk` are strings. Use `--pk-json` for numbers,
 
 Deleting a partition or a container asks for confirmation. When stdin is not a terminal, the tool refuses unless you pass `--yes`.
 
+## Terminal UI
+
+`cosmostui` browses accounts and documents in three panes, like the Data Explorer in the Azure portal:
+
+```sh
+cargo install --path crates/cosmostui
+cosmostui [--subscription <ID>] [--auth auto|entra|key] [--key <KEY>]
+```
+
+- **Accounts** (left): a tree of accounts, databases and containers. Open an account with Enter or → to load its containers. Opening a container lists its first 100 documents.
+- **Results** (middle): the id and partition key of each document found.
+- **Document** (right): the selected document as JSON.
+- **Search** (top): press `/` and type a query, then Enter. A `SELECT` statement runs as typed. Clauses like `WHERE c.status = 'open'` or `ORDER BY c._ts DESC` follow `SELECT * FROM c`. A bare condition like `c.total > 10` becomes a `WHERE` clause.
+
+Tab and Shift-Tab move between panes, `r` runs the query again, `?` shows every key and `q` quits.
+
 ## Development
 
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 ```
 
-Command handlers are tested against in-memory fakes of the control and data planes (`src/testing.rs`). The Azure adapters in `src/arm.rs` and `src/cosmos.rs` are kept thin.
+The workspace has three crates:
+- `crates/cosmos-core`: Azure access shared by the front ends. The `Connector` finds accounts and opens container connections. The adapters in `arm.rs` and `cosmos.rs` are kept thin, and `testing.rs` has in-memory fakes of the control and data planes (feature `test-support`).
+- `crates/cosmoscli`: the command line tool and its interactive mode.
+- `crates/cosmostui`: the terminal UI. Keys and finished background work go through `state::update`, which returns the work to start next, so it is tested without a terminal.
