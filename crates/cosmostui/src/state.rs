@@ -351,6 +351,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Up | KeyCode::Char('k') => {
             state.result_selected = state.result_selected.saturating_sub(1);
         }
+        KeyCode::Enter if state.selected_document().is_some() => state.focus = Focus::Document,
         KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
         _ => {}
     }
@@ -1192,5 +1193,25 @@ mod tests {
             Status::Error("throttled, press r to run the query again".into())
         );
         assert!(press(&mut state, KeyCode::Down).is_empty());
+    }
+
+    #[test]
+    fn enter_on_a_result_jumps_to_its_document() {
+        let mut state = with_cart_results();
+
+        let effects = press(&mut state, KeyCode::Enter);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.focus, Focus::Document);
+    }
+
+    #[test]
+    fn enter_without_results_stays_in_the_results() {
+        let mut state = with_orders_expanded();
+        state.focus = Focus::Results;
+
+        press(&mut state, KeyCode::Enter);
+
+        assert_eq!(state.focus, Focus::Results);
     }
 }

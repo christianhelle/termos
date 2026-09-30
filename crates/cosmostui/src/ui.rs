@@ -131,7 +131,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 const HELP: [(&str, &str); 12] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("/", "Search: type SQL, a clause or a condition"),
-    ("Enter", "Open or close a node, run the search"),
+    ("Enter", "Open a node, run the search, show a document"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
     ("→ ←  l h", "Open or close a node"),
     ("PgUp PgDn Home", "Scroll the document"),
