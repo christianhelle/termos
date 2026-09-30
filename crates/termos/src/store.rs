@@ -4,8 +4,7 @@ use serde_json::Value;
 use crate::management::Account;
 
 /// Which credentials to use for the Cosmos DB data plane.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Default, clap::ValueEnum)]
 pub enum AuthMode {
     /// Try Entra ID first and fall back to the account key
     #[default]

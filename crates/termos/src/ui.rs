@@ -1,6 +1,6 @@
 //! Draws the state on the terminal.
 
-use cosmos_core::partition::{display_value, value_at_path};
+use crate::partition::{display_value, value_at_path};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
@@ -198,7 +198,7 @@ fn draw_help(frame: &mut Frame) {
 mod tests {
     use super::*;
     use crate::state::{Event, Focus, Msg, QueryResult, update};
-    use cosmos_core::testing::{account, container};
+    use crate::testing::{account, container};
     use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

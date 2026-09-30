@@ -4,10 +4,10 @@ use std::cell::RefCell;
 use std::pin::Pin;
 use std::time::Instant;
 
-use cosmos_core::cache::AccountCache;
-use cosmos_core::connector::Connector;
-use cosmos_core::management::Management;
-use cosmos_core::store::{DataPlane, DataStore, Documents};
+use crate::cache::AccountCache;
+use crate::connector::Connector;
+use crate::management::Management;
+use crate::store::{DataPlane, DataStore, Documents};
 use futures::StreamExt;
 use futures::stream::Peekable;
 
@@ -141,9 +141,9 @@ fn describe(error: anyhow::Error) -> String {
 mod tests {
     use super::*;
 
-    use cosmos_core::connector::Settings;
-    use cosmos_core::store::{AuthMode, Credential};
-    use cosmos_core::testing::{FakeDataPlane, FakeManagement, account, container};
+    use crate::connector::Settings;
+    use crate::store::{AuthMode, Credential};
+    use crate::testing::{FakeDataPlane, FakeManagement, account, container};
     use serde_json::{Value, json};
 
     type TestRunner = Runner<FakeManagement, FakeDataPlane>;

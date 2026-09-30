@@ -1,6 +1,6 @@
 //! What the screen shows, and how keys and finished work change it.
 
-use cosmos_core::management::{Account, Container};
+use crate::management::{Account, Container};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -763,7 +763,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmos_core::testing::{account, container};
+    use crate::testing::{account, container};
     use serde_json::{Value, json};
     use std::time::Duration;
 

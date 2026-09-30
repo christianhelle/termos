@@ -1,24 +1,34 @@
+mod arm;
+mod cache;
+mod connector;
+mod cosmos;
+mod credential;
 mod effects;
 mod input;
 mod json;
+mod management;
+mod partition;
 mod query;
 mod state;
+mod store;
+#[cfg(test)]
+mod testing;
 mod ui;
 
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::arm::Arm;
+use crate::cache::AccountCache;
+use crate::connector::{Connector, Settings};
+use crate::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
+use crate::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefetch_tokens};
+use crate::management::Account;
+use crate::store::AuthMode;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
-use cosmos_core::arm::Arm;
-use cosmos_core::cache::AccountCache;
-use cosmos_core::connector::{Connector, Settings};
-use cosmos_core::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
-use cosmos_core::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefetch_tokens};
-use cosmos_core::management::Account;
-use cosmos_core::store::AuthMode;
 use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
 use futures::StreamExt;
 use ratatui::DefaultTerminal;
