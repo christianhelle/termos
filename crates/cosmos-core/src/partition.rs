@@ -7,6 +7,15 @@ pub fn value_at_path<'a>(doc: &'a Value, path: &str) -> Option<&'a Value> {
         .try_fold(doc, |value, segment| value.get(segment))
 }
 
+/// Shows a value in a table cell: strings without quotes, other values as JSON, missing as blank.
+pub fn display_value(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

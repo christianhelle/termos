@@ -1,7 +1,7 @@
 use comfy_table::{Table, presets::ASCII_FULL};
 use serde_json::Value;
 
-use cosmos_core::partition::value_at_path;
+use cosmos_core::partition::{display_value, value_at_path};
 
 /// Renders documents as a table with the id and partition key columns.
 pub fn render_table(docs: &[Value], pk_path: &str) -> String {
@@ -11,7 +11,10 @@ pub fn render_table(docs: &[Value], pk_path: &str) -> String {
     let mut table = Table::new();
     table.load_style(ASCII_FULL).set_header(["id", pk_path]);
     for doc in docs {
-        table.add_row([cell(doc.get("id")), cell(value_at_path(doc, pk_path))]);
+        table.add_row([
+            display_value(doc.get("id")),
+            display_value(value_at_path(doc, pk_path)),
+        ]);
     }
     table.to_string()
 }
@@ -27,14 +30,6 @@ pub fn render_rows<const N: usize>(headers: [&str; N], rows: Vec<[String; N]>) -
 /// Renders documents as a pretty-printed JSON array.
 pub fn render_json(docs: &[Value]) -> String {
     serde_json::to_string_pretty(docs).expect("JSON values always serialize")
-}
-
-fn cell(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-        None => String::new(),
-    }
 }
 
 #[cfg(test)]
