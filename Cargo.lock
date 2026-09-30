@@ -484,9 +484,12 @@ name = "cosmos-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "azure_core",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
