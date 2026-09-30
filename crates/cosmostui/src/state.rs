@@ -120,6 +120,14 @@ pub enum Node {
     AccountsNote,
 }
 
+/// The names leading to a tree node.
+#[derive(Debug, Clone, PartialEq)]
+struct TreePath {
+    account: String,
+    database: Option<String>,
+    container: Option<String>,
+}
+
 /// One visible line of the tree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TreeRow {
@@ -308,6 +316,50 @@ impl AppState {
             Some(Load::Loaded(databases)) => databases.get_mut(index),
             _ => None,
         }
+    }
+
+    /// The names leading to a tree node, which stay the same when the tree is rebuilt.
+    fn path_of(&self, node: Option<Node>) -> Option<TreePath> {
+        let Load::Loaded(accounts) = &self.accounts else {
+            return None;
+        };
+        let (a, d, c) = match node? {
+            Node::Account(a) | Node::Note(a) => (a, None, None),
+            Node::Database(a, d) => (a, Some(d), None),
+            Node::Container(a, d, c) => (a, Some(d), Some(c)),
+            Node::AccountsNote => return None,
+        };
+        let account = accounts.get(a)?;
+        let database = match (&account.databases, d) {
+            (Some(Load::Loaded(databases)), Some(d)) => databases.get(d),
+            _ => None,
+        };
+        let container = database
+            .zip(c)
+            .and_then(|(database, c)| database.containers.get(c));
+        Some(TreePath {
+            account: account.account.name.clone(),
+            database: database.map(|database| database.name.clone()),
+            container: container.map(|container| container.name.clone()),
+        })
+    }
+
+    /// Selects the row at a path, or its account when the path is gone, or the nearest row.
+    fn reselect(&mut self, path: Option<TreePath>) {
+        let rows = self.tree_rows();
+        let position = |path: &TreePath| {
+            rows.iter()
+                .position(|row| self.path_of(Some(row.node)).as_ref() == Some(path))
+        };
+        let found = path.and_then(|path| {
+            let account = TreePath {
+                account: path.account.clone(),
+                database: None,
+                container: None,
+            };
+            position(&path).or_else(|| position(&account))
+        });
+        self.tree_selected = found.unwrap_or(self.tree_selected.min(rows.len().saturating_sub(1)));
     }
 
     /// Selects the tree row of a node, if it is visible.
@@ -647,6 +699,49 @@ fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String
     }
 }
 
+/// Shows the listed accounts. Accounts already shown, such as from the cache,
+/// keep their open databases and containers, and the selection stays where it was.
+fn accounts_loaded(state: &mut AppState, result: Result<Vec<Account>, String>) {
+    let selected = state.path_of(state.selected_node());
+    let shown = match std::mem::replace(&mut state.accounts, Load::Loading) {
+        Load::Loaded(nodes) => nodes,
+        Load::Loading | Load::Failed(_) => Vec::new(),
+    };
+    let accounts = match result {
+        Ok(accounts) => accounts,
+        Err(error) if shown.is_empty() => {
+            state.accounts = Load::Loaded(shown);
+            state.status = Status::Error(error);
+            return;
+        }
+        Err(error) => {
+            state.accounts = Load::Loaded(shown);
+            state.status = Status::Error(format!("could not refresh accounts: {error}"));
+            return;
+        }
+    };
+    let mut shown: Vec<Option<AccountNode>> = shown.into_iter().map(Some).collect();
+    let nodes = accounts
+        .into_iter()
+        .map(|account| {
+            let earlier = shown
+                .iter_mut()
+                .find(|node| {
+                    node.as_ref()
+                        .is_some_and(|n| n.account.name == account.name)
+                })
+                .and_then(Option::take);
+            match earlier {
+                Some(node) => AccountNode { account, ..node },
+                None => AccountNode::closed(account),
+            }
+        })
+        .collect();
+    state.accounts = Load::Loaded(nodes);
+    state.status = Status::Info("Pick a container".into());
+    state.reselect(selected);
+}
+
 /// Counts documents in words, such as "1 document" or "3 documents".
 fn documents(count: usize) -> String {
     match count {
@@ -657,22 +752,7 @@ fn documents(count: usize) -> String {
 
 fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::AccountsLoaded(Ok(accounts)) => {
-            let nodes = accounts
-                .into_iter()
-                .map(|account| AccountNode {
-                    account,
-                    expanded: false,
-                    databases: None,
-                })
-                .collect();
-            state.accounts = Load::Loaded(nodes);
-            state.status = Status::Info("Pick a container".into());
-        }
-        Msg::AccountsLoaded(Err(error)) => {
-            state.accounts = Load::Loaded(Vec::new());
-            state.status = Status::Error(error);
-        }
+        Msg::AccountsLoaded(result) => accounts_loaded(state, result),
         Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
         Msg::QueryDone { id, result } => query_done(state, id, result),
         Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
@@ -1311,5 +1391,64 @@ mod tests {
         let (state, _) = AppState::with_cached_accounts(None);
 
         assert_eq!(outline(&state), vec!["loading accounts…"]);
+    }
+
+    #[test]
+    fn refreshed_accounts_keep_what_was_open_and_selected() {
+        let (mut state, _) =
+            AppState::with_cached_accounts(Some(vec![account("orders"), account("inventory")]));
+        press(&mut state, KeyCode::Enter);
+        containers_loaded(&mut state, "orders", Ok(shop_containers()));
+        state.tree_selected = 6;
+        assert_eq!(selected_label(&state), "inventory");
+
+        let refreshed = vec![account("billing"), account("orders"), account("inventory")];
+        update(&mut state, Event::Msg(Msg::AccountsLoaded(Ok(refreshed))));
+
+        assert_eq!(
+            outline(&state),
+            vec![
+                "billing",
+                "orders",
+                "  shop",
+                "    carts",
+                "    orders",
+                "  audit",
+                "    events",
+                "inventory"
+            ]
+        );
+        assert_eq!(selected_label(&state), "inventory");
+    }
+
+    #[test]
+    fn refreshed_accounts_drop_accounts_that_are_gone() {
+        let (mut state, _) =
+            AppState::with_cached_accounts(Some(vec![account("orders"), account("inventory")]));
+        press(&mut state, KeyCode::Down);
+
+        update(
+            &mut state,
+            Event::Msg(Msg::AccountsLoaded(Ok(vec![account("orders")]))),
+        );
+
+        assert_eq!(outline(&state), vec!["orders"]);
+        assert_eq!(selected_label(&state), "orders");
+    }
+
+    #[test]
+    fn a_failed_refresh_keeps_the_cached_accounts() {
+        let (mut state, _) = AppState::with_cached_accounts(Some(vec![account("orders")]));
+
+        update(
+            &mut state,
+            Event::Msg(Msg::AccountsLoaded(Err("az login first".into()))),
+        );
+
+        assert_eq!(outline(&state), vec!["orders"]);
+        assert_eq!(
+            state.status,
+            Status::Error("could not refresh accounts: az login first".into())
+        );
     }
 }
