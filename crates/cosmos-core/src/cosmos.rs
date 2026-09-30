@@ -7,7 +7,7 @@ use azure_core::credentials::{Secret, TokenCredential};
 use azure_core::http::StatusCode;
 use azure_data_cosmos::{
     AccountEndpoint, AccountReference, ContainerClient, CosmosClient, CosmosError, FeedScope,
-    PartitionKey, Query, RoutingStrategy,
+    Query, RoutingStrategy,
 };
 use futures::{StreamExt, TryStreamExt};
 use serde_json::Value;
@@ -145,100 +145,11 @@ impl DataStore for CosmosStore {
             .map_err(classify)?;
         Ok(items.map_err(classify).boxed_local())
     }
-
-    async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value> {
-        let response = self
-            .client
-            .read_item(to_partition_key(pk)?, id, None)
-            .await
-            .map_err(classify)?;
-        response.into_model().map_err(classify)
-    }
-
-    async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()> {
-        self.client
-            .delete_item(to_partition_key(pk)?, id, None)
-            .await
-            .map_err(classify)?;
-        Ok(())
-    }
-
-    async fn create_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()> {
-        let id = document_id(&doc)?;
-        self.client
-            .create_item(to_partition_key(pk)?, &id, doc, None)
-            .await
-            .map_err(classify)?;
-        Ok(())
-    }
-
-    async fn upsert_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()> {
-        let id = document_id(&doc)?;
-        self.client
-            .upsert_item(to_partition_key(pk)?, &id, doc, None)
-            .await
-            .map_err(classify)?;
-        Ok(())
-    }
-
-    async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()> {
-        self.client
-            .replace_item(to_partition_key(pk)?, id, doc, None)
-            .await
-            .map_err(classify)?;
-        Ok(())
-    }
-}
-
-fn document_id(doc: &Value) -> anyhow::Result<String> {
-    doc.get("id")
-        .and_then(Value::as_str)
-        .map(String::from)
-        .ok_or_else(|| anyhow::anyhow!("document has no string 'id' property"))
-}
-
-/// Converts a JSON partition key value into an SDK partition key.
-fn to_partition_key(value: &Value) -> anyhow::Result<PartitionKey> {
-    Ok(match value {
-        Value::String(s) => PartitionKey::from(s.clone()),
-        Value::Number(n) => {
-            let n = n
-                .as_f64()
-                .ok_or_else(|| anyhow::anyhow!("partition key {n} is not a finite number"))?;
-            PartitionKey::from(n)
-        }
-        Value::Bool(b) => PartitionKey::from(*b),
-        Value::Null => PartitionKey::from(PartitionKey::NULL),
-        other => {
-            anyhow::bail!("partition key must be a string, number, boolean or null, got {other}")
-        }
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn converts_scalar_partition_key_values() {
-        assert_eq!(
-            to_partition_key(&json!("contoso")).unwrap(),
-            PartitionKey::from("contoso")
-        );
-        assert_eq!(
-            to_partition_key(&json!(42)).unwrap(),
-            PartitionKey::from(42.0)
-        );
-        assert_eq!(
-            to_partition_key(&json!(true)).unwrap(),
-            PartitionKey::from(true)
-        );
-        assert_eq!(
-            to_partition_key(&json!(null)).unwrap(),
-            PartitionKey::from(PartitionKey::NULL)
-        );
-    }
 
     #[test]
     fn short_message_drops_diagnostics() {
@@ -256,10 +167,5 @@ mod tests {
             "403/5301 (RbacUnauthorizedMetadataRequest): AccountProperties fetch returned HTTP 403";
 
         assert_eq!(short_message(message), message);
-    }
-
-    #[test]
-    fn rejects_objects_as_partition_keys() {
-        assert!(to_partition_key(&json!({ "a": 1 })).is_err());
     }
 }

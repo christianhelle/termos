@@ -6,7 +6,6 @@ use std::rc::Rc;
 use serde_json::Value;
 
 use crate::management::{Account, Container, Management, resolve_account};
-use crate::partition::value_at_path;
 use crate::store::{Credential, DataPlane, DataStore, Documents, Unauthorized};
 use futures::StreamExt;
 
@@ -219,50 +218,5 @@ impl DataStore for FakeStore {
         container.queries.push(sql.to_string());
         let docs = container.docs.clone();
         Ok(futures::stream::iter(docs.into_iter().map(Ok)).boxed_local())
-    }
-
-    async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value> {
-        let container = self.container.borrow();
-        let doc = container.docs.iter().find(|doc| self.matches(doc, id, pk));
-        doc.cloned()
-            .ok_or_else(|| anyhow::anyhow!("document '{id}' not found"))
-    }
-
-    async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()> {
-        let mut container = self.container.borrow_mut();
-        let before = container.docs.len();
-        container.docs.retain(|doc| !self.matches(doc, id, pk));
-        anyhow::ensure!(container.docs.len() < before, "document '{id}' not found");
-        Ok(())
-    }
-
-    async fn create_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()> {
-        let id = doc["id"].as_str().unwrap_or_default().to_string();
-        anyhow::ensure!(
-            self.read_item(&id, pk).await.is_err(),
-            "document '{id}' already exists"
-        );
-        self.container.borrow_mut().docs.push(doc);
-        Ok(())
-    }
-
-    async fn upsert_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()> {
-        let id = doc["id"].as_str().unwrap_or_default().to_string();
-        let _ = self.delete_item(&id, pk).await;
-        self.container.borrow_mut().docs.push(doc);
-        Ok(())
-    }
-
-    async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()> {
-        self.delete_item(id, pk).await?;
-        self.container.borrow_mut().docs.push(doc);
-        Ok(())
-    }
-}
-
-impl FakeStore {
-    fn matches(&self, doc: &Value, id: &str, pk: &Value) -> bool {
-        doc.get("id").and_then(Value::as_str) == Some(id)
-            && value_at_path(doc, &self.pk_path) == Some(pk)
     }
 }

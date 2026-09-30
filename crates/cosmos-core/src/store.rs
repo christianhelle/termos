@@ -64,17 +64,4 @@ pub trait DataStore {
         let docs = self.documents(sql).await?;
         docs.take(max.unwrap_or(usize::MAX)).try_collect().await
     }
-
-    async fn read_item(&self, id: &str, pk: &Value) -> anyhow::Result<Value>;
-
-    async fn delete_item(&self, id: &str, pk: &Value) -> anyhow::Result<()>;
-
-    /// Creates a document, failing if one with the same id already exists.
-    async fn create_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()>;
-
-    /// Creates a document, or replaces it when the id already exists.
-    async fn upsert_item(&self, pk: &Value, doc: Value) -> anyhow::Result<()>;
-
-    /// Replaces an existing document, failing if it does not exist.
-    async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()>;
 }
