@@ -156,6 +156,8 @@ pub struct AppState {
     pub pk_path: String,
     /// Index of the selected document in the results.
     pub result_selected: usize,
+    /// The SQL of the latest query, to run again on refresh.
+    pub last_sql: String,
 }
 
 impl AppState {
@@ -173,6 +175,7 @@ impl AppState {
             results: Vec::new(),
             pk_path: String::new(),
             result_selected: 0,
+            last_sql: String::new(),
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -302,6 +305,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Up | KeyCode::Char('k') => {
             state.result_selected = state.result_selected.saturating_sub(1);
         }
+        KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
         _ => {}
     }
     Vec::new()
@@ -376,6 +380,8 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
         container: container.name.clone(),
     };
     state.target = Some(target);
+    state.results.clear();
+    state.result_selected = 0;
     run_query(state, DEFAULT_QUERY.to_string())
 }
 
@@ -386,6 +392,7 @@ fn run_query(state: &mut AppState, sql: String) -> Vec<Effect> {
         return Vec::new();
     };
     state.query_id += 1;
+    state.last_sql.clone_from(&sql);
     state.status = Status::Info(format!(
         "Querying {}/{}…",
         target.database, target.container
@@ -496,6 +503,7 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
                 result.elapsed.as_secs_f64()
             ));
             state.results = result.docs;
+            state.result_selected = 0;
             state.pk_path = result.pk_path;
         }
         Err(error) => state.status = Status::Error(error),
@@ -940,5 +948,27 @@ mod tests {
 
         press(&mut state, KeyCode::Up);
         assert_eq!(state.selected_document(), Some(&cart_docs()[0]));
+    }
+
+    #[test]
+    fn new_results_start_at_the_first_document() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Down);
+
+        press(&mut state, KeyCode::Char('r'));
+        query_done(&mut state, 2, Ok(cart_docs()));
+
+        assert_eq!(state.result_selected, 0);
+    }
+
+    #[test]
+    fn opening_another_container_clears_the_results() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Tree;
+
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Enter);
+
+        assert!(state.results.is_empty());
     }
 }
