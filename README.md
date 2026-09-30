@@ -10,7 +10,7 @@ A terminal UI for Azure Cosmos DB (NoSQL API). It browses accounts, containers a
 ## Install
 
 ```sh
-cargo install --path crates/termos
+cargo install --path .
 ```
 
 ## Usage
@@ -43,11 +43,10 @@ Pass `--key <KEY>` to supply an account key yourself.
 ## Development
 
 ```sh
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 ```
 
-The workspace has two crates:
-- `crates/cosmos-core`: Azure access. The `Connector` finds accounts and opens container connections. The adapters in `arm.rs` and `cosmos.rs` are kept thin, and `testing.rs` has in-memory fakes of the control and data planes (feature `test-support`).
-- `crates/termos`: the terminal UI. Keys and finished background work go through `state::update`, which returns the work to start next, so it is tested without a terminal.
+- Azure access: the `Connector` lists accounts and opens container connections. The adapters in `arm.rs` and `cosmos.rs` are kept thin, and `testing.rs` has in-memory fakes of the control and data planes for tests.
+- The terminal UI: keys and finished background work go through `state::update`, which returns the work to start next, so it is tested without a terminal.
