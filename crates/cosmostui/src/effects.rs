@@ -12,7 +12,18 @@ pub async fn run<M: Management, D: DataPlane>(connector: &Connector<M, D>, effec
         Effect::LoadAccounts => {
             Msg::AccountsLoaded(connector.list_accounts().await.map_err(describe))
         }
-        Effect::LoadContainers(_) | Effect::Query { .. } => todo!(),
+        Effect::LoadContainers(account) => {
+            // Set up the data plane client while the containers are listed
+            let (result, ()) = futures::join!(
+                connector.containers_of(&account, None),
+                connector.prepare(&account)
+            );
+            Msg::ContainersLoaded {
+                account: account.name,
+                result: result.map_err(describe),
+            }
+        }
+        Effect::Query { .. } => todo!(),
     }
 }
 
@@ -25,6 +36,7 @@ fn describe(error: anyhow::Error) -> String {
 mod tests {
     use super::*;
     use cosmos_core::connector::Settings;
+    use cosmos_core::store::Credential;
     use cosmos_core::testing::{FakeDataPlane, FakeManagement, account, container};
 
     type TestConnector = Connector<FakeManagement, FakeDataPlane>;
@@ -46,5 +58,22 @@ mod tests {
             panic!("unexpected {msg:?}");
         };
         assert_eq!(accounts, vec![account("orders")]);
+    }
+
+    #[tokio::test]
+    async fn loads_containers_and_prepares_the_data_plane_meanwhile() {
+        let connector = connector();
+
+        let msg = run(&connector, Effect::LoadContainers(account("orders"))).await;
+
+        let Msg::ContainersLoaded { account, result } = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(account, "orders");
+        assert_eq!(
+            result.unwrap(),
+            vec![("shop".to_string(), container("carts", "/tenantId"))]
+        );
+        assert_eq!(*connector.data.prepared.borrow(), vec![Credential::Entra]);
     }
 }
