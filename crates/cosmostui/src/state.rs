@@ -112,11 +112,35 @@ pub enum Status {
     Error(String),
 }
 
+/// The pane that keys go to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Focus {
+    Tree,
+    Search,
+    Results,
+    Document,
+}
+
+impl Focus {
+    const ORDER: [Focus; 4] = [Focus::Tree, Focus::Search, Focus::Results, Focus::Document];
+
+    fn next(self) -> Focus {
+        let index = Self::ORDER.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ORDER[(index + 1) % Self::ORDER.len()]
+    }
+
+    fn previous(self) -> Focus {
+        let index = Self::ORDER.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ORDER[(index + Self::ORDER.len() - 1) % Self::ORDER.len()]
+    }
+}
+
 /// Everything the screen shows.
 pub struct AppState {
     pub accounts: Load<Vec<AccountNode>>,
     pub status: Status,
     pub quit: bool,
+    pub focus: Focus,
     /// Index of the selected tree row.
     pub tree_selected: usize,
     /// The container that queries run against.
@@ -136,6 +160,7 @@ impl AppState {
             accounts: Load::Loading,
             status: Status::Info("Loading accounts…".into()),
             quit: false,
+            focus: Focus::Tree,
             tree_selected: 0,
             target: None,
             query_id: 0,
@@ -228,7 +253,22 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
+        KeyCode::Tab => state.focus = state.focus.next(),
+        KeyCode::BackTab => state.focus = state.focus.previous(),
         KeyCode::Char('q') => state.quit = true,
+        KeyCode::Char('/') => state.focus = Focus::Search,
+        _ => {
+            return match state.focus {
+                Focus::Tree => on_tree_key(state, key),
+                Focus::Search | Focus::Results | Focus::Document => Vec::new(),
+            };
+        }
+    }
+    Vec::new()
+}
+
+fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
             let last = state.tree_rows().len().saturating_sub(1);
             state.tree_selected = (state.tree_selected + 1).min(last);
@@ -714,5 +754,46 @@ mod tests {
         query_done(&mut state, 1, Err("syntax error".into()));
 
         assert_eq!(state.status, Status::Error("syntax error".into()));
+    }
+
+    #[test]
+    fn tab_and_shift_tab_cycle_through_the_panes() {
+        let (mut state, _) = AppState::new();
+        assert_eq!(state.focus, Focus::Tree);
+
+        let order: Vec<Focus> = (0..4)
+            .map(|_| {
+                press(&mut state, KeyCode::Tab);
+                state.focus
+            })
+            .collect();
+        assert_eq!(
+            order,
+            vec![Focus::Search, Focus::Results, Focus::Document, Focus::Tree]
+        );
+
+        press(&mut state, KeyCode::BackTab);
+        assert_eq!(state.focus, Focus::Document);
+    }
+
+    #[test]
+    fn slash_jumps_to_the_search_bar() {
+        let (mut state, _) = AppState::new();
+
+        press(&mut state, KeyCode::Char('/'));
+
+        assert_eq!(state.focus, Focus::Search);
+    }
+
+    #[test]
+    fn tree_keys_only_act_while_the_tree_has_focus() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+        state.focus = Focus::Results;
+
+        let effects = press(&mut state, KeyCode::Enter);
+        press(&mut state, KeyCode::Down);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.tree_selected, 0);
     }
 }
