@@ -132,7 +132,7 @@ const HELP: [(&str, &str); 12] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("/", "Search: type SQL, a clause or a condition"),
     ("Enter", "Open or close a node, run the search"),
-    ("↑ ↓  j k", "Move, or scroll the document"),
+    ("↑ ↓  j k", "Move, scroll, or load more at the end"),
     ("→ ←  l h", "Open or close a node"),
     ("PgUp PgDn Home", "Scroll the document"),
     ("Esc", "Leave the search bar"),
@@ -357,10 +357,7 @@ mod tests {
         assert!(shows(&screen(&state), "Results (2)"));
 
         state.more = true;
-        assert!(shows(
-            &screen(&state),
-            "Results (2, more ↓)"
-        ));
+        assert!(shows(&screen(&state), "Results (2, more ↓)"));
 
         state.loading_more = true;
         assert!(shows(&screen(&state), "Results (2, loading…)"));
