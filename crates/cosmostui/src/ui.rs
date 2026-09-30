@@ -4,8 +4,10 @@ use cosmos_core::partition::{display_value, value_at_path};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Cell, List, ListItem, ListState, Paragraph, Row, Table, TableState};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
+};
 
 use crate::json::highlight_json;
 use crate::state::{AppState, Focus, Status};
@@ -26,6 +28,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     draw_results(frame, state, results);
     draw_document(frame, state, document);
     draw_status(frame, state, status);
+    if state.show_help {
+        draw_help(frame);
+    }
 }
 
 fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -95,11 +100,54 @@ fn pane<'a>(title: &'a str, state: &AppState, focus: Focus) -> Block<'a> {
 }
 
 fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
+    let hint = "Tab next pane · / search · ? help · q quit";
+    let width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
+    let [message, keys] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(width)]).areas(area);
     let line = match &state.status {
         Status::Info(text) => Line::raw(text.as_str()),
         Status::Error(text) => Line::styled(format!("error: {text}"), Style::new().fg(Color::Red)),
     };
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(Paragraph::new(line), message);
+    let hint = Line::styled(hint, Style::new().fg(Color::DarkGray));
+    frame.render_widget(Paragraph::new(hint), keys);
+}
+
+/// What each key does, shown with `?`.
+const HELP: [(&str, &str); 12] = [
+    ("Tab / Shift-Tab", "Next pane / previous pane"),
+    ("/", "Search: type SQL, a clause or a condition"),
+    ("Enter", "Open or close a node, run the search"),
+    ("↑ ↓  j k", "Move, or scroll the document"),
+    ("→ ←  l h", "Open or close a node"),
+    ("PgUp PgDn Home", "Scroll the document"),
+    ("Esc", "Leave the search bar"),
+    ("r", "Run the query again"),
+    ("?", "Show this help"),
+    ("q, Ctrl-C", "Quit"),
+    ("", ""),
+    ("", "Press any key to close"),
+];
+
+fn draw_help(frame: &mut Frame) {
+    let lines: Vec<Line> = HELP
+        .iter()
+        .map(|(keys, action)| {
+            Line::from(vec![
+                Span::styled(format!("{keys:<16}"), Style::new().fg(Color::Cyan)),
+                Span::raw(*action),
+            ])
+        })
+        .collect();
+    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX) + 2;
+    let area = frame
+        .area()
+        .centered(Constraint::Length(64), Constraint::Length(height));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title("Keys")),
+        area,
+    );
 }
 
 #[cfg(test)]
@@ -265,5 +313,26 @@ mod tests {
         }
 
         assert!(shows(&screen(&state), "c.qty > 1"));
+    }
+
+    #[test]
+    fn draws_the_key_help_over_the_panes() {
+        let mut state = browsing();
+        press(&mut state, KeyCode::Char('?'));
+
+        let screen = screen(&state);
+
+        for text in ["Keys", "Tab", "Next pane", "Quit"] {
+            assert!(
+                shows(&screen, text),
+                "{text} missing from\n{}",
+                screen.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn the_status_line_hints_at_the_help() {
+        assert!(shows(&screen(&browsing()), "? help"));
     }
 }
