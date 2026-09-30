@@ -1,17 +1,24 @@
 # termos
 
+[![Build](https://github.com/christianhelle/termos/actions/workflows/build.yml/badge.svg)](https://github.com/christianhelle/termos/actions/workflows/build.yml)
+![Crates.io Version](https://img.shields.io/crates/v/termos)
+
 A terminal UI for Azure Cosmos DB (NoSQL API). It browses accounts, containers and documents in three panes, like the Data Explorer in the Azure portal.
 
 ## Requirements
 
-- Rust 1.88 or later
+- Rust 1.88 or later, when installing with `cargo`
 - The [Azure CLI](https://learn.microsoft.com/cli/azure/), logged in with `az login`
 
 ## Install
 
+Download a build for Windows, macOS or Linux from [Releases](https://github.com/christianhelle/termos/releases), or install from [crates.io](https://crates.io/crates/termos):
+
 ```sh
-cargo install --path .
+cargo install termos
 ```
+
+To build from a clone of this repository, run `cargo install --path .`.
 
 ## Usage
 
@@ -50,3 +57,7 @@ cargo fmt --check
 
 - Azure access: the `Connector` lists accounts and opens container connections. The adapters in `arm.rs` and `cosmos.rs` are kept thin, and `testing.rs` has in-memory fakes of the control and data planes for tests.
 - The terminal UI: keys and finished background work go through `state::update`, which returns the work to start next, so it is tested without a terminal.
+
+## License
+
+[MIT](LICENSE)
