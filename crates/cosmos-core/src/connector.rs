@@ -121,16 +121,12 @@ impl<M: Management, D: DataPlane> Connector<M, D> {
         Ok(key)
     }
 
-    /// Lists the containers of one database, or of every database, with their database names.
+    /// Lists the containers of every database, with their database names.
     pub async fn containers_of(
         &self,
         account: &Account,
-        database: Option<String>,
     ) -> anyhow::Result<Vec<(String, Container)>> {
-        let databases = match database {
-            Some(database) => vec![database],
-            None => self.management.list_databases(account).await?,
-        };
+        let databases = self.management.list_databases(account).await?;
         let listings = databases.iter().map(|database| async move {
             let containers = self.management.list_containers(account, database).await?;
             anyhow::Ok(containers.into_iter().map(|c| (database.clone(), c)))
@@ -269,10 +265,7 @@ mod tests {
     async fn containers_of_every_database_keep_the_database_order() {
         let connector = connector(AuthMode::Auto, true);
 
-        let containers = connector
-            .containers_of(&account("orders"), None)
-            .await
-            .unwrap();
+        let containers = connector.containers_of(&account("orders")).await.unwrap();
 
         let names: Vec<_> = containers
             .iter()

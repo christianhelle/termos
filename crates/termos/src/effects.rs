@@ -59,7 +59,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             Effect::LoadContainers(account) => {
                 // Set up the data plane client while the containers are listed
                 let (result, ()) = futures::join!(
-                    connector.containers_of(&account, None),
+                    connector.containers_of(&account),
                     connector.prepare(&account)
                 );
                 Msg::ContainersLoaded {
