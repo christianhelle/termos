@@ -12,9 +12,19 @@ pub struct AccountCache {
 impl AccountCache {
     /// A cache kept in the given folder, with one file per subscription filter.
     pub fn in_dir(dir: impl Into<PathBuf>, subscription: Option<&str>) -> Self {
-        let _ = subscription;
+        let name = match subscription {
+            // Kept to characters that are safe in a file name on every platform
+            Some(id) => {
+                let id: String = id
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+                    .collect();
+                format!("accounts-{id}.json")
+            }
+            None => "accounts.json".to_string(),
+        };
         AccountCache {
-            path: dir.into().join("accounts.json"),
+            path: dir.into().join(name),
         }
     }
 
@@ -50,5 +60,43 @@ mod tests {
         cache.save(&accounts).unwrap();
 
         assert_eq!(cache.load(), Some(accounts));
+    }
+
+    #[test]
+    fn has_nothing_before_the_first_save() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(AccountCache::in_dir(dir.path(), None).load(), None);
+    }
+
+    #[test]
+    fn ignores_a_file_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("accounts.json"), "not json").unwrap();
+
+        assert_eq!(AccountCache::in_dir(dir.path(), None).load(), None);
+    }
+
+    #[test]
+    fn keeps_a_separate_list_per_subscription() {
+        let dir = tempfile::tempdir().unwrap();
+        let every = AccountCache::in_dir(dir.path(), None);
+        let one = AccountCache::in_dir(dir.path(), Some("sub-2"));
+        every.save(&[account("orders"), account("inventory")]).unwrap();
+
+        one.save(&[account("inventory")]).unwrap();
+
+        assert_eq!(every.load().unwrap().len(), 2);
+        assert_eq!(one.load(), Some(vec![account("inventory")]));
+    }
+
+    #[test]
+    fn creates_its_folder_on_first_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = AccountCache::in_dir(dir.path().join("cosmoscli"), None);
+
+        cache.save(&[account("orders")]).unwrap();
+
+        assert_eq!(cache.load(), Some(vec![account("orders")]));
     }
 }
