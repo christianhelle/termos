@@ -1,0 +1,65 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+    branches:
+      - "*"
+  pull_request:
+    paths:
+      - ".github/workflows/build.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+    branches:
+      - "*"
+
+jobs:
+  rust:
+    name: 🦀 Verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 🛒 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🦀 Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: 🎨 Check formatting
+        run: cargo fmt --all --check
+
+      - name: 🔍 Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: 🧪 Test
+        run: cargo test --locked
+
+      - name: 🛠️ Build
+        run: cargo build --release --locked
+
+  publish-readiness:
+    name: 📦 crates.io publish readiness
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛒 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🦀 Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+
+      - name: 📦 Dry run publish
+        run: cargo publish --dry-run --locked
