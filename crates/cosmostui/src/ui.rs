@@ -2,7 +2,7 @@
 
 use cosmos_core::partition::{display_value, value_at_path};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -12,22 +12,47 @@ use ratatui::widgets::{
 use crate::json::highlight_json;
 use crate::state::{AppState, Focus, Status};
 
-/// Draws the tree, search bar, results, document and status line.
-pub fn draw(frame: &mut Frame, state: &AppState) {
-    let [main, status] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(frame.area());
+/// Where each part of the screen goes.
+struct Panes {
+    tree: Rect,
+    search: Rect,
+    results: Rect,
+    document: Rect,
+    status: Rect,
+}
+
+fn panes(area: Rect) -> Panes {
+    let [main, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
     let [tree, right] =
         Layout::horizontal([Constraint::Percentage(25), Constraint::Fill(1)]).areas(main);
     let [search, body] =
         Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(right);
     let [results, document] =
         Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(1)]).areas(body);
+    Panes {
+        tree,
+        search,
+        results,
+        document,
+        status,
+    }
+}
 
-    draw_tree(frame, state, tree);
-    draw_search(frame, state, search);
-    draw_results(frame, state, results);
-    draw_document(frame, state, document);
-    draw_status(frame, state, status);
+/// How many document lines the document pane shows on a terminal of this size.
+pub fn document_height(size: Size) -> u16 {
+    let document = panes(Rect::from((Position::ORIGIN, size))).document;
+    // Less the top and bottom borders
+    document.height.saturating_sub(2)
+}
+
+/// Draws the tree, search bar, results, document and status line.
+pub fn draw(frame: &mut Frame, state: &AppState) {
+    let panes = panes(frame.area());
+    draw_tree(frame, state, panes.tree);
+    draw_search(frame, state, panes.search);
+    draw_results(frame, state, panes.results);
+    draw_document(frame, state, panes.document);
+    draw_status(frame, state, panes.status);
     if state.show_help {
         draw_help(frame);
     }
@@ -91,13 +116,18 @@ fn draw_search(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
+    // The pane may have grown since the document was scrolled
+    let height = area.height.saturating_sub(2);
+    let scroll = state
+        .doc_scroll
+        .min(state.document_lines().saturating_sub(height));
     let lines = state
         .selected_document()
         .map(highlight_json)
         .unwrap_or_default();
     let document = Paragraph::new(lines)
         .block(pane("Document", state, Focus::Document))
-        .scroll((state.doc_scroll, 0));
+        .scroll((scroll, 0));
     frame.render_widget(document, area);
 }
 
@@ -134,7 +164,7 @@ const HELP: [(&str, &str); 12] = [
     ("Enter", "Open a node, run the search, show a document"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
     ("→ ←  l h", "Open or close a node"),
-    ("PgUp PgDn Home", "Scroll the document"),
+    ("PgUp PgDn Home End", "Scroll the document"),
     ("Esc", "Leave the search bar"),
     ("r", "Run the query again"),
     ("?", "Show this help"),
@@ -172,6 +202,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::layout::Size;
+
     use serde_json::json;
     use std::time::Duration;
 
@@ -305,6 +337,13 @@ mod tests {
     #[test]
     fn draws_the_selected_document_scrolled_to_its_place() {
         let mut state = with_results();
+        let mut long = serde_json::Map::new();
+        long.insert("id".into(), json!("c-2"));
+        for i in 0..30 {
+            long.insert(format!("x{i:02}"), json!(i));
+        }
+        state.results[1] = serde_json::Value::Object(long);
+        state.doc_height = document_height(Size::new(100, 20));
         state.focus = Focus::Results;
         press(&mut state, KeyCode::Down);
 
@@ -316,7 +355,7 @@ mod tests {
         press(&mut state, KeyCode::Down);
         let screen = self::screen(&state);
         assert!(!shows(&screen, r#""id": "c-2","#), "{}", screen.join("\n"));
-        assert!(shows(&screen, r#""tenantId": "fabrikam""#));
+        assert!(shows(&screen, r#""x00": 0"#));
     }
 
     #[test]
@@ -361,5 +400,33 @@ mod tests {
 
         state.loading_more = true;
         assert!(shows(&screen(&state), "Results (2, loading…)"));
+    }
+
+    #[test]
+    fn a_document_scrolled_to_the_end_shows_its_last_line_at_the_bottom() {
+        let mut state = with_results();
+        let fields = (0..40).map(|i| (format!("f{i:02}"), json!(i)));
+        state.results[0] = serde_json::Value::Object(fields.collect());
+        state.doc_height = document_height(Size::new(100, 20));
+        state.focus = Focus::Document;
+
+        press(&mut state, KeyCode::End);
+
+        let screen = screen(&state);
+        let above_bottom = &screen[screen.len() - 4];
+        assert!(
+            above_bottom.contains(r#""f39": 39"#),
+            "{}",
+            screen.join("\n")
+        );
+        assert!(!shows(&screen, r#""f00""#), "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn drawing_never_scrolls_past_the_end_of_the_document() {
+        let mut state = with_results();
+        state.doc_scroll = 50;
+
+        assert!(shows(&screen(&state), r#""id": "c-1","#));
     }
 }

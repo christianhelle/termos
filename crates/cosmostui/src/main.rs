@@ -99,6 +99,7 @@ async fn event_loop(terminal: &mut DefaultTerminal, runner: Rc<AppRunner>) -> an
     let (mut state, effects) = AppState::new();
     start(&runner, &sender, effects);
     while !state.quit {
+        state.doc_height = ui::document_height(terminal.size()?);
         terminal.draw(|frame| ui::draw(frame, &state))?;
         let event = tokio::select! {
             Some(input) = keys.next() => match input? {

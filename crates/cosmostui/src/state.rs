@@ -256,12 +256,16 @@ impl AppState {
 
     /// How far the document pane scrolls: until the last line is at the bottom.
     pub fn max_doc_scroll(&self) -> u16 {
+        self.document_lines().saturating_sub(self.doc_height)
+    }
+
+    /// How many lines the selected document takes when pretty-printed.
+    pub fn document_lines(&self) -> u16 {
         let lines = self.selected_document().map_or(0, |doc| {
             let pretty = serde_json::to_string_pretty(doc).unwrap_or_default();
             pretty.lines().count()
         });
-        let lines = u16::try_from(lines).unwrap_or(u16::MAX);
-        lines.saturating_sub(self.doc_height)
+        u16::try_from(lines).unwrap_or(u16::MAX)
     }
 
     /// What the selected tree row stands for.
