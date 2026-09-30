@@ -175,6 +175,10 @@ pub struct AppState {
     pub last_sql: String,
     /// How many lines the document pane is scrolled down.
     pub doc_scroll: u16,
+    /// Whether the latest query found more documents than the results show.
+    pub more: bool,
+    /// Whether the next page of results is being read.
+    pub loading_more: bool,
 }
 
 impl AppState {
@@ -195,6 +199,8 @@ impl AppState {
             result_selected: 0,
             last_sql: String::new(),
             doc_scroll: 0,
+            more: false,
+            loading_more: false,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -335,6 +341,11 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
             let last = state.results.len().saturating_sub(1);
+            if state.result_selected == last && state.more && !state.loading_more {
+                state.loading_more = true;
+                state.status = Status::Info("Loading more documents…".into());
+                return vec![Effect::LoadMore { id: state.query_id }];
+            }
             state.result_selected = (state.result_selected + 1).min(last);
         }
         KeyCode::Up | KeyCode::Char('k') => {
@@ -554,6 +565,8 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
                 result.elapsed.as_secs_f64()
             ));
             state.results = result.docs;
+            state.more = result.more;
+            state.loading_more = false;
             state.result_selected = 0;
             state.doc_scroll = 0;
             state.pk_path = result.pk_path;
@@ -1057,5 +1070,53 @@ mod tests {
         press(&mut state, KeyCode::Down);
         assert!(!state.show_help);
         assert_eq!(state.tree_selected, 0);
+    }
+
+    fn page(from: usize, to: usize, more: bool) -> QueryResult {
+        QueryResult {
+            docs: (from..to)
+                .map(|i| json!({ "id": format!("c-{i}") }))
+                .collect(),
+            more,
+            pk_path: "/tenantId".into(),
+            elapsed: Duration::from_millis(250),
+        }
+    }
+
+    /// Carts open with the first page of a query that found more.
+    fn with_first_page() -> AppState {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        update(
+            &mut state,
+            Event::Msg(Msg::QueryDone {
+                id: 1,
+                result: Ok(page(0, 3, true)),
+            }),
+        );
+        state.focus = Focus::Results;
+        state
+    }
+
+    #[test]
+    fn moving_past_the_last_result_loads_more_once() {
+        let mut state = with_first_page();
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Down);
+
+        let effects = press(&mut state, KeyCode::Down);
+        let again = press(&mut state, KeyCode::Down);
+
+        assert_eq!(effects, vec![Effect::LoadMore { id: 1 }]);
+        assert!(again.is_empty());
+        assert_eq!(state.result_selected, 2);
+    }
+
+    #[test]
+    fn nothing_more_loads_when_the_query_found_everything() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Down);
+
+        assert!(press(&mut state, KeyCode::Down).is_empty());
     }
 }
