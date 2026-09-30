@@ -1,7 +1,10 @@
 //! What the screen shows, and how keys and finished work change it.
 
 use cosmos_core::management::{Account, Container};
+use std::time::Duration;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde_json::Value;
 
 use crate::query::DEFAULT_QUERY;
 
@@ -35,6 +38,19 @@ pub enum Msg {
         account: String,
         result: Result<Vec<(String, Container)>, String>,
     },
+    QueryDone {
+        id: u64,
+        result: Result<QueryResult, String>,
+    },
+}
+
+/// The documents a query found.
+#[derive(Debug)]
+pub struct QueryResult {
+    pub docs: Vec<Value>,
+    /// The partition key path of the queried container.
+    pub pk_path: String,
+    pub elapsed: Duration,
 }
 
 /// Something that happened, for [`update`] to act on.
@@ -107,6 +123,10 @@ pub struct AppState {
     pub target: Option<Target>,
     /// The id of the latest query.
     pub query_id: u64,
+    /// The documents the latest query found.
+    pub results: Vec<Value>,
+    /// The partition key path of the container the results came from.
+    pub pk_path: String,
 }
 
 impl AppState {
@@ -119,6 +139,8 @@ impl AppState {
             tree_selected: 0,
             target: None,
             query_id: 0,
+            results: Vec::new(),
+            pk_path: String::new(),
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -362,6 +384,28 @@ fn containers_loaded(
     node.databases = Some(Load::Loaded(databases));
 }
 
+/// Shows the documents a query found.
+fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>) {
+    let _ = id;
+    if let Ok(result) = result {
+        state.status = Status::Info(format!(
+            "{} in {:.2}s",
+            documents(result.docs.len()),
+            result.elapsed.as_secs_f64()
+        ));
+        state.results = result.docs;
+        state.pk_path = result.pk_path;
+    }
+}
+
+/// Counts documents in words, such as "1 document" or "3 documents".
+fn documents(count: usize) -> String {
+    match count {
+        1 => "1 document".to_string(),
+        n => format!("{n} documents"),
+    }
+}
+
 fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::AccountsLoaded(Ok(accounts)) => {
@@ -381,6 +425,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
             state.status = Status::Error(error);
         }
         Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
+        Msg::QueryDone { id, result } => query_done(state, id, result),
     }
     Vec::new()
 }
@@ -389,6 +434,8 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
 mod tests {
     use super::*;
     use cosmos_core::testing::{account, container};
+    use serde_json::{Value, json};
+    use std::time::Duration;
 
     /// The tree as indented text, one line per row.
     fn outline(state: &AppState) -> Vec<String> {
@@ -612,5 +659,33 @@ mod tests {
             }]
         );
         assert_eq!(state.target, Some(carts()));
+    }
+
+    fn cart_docs() -> Vec<Value> {
+        vec![
+            json!({ "id": "c-1", "tenantId": "contoso" }),
+            json!({ "id": "c-2", "tenantId": "fabrikam" }),
+        ]
+    }
+
+    fn query_done(state: &mut AppState, id: u64, result: Result<Vec<Value>, String>) {
+        let result = result.map(|docs| QueryResult {
+            docs,
+            pk_path: "/tenantId".into(),
+            elapsed: Duration::from_millis(250),
+        });
+        update(state, Event::Msg(Msg::QueryDone { id, result }));
+    }
+
+    #[test]
+    fn shows_the_documents_a_query_found() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+
+        query_done(&mut state, 1, Ok(cart_docs()));
+
+        assert_eq!(state.results, cart_docs());
+        assert_eq!(state.pk_path, "/tenantId");
+        assert_eq!(state.status, Status::Info("2 documents in 0.25s".into()));
     }
 }
