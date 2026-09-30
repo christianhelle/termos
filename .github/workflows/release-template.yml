@@ -1,0 +1,169 @@
+name: Release Template
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      publish-crates:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CARGO_REGISTRY_TOKEN:
+        required: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_suffix: linux-x64.tar.gz
+            upload_name: termos-linux-x64
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive_suffix: linux-arm64.tar.gz
+            upload_name: termos-linux-arm64
+          - name: macOS x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive_suffix: darwin-x64.tar.gz
+            upload_name: termos-darwin-x64
+          - name: macOS ARM64
+            os: macos-15
+            target: aarch64-apple-darwin
+            archive_suffix: darwin-arm64.tar.gz
+            upload_name: termos-darwin-arm64
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_suffix: win-x64.zip
+            upload_name: termos-win-x64
+          - name: Windows ARM64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            archive_suffix: win-arm64.zip
+            upload_name: termos-win-arm64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Update Version
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          $replacement = '"' + $version + '"'
+
+          $toml = (Get-Content -Path Cargo.toml -Raw) -replace '(?m)(?<=^version = )"0\.1\.0"', $replacement
+          $toml | Set-Content -Path Cargo.toml
+
+          # cargo build --locked needs Cargo.lock's own entry for this package to match Cargo.toml.
+          $lock = (Get-Content -Path Cargo.lock -Raw) -replace '(?<=name = "termos"\r?\nversion = )"0\.1\.0"', $replacement
+          $lock | Set-Content -Path Cargo.lock
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Stage artifact (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp README.md LICENSE "target/${{ matrix.target }}/release/"
+          tar -czf "artifacts/termos-${{ inputs.version }}-${{ matrix.archive_suffix }}" -C "target/${{ matrix.target }}/release" termos README.md LICENSE
+
+      - name: Stage artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          $artifactPath = "artifacts\termos-${{ inputs.version }}-${{ matrix.archive_suffix }}"
+          Compress-Archive -Path "target\${{ matrix.target }}\release\termos.exe", README.md, LICENSE -DestinationPath $artifactPath -Force
+
+      - name: Publish artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.upload_name }}
+          path: artifacts
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Create tag
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: "refs/tags/${{ inputs.version }}",
+              sha: context.sha
+            })
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          tag_name: ${{ inputs.version }}
+          name: Release v${{ inputs.version }}
+          generate_release_notes: true
+          files: |
+            artifacts/**/*
+          draft: false
+          prerelease: ${{ contains(inputs.version, '-') }}
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: release
+    if: inputs.publish-crates
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+
+      - name: Update Version
+        shell: pwsh
+        run: |
+          $version = "${{ inputs.version }}"
+          $replacement = '"' + $version + '"'
+
+          $toml = (Get-Content -Path Cargo.toml -Raw) -replace '(?m)(?<=^version = )"0\.1\.0"', $replacement
+          $toml | Set-Content -Path Cargo.toml
+
+          $lock = (Get-Content -Path Cargo.lock -Raw) -replace '(?<=name = "termos"\r?\nversion = )"0\.1\.0"', $replacement
+          $lock | Set-Content -Path Cargo.lock
+
+      - name: Publish termos
+        run: cargo publish --allow-dirty
