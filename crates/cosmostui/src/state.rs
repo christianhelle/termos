@@ -20,6 +20,10 @@ pub enum Effect {
         target: Target,
         sql: String,
     },
+    /// Reads the next page of the latest query.
+    LoadMore {
+        id: u64,
+    },
 }
 
 /// A container to query.
@@ -40,6 +44,11 @@ pub enum Msg {
         result: Result<Vec<(String, Container)>, String>,
     },
     QueryDone {
+        id: u64,
+        result: Result<QueryResult, String>,
+    },
+    /// The next page of a query.
+    MoreLoaded {
         id: u64,
         result: Result<QueryResult, String>,
     },
@@ -581,6 +590,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         }
         Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
         Msg::QueryDone { id, result } => query_done(state, id, result),
+        Msg::MoreLoaded { .. } => {}
     }
     Vec::new()
 }

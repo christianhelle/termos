@@ -1,5 +1,6 @@
 //! Runs the background work that updates ask for.
 
+use std::cell::RefCell;
 use std::pin::Pin;
 use std::time::Instant;
 
@@ -15,11 +16,23 @@ use crate::state::{Effect, Msg, QueryResult, Target};
 /// Does background work against the control and data planes.
 pub struct Runner<M, D: DataPlane> {
     pub connector: Connector<M, D>,
+    /// The latest query, kept open while it has documents left to show.
+    open_query: RefCell<Option<OpenQuery>>,
+}
+
+/// A query with documents left to read.
+struct OpenQuery {
+    id: u64,
+    pk_path: String,
+    docs: Peekable<Documents>,
 }
 
 impl<M: Management, D: DataPlane> Runner<M, D> {
     pub fn new(connector: Connector<M, D>) -> Self {
-        Runner { connector }
+        Runner {
+            connector,
+            open_query: RefCell::default(),
+        }
     }
 
     /// Does the work, reporting how it went as a message for the state.
@@ -42,46 +55,68 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             }
             Effect::Query { id, target, sql } => Msg::QueryDone {
                 id,
-                result: query(connector, &target, &sql).await.map_err(describe),
+                result: self.query(id, &target, &sql).await.map_err(describe),
+            },
+            Effect::LoadMore { id } => Msg::MoreLoaded {
+                id,
+                result: self.load_more(id).await.map_err(describe),
             },
         }
+    }
+
+    /// Runs a query and reads its first page, keeping it open for more.
+    async fn query(&self, id: u64, target: &Target, sql: &str) -> anyhow::Result<QueryResult> {
+        let started = Instant::now();
+        let store = self
+            .connector
+            .connect_to(&target.account, &target.database, &target.container)
+            .await?;
+        let open = OpenQuery {
+            id,
+            pk_path: store.partition_key_path().to_string(),
+            docs: store.documents(sql).await?.peekable(),
+        };
+        self.read_page(open, started).await
+    }
+
+    /// Reads the next page of the latest query.
+    async fn load_more(&self, id: u64) -> anyhow::Result<QueryResult> {
+        let started = Instant::now();
+        let open = self.open_query.borrow_mut().take();
+        match open {
+            Some(open) if open.id == id => self.read_page(open, started).await,
+            _ => anyhow::bail!("the query has no more documents to load"),
+        }
+    }
+
+    async fn read_page(
+        &self,
+        mut open: OpenQuery,
+        started: Instant,
+    ) -> anyhow::Result<QueryResult> {
+        let mut docs = Vec::with_capacity(PAGE_SIZE);
+        while docs.len() < PAGE_SIZE {
+            match open.docs.next().await {
+                Some(doc) => docs.push(doc?),
+                None => break,
+            }
+        }
+        let more = docs.len() == PAGE_SIZE && Pin::new(&mut open.docs).peek().await.is_some();
+        let pk_path = open.pk_path.clone();
+        if more {
+            *self.open_query.borrow_mut() = Some(open);
+        }
+        Ok(QueryResult {
+            docs,
+            more,
+            pk_path,
+            elapsed: started.elapsed(),
+        })
     }
 }
 
 /// How many documents a query shows at a time.
 const PAGE_SIZE: usize = 100;
-
-async fn query<M: Management, D: DataPlane>(
-    connector: &Connector<M, D>,
-    target: &Target,
-    sql: &str,
-) -> anyhow::Result<QueryResult> {
-    let started = Instant::now();
-    let store = connector
-        .connect_to(&target.account, &target.database, &target.container)
-        .await?;
-    let mut docs = store.documents(sql).await?.peekable();
-    let (docs, more) = next_page(&mut docs).await?;
-    Ok(QueryResult {
-        docs,
-        more,
-        pk_path: store.partition_key_path().to_string(),
-        elapsed: started.elapsed(),
-    })
-}
-
-/// Reads the next page of documents, and whether more follow it.
-async fn next_page(docs: &mut Peekable<Documents>) -> anyhow::Result<(Vec<Value>, bool)> {
-    let mut page = Vec::with_capacity(PAGE_SIZE);
-    while page.len() < PAGE_SIZE {
-        match docs.next().await {
-            Some(doc) => page.push(doc?),
-            None => return Ok((page, false)),
-        }
-    }
-    let more = Pin::new(docs).peek().await.is_some();
-    Ok((page, more))
-}
 
 /// An error with its causes, as one line for the status bar.
 fn describe(error: anyhow::Error) -> String {
@@ -227,5 +262,60 @@ mod tests {
         };
         assert_eq!(result.docs.len(), 100);
         assert!(!result.more);
+    }
+
+    fn ids(docs: &[Value]) -> Vec<String> {
+        docs.iter()
+            .map(|doc| doc["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn loading_more_continues_the_query_where_it_stopped() {
+        let runner = with_carts(250);
+        runner.run(query_carts(1)).await;
+
+        let second = runner.run(Effect::LoadMore { id: 1 }).await;
+        let third = runner.run(Effect::LoadMore { id: 1 }).await;
+
+        let Msg::MoreLoaded {
+            id: 1,
+            result: Ok(second),
+        } = second
+        else {
+            panic!("unexpected {second:?}");
+        };
+        let Msg::MoreLoaded {
+            id: 1,
+            result: Ok(third),
+        } = third
+        else {
+            panic!("unexpected {third:?}");
+        };
+        assert_eq!(ids(&second.docs)[0], "c-100");
+        assert!(second.more);
+        assert_eq!(
+            ids(&third.docs),
+            (200..250).map(|i| format!("c-{i}")).collect::<Vec<_>>()
+        );
+        assert!(!third.more);
+        assert_eq!(runner.connector.data.container.borrow().queries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn loading_more_of_a_superseded_query_fails() {
+        let runner = with_carts(250);
+        runner.run(query_carts(1)).await;
+        runner.run(query_carts(2)).await;
+
+        let msg = runner.run(Effect::LoadMore { id: 1 }).await;
+
+        let Msg::MoreLoaded {
+            id: 1,
+            result: Err(_),
+        } = msg
+        else {
+            panic!("unexpected {msg:?}");
+        };
     }
 }
