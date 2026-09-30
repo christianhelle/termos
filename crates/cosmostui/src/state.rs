@@ -55,6 +55,8 @@ pub struct AppState {
     pub accounts: Load<Vec<AccountNode>>,
     pub status: Status,
     pub quit: bool,
+    /// Index of the selected tree row.
+    pub tree_selected: usize,
 }
 
 impl AppState {
@@ -64,6 +66,7 @@ impl AppState {
             accounts: Load::Loading,
             status: Status::Info("Loading accounts…".into()),
             quit: false,
+            tree_selected: 0,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -99,6 +102,13 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Char('q') => state.quit = true,
+        KeyCode::Down | KeyCode::Char('j') => {
+            let last = state.tree_rows().len().saturating_sub(1);
+            state.tree_selected = (state.tree_selected + 1).min(last);
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.tree_selected = state.tree_selected.saturating_sub(1);
+        }
         _ => {}
     }
     Vec::new()
@@ -186,5 +196,27 @@ mod tests {
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         update(&mut state, Event::Key(ctrl_c));
         assert!(state.quit);
+    }
+
+    fn with_accounts(names: &[&str]) -> AppState {
+        let (mut state, _) = AppState::new();
+        let accounts = names.iter().map(|name| account(name)).collect();
+        update(&mut state, Event::Msg(Msg::AccountsLoaded(Ok(accounts))));
+        state
+    }
+
+    #[test]
+    fn arrow_and_vim_keys_move_through_the_tree_within_its_rows() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+        assert_eq!(state.tree_selected, 0);
+
+        press(&mut state, KeyCode::Down);
+        assert_eq!(state.tree_selected, 1);
+        press(&mut state, KeyCode::Char('j'));
+        assert_eq!(state.tree_selected, 1);
+        press(&mut state, KeyCode::Char('k'));
+        assert_eq!(state.tree_selected, 0);
+        press(&mut state, KeyCode::Up);
+        assert_eq!(state.tree_selected, 0);
     }
 }
