@@ -12,7 +12,7 @@ pub struct AccountCache {
 impl AccountCache {
     /// The cache in the user's cache folder, such as `%LOCALAPPDATA%smoscli` on Windows.
     pub fn for_user(subscription: Option<&str>) -> Option<Self> {
-        let dir = dirs::cache_dir()?.join("cosmoscli");
+        let dir = dirs::cache_dir()?.join("termos");
         Some(Self::in_dir(dir, subscription))
     }
 
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn creates_its_folder_on_first_save() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = AccountCache::in_dir(dir.path().join("cosmoscli"), None);
+        let cache = AccountCache::in_dir(dir.path().join("termos"), None);
 
         cache.save(&[account("orders")]).unwrap();
 
