@@ -8,12 +8,12 @@ use azure_core::credentials::TokenCredential;
 use reqwest::{Method, Response, StatusCode};
 use serde_json::{Value, json};
 
+use crate::credential::MANAGEMENT_SCOPE;
 use crate::management::{
     Account, Container, Management, Page, account_query, parse_accounts, parse_container,
     parse_containers, parse_databases, parse_primary_key, parse_resource_graph_accounts,
     parse_subscriptions, resolve_account,
 };
-use cosmos_core::credential::MANAGEMENT_SCOPE;
 
 const ENDPOINT: &str = "https://management.azure.com";
 const COSMOS_API_VERSION: &str = "2024-11-15";

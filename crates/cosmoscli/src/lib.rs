@@ -8,7 +8,7 @@ pub use cosmos_core::partition;
 pub mod prompt;
 pub use cosmos_core::store;
 
-pub mod arm;
+pub use cosmos_core::arm;
 pub mod cosmos;
 #[cfg(test)]
 mod testing;

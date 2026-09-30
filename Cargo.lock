@@ -486,6 +486,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "azure_core",
+ "futures",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",

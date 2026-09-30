@@ -1,3 +1,4 @@
+pub mod arm;
 pub mod credential;
 pub mod management;
 pub mod partition;
