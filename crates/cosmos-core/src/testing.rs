@@ -258,16 +258,6 @@ impl DataStore for FakeStore {
         self.container.borrow_mut().docs.push(doc);
         Ok(())
     }
-
-    async fn ids_in_partition(&self, pk: &Value) -> anyhow::Result<Vec<String>> {
-        let container = self.container.borrow();
-        Ok(container
-            .docs
-            .iter()
-            .filter(|doc| value_at_path(doc, &self.pk_path) == Some(pk))
-            .filter_map(|doc| doc["id"].as_str().map(String::from))
-            .collect())
-    }
 }
 
 impl FakeStore {

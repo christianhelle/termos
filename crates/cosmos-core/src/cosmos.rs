@@ -188,22 +188,6 @@ impl DataStore for CosmosStore {
             .map_err(classify)?;
         Ok(())
     }
-
-    async fn ids_in_partition(&self, pk: &Value) -> anyhow::Result<Vec<String>> {
-        let ids: Vec<String> = self
-            .client
-            .query_items::<String>(
-                Query::from("SELECT VALUE c.id FROM c"),
-                FeedScope::partition(to_partition_key(pk)?),
-                None,
-            )
-            .await
-            .map_err(classify)?
-            .try_collect()
-            .await
-            .map_err(classify)?;
-        Ok(ids)
-    }
 }
 
 fn document_id(doc: &Value) -> anyhow::Result<String> {

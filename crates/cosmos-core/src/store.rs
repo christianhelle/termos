@@ -77,7 +77,4 @@ pub trait DataStore {
 
     /// Replaces an existing document, failing if it does not exist.
     async fn replace_item(&self, id: &str, pk: &Value, doc: Value) -> anyhow::Result<()>;
-
-    /// Lists the ids of every document with the given partition key.
-    async fn ids_in_partition(&self, pk: &Value) -> anyhow::Result<Vec<String>>;
 }
