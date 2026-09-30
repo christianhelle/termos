@@ -33,6 +33,7 @@ pub enum Event {
 pub enum Load<T> {
     Loading,
     Loaded(T),
+    Failed(String),
 }
 
 /// An account in the tree.
@@ -105,6 +106,7 @@ impl AppState {
         let accounts = match &self.accounts {
             Load::Loading => return vec![row(Node::AccountsNote, 0, "loading accounts…")],
             Load::Loaded(accounts) => accounts,
+            Load::Failed(_) => return Vec::new(),
         };
         let mut rows = Vec::new();
         for (a, node) in accounts.iter().enumerate() {
@@ -115,6 +117,9 @@ impl AppState {
             match &node.databases {
                 None => {}
                 Some(Load::Loading) => rows.push(row(Node::Note(a), 1, "loading…")),
+                Some(Load::Failed(error)) => {
+                    rows.push(row(Node::Note(a), 1, &format!("error: {error}")));
+                }
                 Some(Load::Loaded(databases)) => {
                     for (d, database) in databases.iter().enumerate() {
                         rows.push(row(Node::Database(a, d), 1, &database.name));
@@ -140,7 +145,7 @@ impl AppState {
     fn account_mut(&mut self, index: usize) -> Option<&mut AccountNode> {
         match &mut self.accounts {
             Load::Loaded(accounts) => accounts.get_mut(index),
-            Load::Loading => None,
+            Load::Loading | Load::Failed(_) => None,
         }
     }
 }
@@ -210,8 +215,13 @@ fn containers_loaded(
     else {
         return;
     };
-    let Ok(containers) = result else {
-        return;
+    let containers = match result {
+        Ok(containers) => containers,
+        Err(error) => {
+            node.databases = Some(Load::Failed(error.clone()));
+            state.status = Status::Error(error);
+            return;
+        }
     };
     let mut databases: Vec<DatabaseNode> = Vec::new();
     for (database, container) in containers {
@@ -389,5 +399,16 @@ mod tests {
                 "inventory"
             ]
         );
+    }
+
+    #[test]
+    fn shows_why_containers_failed_to_load_under_the_account() {
+        let mut state = with_accounts(&["orders"]);
+        press(&mut state, KeyCode::Enter);
+
+        containers_loaded(&mut state, "orders", Err("forbidden".into()));
+
+        assert_eq!(outline(&state), vec!["orders", "  error: forbidden"]);
+        assert_eq!(state.status, Status::Error("forbidden".into()));
     }
 }
