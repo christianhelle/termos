@@ -27,7 +27,7 @@ use crate::cache::AccountCache;
 use crate::connector::{Connector, Settings};
 use crate::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use crate::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefetch_tokens};
-use crate::management::Account;
+use crate::management::{Account, Management};
 use crate::store::AuthMode;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
@@ -65,7 +65,7 @@ struct Args {
     key: Option<String>,
 }
 
-type AppRunner = Runner<Arm, CosmosDataPlane>;
+type AppRunner<M> = Runner<M, CosmosDataPlane>;
 
 fn main() -> ExitCode {
     let args = Args::parse();
@@ -111,6 +111,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
     if let Some(cache) = cache {
         runner = runner.with_account_cache(cache);
     }
+    show(runner, cached).await
+}
+
+/// Runs the terminal UI until the user quits, then restores the terminal.
+async fn show<M: Management + 'static>(
+    runner: AppRunner<M>,
+    cached: Option<Vec<Account>>,
+) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     let result = match execute!(stdout(), EnableMouseCapture) {
         Ok(()) => event_loop(&mut terminal, Rc::new(runner), cached).await,
@@ -123,9 +131,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
 }
 
 /// Draws the state, then waits for a key, the mouse or finished work, until the user quits.
-async fn event_loop(
+async fn event_loop<M: Management + 'static>(
     terminal: &mut DefaultTerminal,
-    runner: Rc<AppRunner>,
+    runner: Rc<AppRunner<M>>,
     cached_accounts: Option<Vec<Account>>,
 ) -> anyhow::Result<()> {
     let (sender, mut finished) = mpsc::unbounded_channel();
@@ -191,7 +199,11 @@ fn pane_mouse(
 }
 
 /// Starts background work, which reports back through the sender when done.
-fn start(runner: &Rc<AppRunner>, sender: &mpsc::UnboundedSender<Msg>, effects: Vec<Effect>) {
+fn start<M: Management + 'static>(
+    runner: &Rc<AppRunner<M>>,
+    sender: &mpsc::UnboundedSender<Msg>,
+    effects: Vec<Effect>,
+) {
     for effect in effects {
         let runner = runner.clone();
         let sender = sender.clone();
