@@ -55,6 +55,7 @@ Download a build from [Releases](https://github.com/christianhelle/termos/releas
 
 ```sh
 termos [--subscription <ID>] [--auth auto|entra|key] [--key <KEY>]
+termos --emulator [<ENDPOINT>] [--key <KEY>]
 ```
 
 - **Accounts** (left): a tree of accounts, databases and containers. Open an account with Enter or → to load its containers. Opening a container lists its first 100 documents. The account list from the last run shows at once while a fresh one loads in the background. It is cached in `%LOCALAPPDATA%\termos` on Windows, `~/Library/Caches/termos` on macOS and `~/.cache/termos` on Linux.
@@ -80,6 +81,23 @@ Documents are read through the Cosmos DB data plane. `--auth` picks how to authe
 
 Pass `--key <KEY>` to supply an account key yourself.
 
+## Emulator
+
+`--emulator` browses the local [Cosmos DB emulator](https://learn.microsoft.com/azure/cosmos-db/emulator) instead of Azure, with no `az login`. It connects to `https://localhost:8081/` with the emulator's well-known key and accepts its self-signed certificate. Give another endpoint as `--emulator <ENDPOINT>`, and pass `--key <KEY>` if the emulator was started with its own key.
+
+```sh
+termos --emulator
+termos --emulator http://cosmos:8081/
+```
+
+The emulator in Docker tells clients to use its address inside the container, which can't be reached from the host. Start it with that address set to `127.0.0.1`, and publish port 8081 as itself:
+
+```sh
+docker run -d -p 8081:8081 -p 10250-10255:10250-10255 \
+  -e AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE=127.0.0.1 \
+  mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+```
+
 ## Development
 
 ```sh
@@ -88,7 +106,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-- Azure access: the `Connector` lists accounts and opens container connections. The adapters in `arm.rs` and `cosmos.rs` are kept thin, and `testing.rs` has in-memory fakes of the control and data planes for tests.
+- Azure access: the `Connector` lists accounts and opens container connections. The adapters in `arm.rs`, `emulator.rs` and `cosmos.rs` are kept thin, and `testing.rs` has in-memory fakes of the control and data planes for tests.
 - The terminal UI: keys and finished background work go through `state::update`, which returns the work to start next, so it is tested without a terminal.
 
 ## License
