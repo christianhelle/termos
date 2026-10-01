@@ -258,7 +258,7 @@ const HELP: [(&str, &str); 18] = [
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, or show every pane again"),
     ("/", "Search: type SQL, a clause or a condition"),
-    ("Enter", "Open a node, run the search, show a document"),
+    ("Enter", "Open a node, search, go to the documents"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
     ("→ ←  l h", "Open or close a node"),
     ("PgUp PgDn Home End", "Scroll the results or document"),
