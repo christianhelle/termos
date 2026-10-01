@@ -153,10 +153,11 @@ async fn event_loop(
     Ok(())
 }
 
-/// A left click or turn of the wheel, in terms of the pane it is over.
+/// A left click or drag or turn of the wheel, in terms of the pane it is over.
 fn pane_mouse(size: Size, mouse: MouseEvent, state: &AppState) -> Option<Mouse> {
     let action = match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => MouseAction::Click,
+        MouseEventKind::Drag(MouseButton::Left) => MouseAction::Drag,
         MouseEventKind::ScrollUp => MouseAction::ScrollUp,
         MouseEventKind::ScrollDown => MouseAction::ScrollDown,
         _ => return None,

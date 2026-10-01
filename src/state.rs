@@ -74,7 +74,7 @@ pub enum Event {
     Msg(Msg),
 }
 
-/// A click or turn of the wheel over a pane.
+/// A click, drag or turn of the wheel over a pane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mouse {
     pub action: MouseAction,
@@ -86,6 +86,8 @@ pub struct Mouse {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MouseAction {
     Click,
+    /// The mouse moved with its button held down.
+    Drag,
     ScrollUp,
     ScrollDown,
 }
@@ -540,6 +542,7 @@ fn on_mouse(state: &mut AppState, mouse: Mouse) -> Vec<Effect> {
     }
     match mouse.action {
         MouseAction::Click => on_click(state, mouse.pane, mouse.at),
+        MouseAction::Drag => on_drag(state, mouse.pane, mouse.at),
         MouseAction::ScrollUp => on_wheel(state, mouse.pane, KeyCode::Up),
         MouseAction::ScrollDown => on_wheel(state, mouse.pane, KeyCode::Down),
     }
@@ -552,7 +555,8 @@ fn first_visible(selected: usize, height: u16) -> usize {
 }
 
 /// Focuses the clicked pane. A click on a row selects it,
-/// and a click on the selected tree row opens or closes it like Enter.
+/// a click on the selected tree row opens or closes it like Enter,
+/// and a click in the document starts picking text there.
 fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effect> {
     state.focus = pane;
     let Some(at) = at else {
@@ -578,9 +582,37 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
             }
         }
         Focus::Search => state.search.move_to(usize::from(at.x)),
-        Focus::Results | Focus::Document => {}
+        Focus::Document => {
+            let point = doc_point(state, at);
+            state.doc_selection = Some(Selection {
+                anchor: point,
+                head: point,
+            });
+        }
+        Focus::Results => {}
     }
     Vec::new()
+}
+
+/// Picks the document text up to where the mouse is dragged.
+fn on_drag(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effect> {
+    if let (Focus::Document, Some(at)) = (pane, at) {
+        let point = doc_point(state, at);
+        if let Some(selection) = &mut state.doc_selection {
+            selection.head = point;
+        }
+    }
+    Vec::new()
+}
+
+/// The place in the document under a point inside the document pane.
+fn doc_point(state: &AppState, at: Position) -> DocPoint {
+    // The pane may have grown since the document was scrolled
+    let scroll = state.doc_scroll.min(state.max_doc_scroll());
+    DocPoint {
+        line: usize::from(scroll) + usize::from(at.y),
+        column: usize::from(at.x),
+    }
 }
 
 /// Shows another document from its top, with nothing picked.
@@ -1940,6 +1972,56 @@ mod tests {
         let at = Some(Position::new(x, y));
         let action = MouseAction::Click;
         update(state, Event::Mouse(Mouse { action, pane, at }))
+    }
+
+    fn drag(state: &mut AppState, pane: Focus, x: u16, y: u16) {
+        let at = Some(Position::new(x, y));
+        let action = MouseAction::Drag;
+        update(state, Event::Mouse(Mouse { action, pane, at }));
+    }
+
+    #[test]
+    fn dragging_in_the_document_picks_the_text_it_passes_over() {
+        let mut state = with_cart_results();
+        state.doc_height = 10;
+
+        click(&mut state, Focus::Document, 2, 1);
+        drag(&mut state, Focus::Document, 4, 1);
+        drag(&mut state, Focus::Document, 5, 1);
+
+        assert_eq!(state.focus, Focus::Document);
+        assert_eq!(state.selected_text().as_deref(), Some("\"id\""));
+    }
+
+    #[test]
+    fn dragging_counts_the_lines_scrolled_out_of_sight() {
+        let mut state = with_cart_results();
+        state.results[0] = long_document(10);
+        state.doc_height = 5;
+        state.doc_scroll = 2;
+
+        click(&mut state, Focus::Document, 2, 0);
+        drag(&mut state, Focus::Document, 6, 0);
+
+        assert_eq!(state.selected_text().as_deref(), Some("\"f01\""));
+    }
+
+    #[test]
+    fn dragging_outside_the_document_keeps_the_selection() {
+        let mut state = with_cart_results();
+        state.doc_height = 10;
+        click(&mut state, Focus::Document, 2, 1);
+        drag(&mut state, Focus::Document, 5, 1);
+
+        drag(&mut state, Focus::Results, 1, 1);
+        let border = Mouse {
+            action: MouseAction::Drag,
+            pane: Focus::Document,
+            at: None,
+        };
+        update(&mut state, Event::Mouse(border));
+
+        assert_eq!(state.selected_text().as_deref(), Some("\"id\""));
     }
 
     fn wheel(state: &mut AppState, pane: Focus, action: MouseAction) -> Vec<Effect> {
