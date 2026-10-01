@@ -27,6 +27,7 @@ use crate::cache::AccountCache;
 use crate::connector::{Connector, Settings};
 use crate::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use crate::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefetch_tokens};
+use crate::emulator::{Emulator, trust_emulator_certificate};
 use crate::management::{Account, Management};
 use crate::store::AuthMode;
 use azure_core::credentials::TokenCredential;
@@ -63,6 +64,16 @@ struct Args {
     /// Account key to use instead of fetching one from Resource Manager
     #[arg(long)]
     key: Option<String>,
+
+    /// Browse the local Cosmos DB emulator instead of Azure, at https://localhost:8081/ unless given
+    #[arg(
+        long,
+        value_name = "ENDPOINT",
+        num_args = 0..=1,
+        default_missing_value = emulator::DEFAULT_ENDPOINT,
+        conflicts_with_all = ["subscription", "auth"]
+    )]
+    emulator: Option<String>,
 }
 
 type AppRunner<M> = Runner<M, CosmosDataPlane>;
@@ -71,6 +82,10 @@ fn main() -> ExitCode {
     let args = Args::parse();
     // SAFETY: called before the runtime starts, while this is the only thread
     unsafe { skip_vm_metadata_probe() };
+    if let Some(endpoint) = &args.emulator {
+        // SAFETY: called before the runtime starts, while this is the only thread
+        unsafe { trust_emulator_certificate(endpoint) };
+    }
     let result = tokio::runtime::Runtime::new()
         .map_err(anyhow::Error::from)
         .and_then(|runtime| {
@@ -90,6 +105,9 @@ fn main() -> ExitCode {
 async fn run(args: Args) -> anyhow::Result<()> {
     let credential: Arc<dyn TokenCredential> =
         Arc::new(CachedCredential::new(DeveloperToolsCredential::new(None)?));
+    if let Some(endpoint) = args.emulator {
+        return run_emulator(&endpoint, args.key, credential).await;
+    }
     let settings = Settings {
         subscription: args.subscription,
         auth: args.auth,
@@ -112,6 +130,26 @@ async fn run(args: Args) -> anyhow::Result<()> {
         runner = runner.with_account_cache(cache);
     }
     show(runner, cached).await
+}
+
+/// Browses the emulator with its key, without Resource Manager or a cached account list.
+async fn run_emulator(
+    endpoint: &str,
+    key: Option<String>,
+    credential: Arc<dyn TokenCredential>,
+) -> anyhow::Result<()> {
+    let key = key.unwrap_or_else(|| emulator::DEFAULT_KEY.to_string());
+    let settings = Settings {
+        subscription: None,
+        auth: AuthMode::Key,
+        key: Some(key.clone()),
+    };
+    let runner = Runner::new(Connector::new(
+        Emulator::new(endpoint, key)?,
+        CosmosDataPlane::new(credential),
+        settings,
+    ));
+    show(runner, None).await
 }
 
 /// Runs the terminal UI until the user quits, then restores the terminal.
