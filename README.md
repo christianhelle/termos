@@ -64,6 +64,8 @@ termos [--subscription <ID>] [--auth auto|entra|key] [--key <KEY>]
 
 Tab and Shift-Tab move between panes, `r` runs the query again, `?` shows every key and `q` quits.
 
+The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. Because termos captures the mouse, hold Shift to select text in most terminals.
+
 ## Authentication
 
 Accounts, databases and containers are found through Azure Resource Manager, using your `az login` identity. Accounts come from every subscription you can access; add `--subscription <ID>` to list just one.

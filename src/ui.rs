@@ -191,7 +191,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 14] = [
+const HELP: [(&str, &str); 16] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("/", "Search: type SQL, a clause or a condition"),
     ("Enter", "Open a node, run the search, show a document"),
@@ -200,6 +200,8 @@ const HELP: [(&str, &str); 14] = [
     ("PgUp PgDn Home End", "Scroll the results or document"),
     ("Ctrl-U Ctrl-D", "Scroll half a page up or down"),
     ("g g  G", "Jump to the first or last"),
+    ("Click, again", "Pick a pane or row, then open it"),
+    ("Wheel", "Scroll the pane under the mouse"),
     ("Esc", "Leave the search bar"),
     ("r", "Run the query again"),
     ("?", "Show this help"),
@@ -314,8 +316,14 @@ mod tests {
     fn a_point_on_a_border_is_in_the_pane_but_not_inside_it() {
         let size = Size::new(100, 20);
 
-        assert_eq!(pane_at(size, Position::new(0, 5)), Some((Focus::Tree, None)));
-        assert_eq!(pane_at(size, Position::new(30, 3)), Some((Focus::Results, None)));
+        assert_eq!(
+            pane_at(size, Position::new(0, 5)),
+            Some((Focus::Tree, None))
+        );
+        assert_eq!(
+            pane_at(size, Position::new(30, 3)),
+            Some((Focus::Results, None))
+        );
     }
 
     #[test]
