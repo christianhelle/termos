@@ -218,9 +218,10 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 17] = [
+const HELP: [(&str, &str); 18] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("Ctrl-B", "Hide or show the accounts"),
+    ("z", "Zoom the pane, or show every pane again"),
     ("/", "Search: type SQL, a clause or a condition"),
     ("Enter", "Open a node, run the search, show a document"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
@@ -560,6 +561,7 @@ mod tests {
             "Next pane",
             "Ctrl-B",
             "Hide or show the accounts",
+            "Zoom the pane, or show every pane again",
             "Quit",
         ] {
             assert!(
