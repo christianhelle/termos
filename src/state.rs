@@ -663,6 +663,8 @@ fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Up | KeyCode::Char('k') => {
             state.tree_selected = state.tree_selected.saturating_sub(1);
         }
+        KeyCode::Home => state.tree_selected = 0,
+        KeyCode::End => state.tree_selected = state.tree_rows().len().saturating_sub(1),
         KeyCode::Enter => return toggle(state),
         KeyCode::Right | KeyCode::Char('l') => return expand(state),
         KeyCode::Left | KeyCode::Char('h') => collapse(state),
