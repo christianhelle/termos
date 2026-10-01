@@ -195,8 +195,9 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 16] = [
+const HELP: [(&str, &str); 17] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
+    ("Ctrl-B", "Hide or show the accounts"),
     ("/", "Search: type SQL, a clause or a condition"),
     ("Enter", "Open a node, run the search, show a document"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
@@ -483,7 +484,14 @@ mod tests {
 
         let screen = screen(&state);
 
-        for text in ["Keys", "Tab", "Next pane", "Quit"] {
+        for text in [
+            "Keys",
+            "Tab",
+            "Next pane",
+            "Ctrl-B",
+            "Hide or show the accounts",
+            "Quit",
+        ] {
             assert!(
                 shows(&screen, text),
                 "{text} missing from\n{}",
