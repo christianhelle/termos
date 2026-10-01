@@ -21,10 +21,14 @@ struct Panes {
     status: Rect,
 }
 
-fn panes(area: Rect) -> Panes {
+fn panes(area: Rect, tree_hidden: bool) -> Panes {
     let [main, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
-    let [tree, right] =
-        Layout::horizontal([Constraint::Percentage(25), Constraint::Fill(1)]).areas(main);
+    let tree_width = if tree_hidden {
+        Constraint::Length(0)
+    } else {
+        Constraint::Percentage(25)
+    };
+    let [tree, right] = Layout::horizontal([tree_width, Constraint::Fill(1)]).areas(main);
     let [search, body] =
         Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(right);
     let [results, document] =
@@ -40,7 +44,7 @@ fn panes(area: Rect) -> Panes {
 
 /// How many tree rows the tree pane shows on a terminal of this size.
 pub fn tree_height(size: Size) -> u16 {
-    let tree = panes(Rect::from((Position::ORIGIN, size))).tree;
+    let tree = panes(Rect::from((Position::ORIGIN, size)), false).tree;
     // Less the top and bottom borders
     tree.height.saturating_sub(2)
 }
@@ -48,7 +52,7 @@ pub fn tree_height(size: Size) -> u16 {
 /// The pane at a point on a terminal of this size, with the point inside its
 /// borders, or `None` for the point when it is on a border.
 pub fn pane_at(size: Size, at: Position) -> Option<(Focus, Option<Position>)> {
-    let panes = panes(Rect::from((Position::ORIGIN, size)));
+    let panes = panes(Rect::from((Position::ORIGIN, size)), false);
     let (focus, area) = [
         (Focus::Tree, panes.tree),
         (Focus::Search, panes.search),
@@ -66,21 +70,21 @@ pub fn pane_at(size: Size, at: Position) -> Option<(Focus, Option<Position>)> {
 
 /// How many document lines the document pane shows on a terminal of this size.
 pub fn document_height(size: Size) -> u16 {
-    let document = panes(Rect::from((Position::ORIGIN, size))).document;
+    let document = panes(Rect::from((Position::ORIGIN, size)), false).document;
     // Less the top and bottom borders
     document.height.saturating_sub(2)
 }
 
 /// How many documents the results table shows on a terminal of this size.
 pub fn results_height(size: Size) -> u16 {
-    let results = panes(Rect::from((Position::ORIGIN, size))).results;
+    let results = panes(Rect::from((Position::ORIGIN, size)), false).results;
     // Less the borders and the header row
     results.height.saturating_sub(3)
 }
 
 /// Draws the tree, search bar, results, document and status line.
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    let panes = panes(frame.area());
+    let panes = panes(frame.area(), state.tree_hidden);
     draw_tree(frame, state, panes.tree);
     draw_search(frame, state, panes.search);
     draw_results(frame, state, panes.results);
@@ -279,6 +283,18 @@ mod tests {
                 screen.join("\n")
             );
         }
+    }
+
+    #[test]
+    fn a_hidden_tree_leaves_its_room_to_the_other_panes() {
+        let (mut state, _) = AppState::new();
+        state.tree_hidden = true;
+
+        let screen = screen(&state);
+
+        assert!(!shows(&screen, "Accounts"), "{}", screen.join("\n"));
+        // The search bar starts at the left edge
+        assert!(screen[0].starts_with("┌Search"), "{}", screen.join("\n"));
     }
 
     fn send(state: &mut AppState, msg: Msg) {
