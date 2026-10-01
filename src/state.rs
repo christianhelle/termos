@@ -313,8 +313,10 @@ impl AppState {
     }
 
     /// The pane that takes the whole screen, if any.
+    ///
+    /// The search bar is never zoomed: every pane shows while searching.
     pub fn zoomed_pane(&self) -> Option<Focus> {
-        self.zoomed.then_some(self.focus)
+        (self.zoomed && self.focus != Focus::Search).then_some(self.focus)
     }
 
     /// The document shown in the document pane.
@@ -1053,6 +1055,25 @@ mod tests {
 
         press(&mut state, KeyCode::Char('z'));
         assert_eq!(state.zoomed_pane(), None);
+    }
+
+    #[test]
+    fn the_zoom_moves_with_the_focus_but_never_to_the_search_bar() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Results;
+        press(&mut state, KeyCode::Char('z'));
+
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.zoomed_pane(), Some(Focus::Document));
+
+        press(&mut state, KeyCode::Char('/'));
+        assert_eq!(state.zoomed_pane(), None);
+
+        press(&mut state, KeyCode::Char('z'));
+        assert_eq!(state.search.text(), "z");
+
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.zoomed_pane(), Some(Focus::Results));
     }
 
     fn with_accounts(names: &[&str]) -> AppState {
