@@ -200,7 +200,11 @@ fn pane<'a>(title: impl Into<Line<'a>>, state: &AppState, focus: Focus) -> Block
 }
 
 fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
-    let hint = "Tab next pane · / search · ? help · q quit";
+    let hint = if state.zoomed_pane().is_some() {
+        "z unzoom · Tab next pane · / search · ? help · q quit"
+    } else {
+        "Tab next pane · / search · ? help · q quit"
+    };
     let width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
     let [message, keys] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(width)]).areas(area);
@@ -332,6 +336,16 @@ mod tests {
         assert!(screen[18].starts_with("└"), "{}", screen.join("\n"));
         assert!(screen[0].ends_with("┐"), "{}", screen.join("\n"));
         assert!(shows(&screen, "Loading accounts…"), "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn the_status_line_tells_how_to_leave_the_zoom() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Document;
+        assert!(!shows(&screen(&state), "z unzoom"));
+
+        state.zoomed = true;
+        assert!(shows(&screen(&state), "z unzoom · Tab next pane"));
     }
 
     fn send(state: &mut AppState, msg: Msg) {
