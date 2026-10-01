@@ -55,6 +55,11 @@ impl TextInput {
         self.cursor = self.len();
     }
 
+    /// Puts the cursor before a character, or at the end when there are fewer.
+    pub fn move_to(&mut self, chars: usize) {
+        self.cursor = chars.min(self.len());
+    }
+
     fn len(&self) -> usize {
         self.text.chars().count()
     }
@@ -64,5 +69,21 @@ impl TextInput {
             .char_indices()
             .nth(chars)
             .map_or(self.text.len(), |(index, _)| index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moving_the_cursor_stops_at_the_end_of_the_text() {
+        let mut input = TextInput::default();
+        "abc".chars().for_each(|c| input.insert(c));
+
+        input.move_to(1);
+        assert_eq!(input.cursor(), 1);
+        input.move_to(10);
+        assert_eq!(input.cursor(), 3);
     }
 }
