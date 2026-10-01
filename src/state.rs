@@ -720,6 +720,9 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    if key.code == KeyCode::Char('y') {
+        return copy_document(state);
+    }
     let last = usize::from(state.max_doc_scroll());
     let page = usize::from(state.doc_height).max(1);
     let scroll = usize::from(state.doc_scroll);
@@ -730,6 +733,15 @@ fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     });
     state.doc_scroll = u16::try_from(target).unwrap_or(u16::MAX);
     Vec::new()
+}
+
+/// Copies the picked text, or the whole document when nothing is picked.
+fn copy_document(state: &AppState) -> Vec<Effect> {
+    let text = state.selected_text().or_else(|| {
+        let doc = state.selected_document()?;
+        serde_json::to_string_pretty(doc).ok()
+    });
+    text.map(Effect::Copy).into_iter().collect()
 }
 
 fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -1954,6 +1966,36 @@ mod tests {
   \"id\": \"c-1\","
             )
         );
+    }
+
+    #[test]
+    fn y_copies_the_picked_text() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+        pick(&mut state, (1, 2), (1, 5));
+
+        let effects = press(&mut state, KeyCode::Char('y'));
+
+        assert_eq!(effects, vec![Effect::Copy(r#""id""#.into())]);
+    }
+
+    #[test]
+    fn y_copies_the_whole_document_when_nothing_is_picked() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+
+        let effects = press(&mut state, KeyCode::Char('y'));
+
+        let whole = serde_json::to_string_pretty(&cart_docs()[0]).unwrap();
+        assert_eq!(effects, vec![Effect::Copy(whole)]);
+    }
+
+    #[test]
+    fn y_copies_nothing_without_a_document() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Document;
+
+        assert!(press(&mut state, KeyCode::Char('y')).is_empty());
     }
 
     #[test]
