@@ -21,7 +21,8 @@ struct Panes {
     status: Rect,
 }
 
-fn panes(area: Rect, tree_hidden: bool) -> Panes {
+/// Lays out the panes, leaving all the room to the zoomed pane if there is one.
+fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
     let [main, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
     let tree_width = if tree_hidden {
         Constraint::Length(0)
@@ -33,18 +34,29 @@ fn panes(area: Rect, tree_hidden: bool) -> Panes {
         Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(right);
     let [results, document] =
         Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(1)]).areas(body);
-    Panes {
+    let mut panes = Panes {
         tree,
         search,
         results,
         document,
         status,
+    };
+    if let Some(focus) = zoomed {
+        for (pane, area) in [
+            (Focus::Tree, &mut panes.tree),
+            (Focus::Search, &mut panes.search),
+            (Focus::Results, &mut panes.results),
+            (Focus::Document, &mut panes.document),
+        ] {
+            *area = if pane == focus { main } else { Rect::default() };
+        }
     }
+    panes
 }
 
 /// How many tree rows the tree pane shows on a terminal of this size.
 pub fn tree_height(size: Size) -> u16 {
-    let tree = panes(Rect::from((Position::ORIGIN, size)), false).tree;
+    let tree = panes(Rect::from((Position::ORIGIN, size)), false, None).tree;
     // Less the top and bottom borders
     tree.height.saturating_sub(2)
 }
@@ -52,7 +64,7 @@ pub fn tree_height(size: Size) -> u16 {
 /// The pane at a point on a terminal of this size, with the point inside its
 /// borders, or `None` for the point when it is on a border.
 pub fn pane_at(size: Size, at: Position, tree_hidden: bool) -> Option<(Focus, Option<Position>)> {
-    let panes = panes(Rect::from((Position::ORIGIN, size)), tree_hidden);
+    let panes = panes(Rect::from((Position::ORIGIN, size)), tree_hidden, None);
     let (focus, area) = [
         (Focus::Tree, panes.tree),
         (Focus::Search, panes.search),
@@ -70,21 +82,21 @@ pub fn pane_at(size: Size, at: Position, tree_hidden: bool) -> Option<(Focus, Op
 
 /// How many document lines the document pane shows on a terminal of this size.
 pub fn document_height(size: Size) -> u16 {
-    let document = panes(Rect::from((Position::ORIGIN, size)), false).document;
+    let document = panes(Rect::from((Position::ORIGIN, size)), false, None).document;
     // Less the top and bottom borders
     document.height.saturating_sub(2)
 }
 
 /// How many documents the results table shows on a terminal of this size.
 pub fn results_height(size: Size) -> u16 {
-    let results = panes(Rect::from((Position::ORIGIN, size)), false).results;
+    let results = panes(Rect::from((Position::ORIGIN, size)), false, None).results;
     // Less the borders and the header row
     results.height.saturating_sub(3)
 }
 
 /// Draws the tree, search bar, results, document and status line.
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    let panes = panes(frame.area(), state.tree_hidden);
+    let panes = panes(frame.area(), state.tree_hidden, state.zoomed_pane());
     draw_tree(frame, state, panes.tree);
     draw_search(frame, state, panes.search);
     draw_results(frame, state, panes.results);
@@ -296,6 +308,23 @@ mod tests {
         assert!(!shows(&screen, "Accounts"), "{}", screen.join("\n"));
         // The search bar starts at the left edge
         assert!(screen[0].starts_with("┌Search"), "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn a_zoomed_pane_takes_the_whole_screen_above_the_status_line() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Document;
+        state.zoomed = true;
+
+        let screen = screen(&state);
+
+        for title in ["Accounts", "Search", "Results"] {
+            assert!(!shows(&screen, title), "{}", screen.join("\n"));
+        }
+        assert!(screen[0].starts_with("┌Document"), "{}", screen.join("\n"));
+        assert!(screen[18].starts_with("└"), "{}", screen.join("\n"));
+        assert!(screen[0].ends_with("┐"), "{}", screen.join("\n"));
+        assert!(shows(&screen, "Loading accounts…"), "{}", screen.join("\n"));
     }
 
     fn send(state: &mut AppState, msg: Msg) {
