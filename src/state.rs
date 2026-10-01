@@ -500,17 +500,15 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
-    const PAGE: u16 = 10;
-    state.doc_scroll = match key.code {
-        KeyCode::Down | KeyCode::Char('j') => state.doc_scroll.saturating_add(1),
-        KeyCode::Up | KeyCode::Char('k') => state.doc_scroll.saturating_sub(1),
-        KeyCode::PageDown => state.doc_scroll.saturating_add(PAGE),
-        KeyCode::PageUp => state.doc_scroll.saturating_sub(PAGE),
-        KeyCode::Home => 0,
-        KeyCode::End => u16::MAX,
-        _ => state.doc_scroll,
-    };
-    state.doc_scroll = state.doc_scroll.min(state.max_doc_scroll());
+    let last = usize::from(state.max_doc_scroll());
+    let page = usize::from(state.doc_height).max(1);
+    let scroll = usize::from(state.doc_scroll);
+    let target = jump(key, &mut state.pending_g, scroll, last, page).unwrap_or(match key.code {
+        KeyCode::Down | KeyCode::Char('j') => (scroll + 1).min(last),
+        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+        _ => scroll,
+    });
+    state.doc_scroll = u16::try_from(target).unwrap_or(u16::MAX);
     Vec::new()
 }
 
@@ -1489,11 +1487,31 @@ mod tests {
 
         press(&mut state, KeyCode::Home);
         press(&mut state, KeyCode::PageDown);
+        assert_eq!(state.doc_scroll, 5);
+        press(&mut state, KeyCode::PageDown);
         assert_eq!(state.doc_scroll, 7);
 
         press(&mut state, KeyCode::Home);
         press(&mut state, KeyCode::End);
         assert_eq!(state.doc_scroll, 7);
+    }
+
+    #[test]
+    fn the_document_scrolls_with_vim_motions_a_page_or_half_a_page_at_a_time() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+        state.results[0] = long_document(40);
+        state.doc_height = 10;
+
+        press_ctrl(&mut state, 'd');
+        assert_eq!(state.doc_scroll, 5);
+        press_ctrl(&mut state, 'u');
+        assert_eq!(state.doc_scroll, 0);
+        press(&mut state, KeyCode::Char('G'));
+        assert_eq!(state.doc_scroll, state.max_doc_scroll());
+        press(&mut state, KeyCode::Char('g'));
+        press(&mut state, KeyCode::Char('g'));
+        assert_eq!(state.doc_scroll, 0);
     }
 
     #[test]
