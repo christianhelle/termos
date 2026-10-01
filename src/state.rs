@@ -163,6 +163,27 @@ pub enum Status {
     Error(String),
 }
 
+/// A place in the pretty-printed document, in characters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DocPoint {
+    pub line: usize,
+    pub column: usize,
+}
+
+/// Text picked in the document, from where it started to where it reaches.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Selection {
+    pub anchor: DocPoint,
+    pub head: DocPoint,
+}
+
+impl Selection {
+    /// The first and last picked characters, in reading order.
+    pub fn range(&self) -> (DocPoint, DocPoint) {
+        (self.anchor.min(self.head), self.anchor.max(self.head))
+    }
+}
+
 /// The pane that keys go to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Focus {
@@ -218,6 +239,8 @@ pub struct AppState {
     pub doc_scroll: u16,
     /// How many lines of a document the document pane shows at once.
     pub doc_height: u16,
+    /// Text picked in the document, to copy.
+    pub doc_selection: Option<Selection>,
     /// How many documents the results table shows at once.
     pub results_height: u16,
     /// How many rows the tree shows at once.
@@ -251,6 +274,7 @@ impl AppState {
             last_sql: String::new(),
             doc_scroll: 0,
             doc_height: 0,
+            doc_selection: None,
             results_height: 0,
             tree_height: 0,
             pending_g: false,
@@ -336,6 +360,38 @@ impl AppState {
             pretty.lines().count()
         });
         u16::try_from(lines).unwrap_or(u16::MAX)
+    }
+
+    /// The picked text of the document, or `None` when nothing is picked.
+    pub fn selected_text(&self) -> Option<String> {
+        let selection = self.doc_selection?;
+        if selection.anchor == selection.head {
+            return None;
+        }
+        let pretty = serde_json::to_string_pretty(self.selected_document()?).ok()?;
+        let (start, end) = selection.range();
+        let picked: Vec<String> = pretty
+            .lines()
+            .enumerate()
+            .skip(start.line)
+            .take(end.line + 1 - start.line)
+            .map(|(index, line)| {
+                let from = if index == start.line { start.column } else { 0 };
+                let to = if index == end.line {
+                    end.column + 1
+                } else {
+                    usize::MAX
+                };
+                line.chars()
+                    .skip(from)
+                    .take(to.saturating_sub(from))
+                    .collect()
+            })
+            .collect();
+        Some(picked.join(
+            "
+",
+        ))
     }
 
     /// What the selected tree row stands for.
@@ -1815,6 +1871,55 @@ mod tests {
             Status::Error("could not refresh accounts: az login first".into())
         );
     }
+    fn pick(state: &mut AppState, from: (usize, usize), to: (usize, usize)) {
+        let point = |(line, column)| DocPoint { line, column };
+        state.doc_selection = Some(Selection {
+            anchor: point(from),
+            head: point(to),
+        });
+    }
+
+    #[test]
+    fn picked_text_runs_from_the_first_to_the_last_picked_character() {
+        let mut state = with_cart_results();
+
+        pick(&mut state, (1, 2), (1, 5));
+        assert_eq!(state.selected_text().as_deref(), Some("\"id\""));
+
+        pick(&mut state, (2, 14), (1, 9));
+        assert_eq!(
+            state.selected_text().as_deref(),
+            Some(
+                "c-1\",
+  \"tenantId\": \""
+            )
+        );
+    }
+
+    #[test]
+    fn picked_text_stops_at_the_end_of_each_line() {
+        let mut state = with_cart_results();
+
+        pick(&mut state, (0, 0), (1, 80));
+
+        assert_eq!(
+            state.selected_text().as_deref(),
+            Some(
+                "{
+  \"id\": \"c-1\","
+            )
+        );
+    }
+
+    #[test]
+    fn nothing_is_picked_until_the_selection_reaches_past_where_it_started() {
+        let mut state = with_cart_results();
+        assert_eq!(state.selected_text(), None);
+
+        pick(&mut state, (1, 3), (1, 3));
+        assert_eq!(state.selected_text(), None);
+    }
+
     fn click(state: &mut AppState, pane: Focus, x: u16, y: u16) -> Vec<Effect> {
         let at = Some(Position::new(x, y));
         let action = MouseAction::Click;
