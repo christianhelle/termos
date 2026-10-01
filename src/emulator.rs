@@ -97,6 +97,33 @@ impl Management for Emulator {
     }
 }
 
+/// Lets the Cosmos DB SDK accept the emulator's self-signed certificate, also when
+/// the emulator runs on a host other than localhost, such as a container name.
+///
+/// # Safety
+///
+/// Sets environment variables, so it must run before any other thread starts.
+pub unsafe fn trust_emulator_certificate(endpoint: &str) {
+    let host = Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string));
+    let variables = [
+        (
+            "AZURE_COSMOS_EMULATOR_SERVER_CERT_VALIDATION_DISABLED",
+            Some("true".to_string()),
+        ),
+        ("AZURE_COSMOS_EMULATOR_HOST", host),
+    ];
+    for (name, value) in variables {
+        if let Some(value) = value
+            && std::env::var_os(name).is_none()
+        {
+            // SAFETY: the caller guarantees this is the only thread
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
+}
+
 /// The emulator as an account, named after the host and port it listens on.
 fn emulator_account(endpoint: &str) -> anyhow::Result<Account> {
     let url = Url::parse(endpoint)?;
