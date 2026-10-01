@@ -577,6 +577,7 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
             }
             if index < state.tree_rows().len() {
                 state.tree_selected = index;
+                return open_selected_container(state);
             }
         }
         // The first line is the header
@@ -769,6 +770,7 @@ fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let selected = state.tree_selected;
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
             let last = state.tree_rows().len().saturating_sub(1);
@@ -784,7 +786,18 @@ fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Left | KeyCode::Char('h') => collapse(state),
         _ => {}
     }
+    if state.tree_selected != selected {
+        return open_selected_container(state);
+    }
     Vec::new()
+}
+
+/// Lists the documents of the selected tree row, when it is a container.
+fn open_selected_container(state: &mut AppState) -> Vec<Effect> {
+    match state.selected_node() {
+        Some(Node::Container(a, d, c)) => open_container(state, a, d, c),
+        _ => Vec::new(),
+    }
 }
 
 /// Opens a closed tree node, or closes an open one.
@@ -1326,6 +1339,16 @@ mod tests {
     }
 
     #[test]
+    fn selecting_an_account_or_database_runs_no_query() {
+        let mut state = with_orders_expanded();
+
+        let effects = press(&mut state, KeyCode::Down);
+
+        assert_eq!(selected_label(&state), "shop");
+        assert!(effects.is_empty());
+    }
+
+    #[test]
     fn enter_toggles_a_loaded_account_without_reloading_it() {
         let mut state = with_orders_expanded();
 
@@ -1345,15 +1368,14 @@ mod tests {
         }
     }
 
-    /// Opens orders/shop/carts, returning the work that starts.
+    /// Selects orders/shop/carts, returning the work that starts.
     fn open_carts(state: &mut AppState) -> Vec<Effect> {
         press(state, KeyCode::Down);
-        press(state, KeyCode::Down);
-        press(state, KeyCode::Enter)
+        press(state, KeyCode::Down)
     }
 
     #[test]
-    fn opening_a_container_queries_every_document() {
+    fn selecting_a_container_queries_every_document() {
         let mut state = with_orders_expanded();
 
         let effects = open_carts(&mut state);
@@ -1402,7 +1424,8 @@ mod tests {
     fn ignores_results_of_a_query_that_was_superseded() {
         let mut state = with_orders_expanded();
         open_carts(&mut state);
-        press(&mut state, KeyCode::Enter);
+        press(&mut state, KeyCode::Up);
+        press(&mut state, KeyCode::Down);
 
         query_done(&mut state, 1, Ok(cart_docs()));
 
@@ -2152,6 +2175,18 @@ mod tests {
 
         let effects = click(&mut state, Focus::Tree, 3, 1);
         assert_eq!(effects, vec![Effect::LoadContainers(account("inventory"))]);
+    }
+
+    #[test]
+    fn clicking_a_container_queries_its_documents() {
+        let mut state = with_orders_expanded();
+        state.tree_height = 10;
+
+        let effects = click(&mut state, Focus::Tree, 5, 2);
+
+        assert_eq!(selected_label(&state), "carts");
+        assert_eq!(state.target, Some(carts()));
+        assert!(matches!(effects[..], [Effect::Query { .. }]));
     }
 
     #[test]

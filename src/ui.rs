@@ -503,7 +503,6 @@ mod tests {
         let mut state = browsing();
         press(&mut state, KeyCode::Down);
         press(&mut state, KeyCode::Down);
-        press(&mut state, KeyCode::Enter);
         let docs = vec![
             json!({ "id": "c-1", "tenantId": "contoso" }),
             json!({ "id": "c-2", "tenantId": "fabrikam" }),
