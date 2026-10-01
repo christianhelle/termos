@@ -67,6 +67,17 @@ Tab and Shift-Tab move between panes, Ctrl-B hides or shows the accounts to give
 
 The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. Because termos captures the mouse, drag in the document to pick text there, or hold Shift to select text anywhere in most terminals.
 
+## Screenshots
+
+<p align="center">
+  <img src="images/ventablack/main.png" width="49%" alt="Main interface showing accounts, query results, and a document" />
+  <img src="images/ventablack/document-viewer.png" width="49%" alt="A Cosmos DB document displayed as JSON" />
+</p>
+<p align="center">
+  <img src="images/ventablack/document-viewer-highlight.png" width="49%" alt="Selected text highlighted in the document viewer" />
+  <img src="images/ventablack/help.png" width="49%" alt="Keyboard shortcuts help screen" />
+</p>
+
 ## Authentication
 
 Accounts, databases and containers are found through Azure Resource Manager, using your `az login` identity. Accounts come from every subscription you can access; add `--subscription <ID>` to list just one.
