@@ -433,8 +433,29 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
+/// Where a key that jumps by pages or to an end moves a position, from 0 to `last`.
+fn jump(key: KeyEvent, position: usize, last: usize, page: usize) -> Option<usize> {
+    let target = match key.code {
+        KeyCode::PageDown => position.saturating_add(page),
+        KeyCode::PageUp => position.saturating_sub(page),
+        KeyCode::Home => 0,
+        KeyCode::End => last,
+        _ => return None,
+    };
+    Some(target.min(last))
+}
+
 fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let selected = state.result_selected;
+    let last = state.results.len().saturating_sub(1);
+    let page = usize::from(state.results_height).max(1);
+    if let Some(target) = jump(key, selected, last, page) {
+        state.result_selected = target;
+        if target != selected {
+            state.doc_scroll = 0;
+        }
+        return Vec::new();
+    }
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
             let last = state.results.len().saturating_sub(1);
@@ -1173,6 +1194,46 @@ mod tests {
 
         press(&mut state, KeyCode::Up);
         assert_eq!(state.selected_document(), Some(&cart_docs()[0]));
+    }
+
+    fn with_many_results(count: usize) -> AppState {
+        let mut state = with_cart_results();
+        state.results = (0..count).map(|i| json!({ "id": i })).collect();
+        state.results_height = 10;
+        state
+    }
+
+    #[test]
+    fn page_keys_move_the_selection_a_page_at_a_time() {
+        let mut state = with_many_results(25);
+
+        press(&mut state, KeyCode::PageDown);
+        assert_eq!(state.result_selected, 10);
+        press(&mut state, KeyCode::PageDown);
+        press(&mut state, KeyCode::PageDown);
+        assert_eq!(state.result_selected, 24);
+        press(&mut state, KeyCode::PageUp);
+        assert_eq!(state.result_selected, 14);
+    }
+
+    #[test]
+    fn home_and_end_select_the_first_and_last_document() {
+        let mut state = with_many_results(25);
+
+        press(&mut state, KeyCode::End);
+        assert_eq!(state.result_selected, 24);
+        press(&mut state, KeyCode::Home);
+        assert_eq!(state.result_selected, 0);
+    }
+
+    #[test]
+    fn jumping_to_another_document_shows_it_from_the_top() {
+        let mut state = with_many_results(25);
+        state.doc_scroll = 5;
+
+        press(&mut state, KeyCode::PageDown);
+
+        assert_eq!(state.doc_scroll, 0);
     }
 
     #[test]
