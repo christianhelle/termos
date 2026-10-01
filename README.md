@@ -59,12 +59,12 @@ termos [--subscription <ID>] [--auth auto|entra|key] [--key <KEY>]
 
 - **Accounts** (left): a tree of accounts, databases and containers. Open an account with Enter or → to load its containers. Opening a container lists its first 100 documents. The account list from the last run shows at once while a fresh one loads in the background. It is cached in `%LOCALAPPDATA%\termos` on Windows, `~/Library/Caches/termos` on macOS and `~/.cache/termos` on Linux.
 - **Results** (middle): the id and partition key of each document found, 100 at a time. When the title says `more ↓`, press ↓ on the last result to load the next 100.
-- **Document** (right): the selected document as JSON.
+- **Document** (right): the selected document as JSON. Drag the mouse over it to pick text, then press `y` to copy it to the clipboard. With nothing picked, `y` copies the whole document. Esc drops the picked text.
 - **Search** (top): press `/` and type a query, then Enter. A `SELECT` statement runs as typed. Clauses like `WHERE c.status = 'open'` or `ORDER BY c._ts DESC` follow `SELECT * FROM c`. A bare condition like `c.total > 10` becomes a `WHERE` clause.
 
 Tab and Shift-Tab move between panes, Ctrl-B hides or shows the accounts to give the other panes more room, `z` zooms the focused pane to fill the screen and shows every pane again, `r` runs the query again, `?` shows every key and `q` quits.
 
-The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. Because termos captures the mouse, hold Shift to select text in most terminals.
+The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. Because termos captures the mouse, drag in the document to pick text there, or hold Shift to select text anywhere in most terminals.
 
 ## Authentication
 
