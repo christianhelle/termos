@@ -112,6 +112,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     if state.show_help {
         draw_help(frame);
     }
+    if state.confirm_delete {
+        draw_confirm_delete(frame, state);
+    }
 }
 
 fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -253,7 +256,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 18] = [
+const HELP: [(&str, &str); 19] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, or show every pane again"),
@@ -269,6 +272,7 @@ const HELP: [(&str, &str); 18] = [
     ("Drag, y", "Pick text in the document, copy it"),
     ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
+    ("d", "Delete the selected document, after confirming"),
     ("?", "Show this help"),
     ("q, Ctrl-C", "Quit"),
     ("", "Press any key to close"),
@@ -291,6 +295,38 @@ fn draw_help(frame: &mut Frame) {
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).block(Block::bordered().title("Keys")),
+        area,
+    );
+}
+
+/// A dialog asking whether to delete the selected document.
+fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
+    let id = state
+        .selected_document()
+        .map(|doc| display_value(doc.get("id")))
+        .unwrap_or_default();
+    let lines = vec![
+        Line::raw(format!("Delete {id}?")),
+        Line::raw("This cannot be undone."),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("y / Enter", Style::new().fg(Color::Red)),
+            Span::raw(" delete   "),
+            Span::styled("Esc", Style::new().fg(Color::Cyan)),
+            Span::raw(" or any other key cancel"),
+        ]),
+    ];
+    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX) + 2;
+    let area = frame
+        .area()
+        .centered(Constraint::Length(52), Constraint::Length(height));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title("Delete document")
+                .border_style(Style::new().fg(Color::Red)),
+        ),
         area,
     );
 }
@@ -605,6 +641,31 @@ mod tests {
                 screen.join("\n")
             );
         }
+    }
+
+    #[test]
+    fn draws_a_dialog_asking_to_confirm_the_delete_over_the_panes() {
+        let mut state = with_results();
+        state.focus = Focus::Results;
+        press(&mut state, KeyCode::Char('d'));
+
+        let screen = screen(&state);
+
+        for text in ["Delete document", "c-1", "y / Enter", "Esc"] {
+            assert!(
+                shows(&screen, text),
+                "{text} missing from\n{}",
+                screen.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn the_key_help_lists_the_delete_key() {
+        let mut state = browsing();
+        press(&mut state, KeyCode::Char('?'));
+
+        assert!(shows(&screen(&state), "Delete the selected document"));
     }
 
     #[test]
