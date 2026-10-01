@@ -432,8 +432,8 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Char('b') if ctrl => toggle_tree(state),
-        KeyCode::Tab => state.focus = state.focus.next(),
-        KeyCode::BackTab => state.focus = state.focus.previous(),
+        KeyCode::Tab => move_focus(state, Focus::next),
+        KeyCode::BackTab => move_focus(state, Focus::previous),
         _ => {
             return match state.focus {
                 Focus::Search => on_search_key(state, key),
@@ -442,6 +442,14 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         }
     }
     Vec::new()
+}
+
+/// Moves the focus one pane along, past the tree while it is hidden.
+fn move_focus(state: &mut AppState, step: fn(Focus) -> Focus) {
+    state.focus = step(state.focus);
+    if state.tree_hidden && state.focus == Focus::Tree {
+        state.focus = step(state.focus);
+    }
 }
 
 /// Hides or shows the tree, moving the focus off it when it hides.
@@ -1010,6 +1018,19 @@ mod tests {
 
         ctrl_b(&mut state);
         assert_eq!(state.focus, Focus::Results);
+    }
+
+    #[test]
+    fn tab_and_shift_tab_skip_the_hidden_tree() {
+        let (mut state, _) = AppState::new();
+        ctrl_b(&mut state);
+        state.focus = Focus::Document;
+
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.focus, Focus::Search);
+
+        press(&mut state, KeyCode::BackTab);
+        assert_eq!(state.focus, Focus::Document);
     }
 
     fn with_accounts(names: &[&str]) -> AppState {
