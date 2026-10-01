@@ -62,7 +62,7 @@ termos [--subscription <ID>] [--auth auto|entra|key] [--key <KEY>]
 - **Document** (right): the selected document as JSON.
 - **Search** (top): press `/` and type a query, then Enter. A `SELECT` statement runs as typed. Clauses like `WHERE c.status = 'open'` or `ORDER BY c._ts DESC` follow `SELECT * FROM c`. A bare condition like `c.total > 10` becomes a `WHERE` clause.
 
-Tab and Shift-Tab move between panes, `r` runs the query again, `?` shows every key and `q` quits.
+Tab and Shift-Tab move between panes, Ctrl-B hides or shows the accounts to give the other panes more room, `r` runs the query again, `?` shows every key and `q` quits.
 
 The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. Because termos captures the mouse, hold Shift to select text in most terminals.
 
