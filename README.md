@@ -74,7 +74,7 @@ The mouse works too. Click a pane to focus it, or a node or document to select i
   <img src="images/ventablack/help.png" width="49%" alt="Keyboard shortcuts help screen" />
 </p>
 <p align="center">
-  <img src="images/ventablack/document-viewer.png" width="49%" alt="A Cosmos DB document displayed as JSON" />
+  <img src="images/ventablack/delete.png" width="49%" alt="Delete Cosmos document" />
   <img src="images/ventablack/document-viewer-highlight.png" width="49%" alt="Selected text highlighted in the document viewer" />
 </p>
 
