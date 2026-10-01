@@ -435,9 +435,13 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 
 /// Where a key that jumps by pages or to an end moves a position, from 0 to `last`.
 fn jump(key: KeyEvent, position: usize, last: usize, page: usize) -> Option<usize> {
+    let half = (page / 2).max(1);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let target = match key.code {
         KeyCode::PageDown => position.saturating_add(page),
         KeyCode::PageUp => position.saturating_sub(page),
+        KeyCode::Char('d') if ctrl => position.saturating_add(half),
+        KeyCode::Char('u') if ctrl => position.saturating_sub(half),
         KeyCode::Home => 0,
         KeyCode::End => last,
         _ => return None,
@@ -1223,6 +1227,26 @@ mod tests {
         press(&mut state, KeyCode::End);
         assert_eq!(state.result_selected, 24);
         press(&mut state, KeyCode::Home);
+        assert_eq!(state.result_selected, 0);
+    }
+
+    fn press_ctrl(state: &mut AppState, c: char) -> Vec<Effect> {
+        let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        update(state, Event::Key(key))
+    }
+
+    #[test]
+    fn ctrl_d_and_ctrl_u_move_the_selection_half_a_page() {
+        let mut state = with_many_results(25);
+
+        press_ctrl(&mut state, 'd');
+        assert_eq!(state.result_selected, 5);
+        press_ctrl(&mut state, 'd');
+        assert_eq!(state.result_selected, 10);
+        press_ctrl(&mut state, 'u');
+        assert_eq!(state.result_selected, 5);
+        press_ctrl(&mut state, 'u');
+        press_ctrl(&mut state, 'u');
         assert_eq!(state.result_selected, 0);
     }
 
