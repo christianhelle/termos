@@ -266,11 +266,11 @@ const HELP: [(&str, &str); 18] = [
     ("g g  G", "Jump to the first or last"),
     ("Click, again", "Pick a pane or row, then open it"),
     ("Wheel", "Scroll the pane under the mouse"),
-    ("Esc", "Leave the search bar"),
+    ("Drag, y", "Pick text in the document, copy it"),
+    ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
     ("?", "Show this help"),
     ("q, Ctrl-C", "Quit"),
-    ("", ""),
     ("", "Press any key to close"),
 ];
 
@@ -597,6 +597,7 @@ mod tests {
             "Ctrl-B",
             "Hide or show the accounts",
             "Zoom the pane, or show every pane again",
+            "Pick text in the document, copy it",
             "Quit",
         ] {
             assert!(
