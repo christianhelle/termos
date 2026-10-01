@@ -15,6 +15,7 @@ mod store;
 mod testing;
 mod ui;
 
+use std::io::stdout;
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -29,13 +30,18 @@ use crate::store::AuthMode;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
-use crossterm::event::{Event as TermEvent, EventStream, KeyEventKind};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event as TermEvent, EventStream, KeyEventKind,
+    MouseButton, MouseEvent, MouseEventKind,
+};
+use crossterm::execute;
 use futures::StreamExt;
 use ratatui::DefaultTerminal;
+use ratatui::layout::{Position, Size};
 use tokio::sync::mpsc;
 
 use crate::effects::Runner;
-use crate::state::{AppState, Effect, Event, Msg, update};
+use crate::state::{AppState, Effect, Event, Mouse, MouseAction, Msg, update};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -104,12 +110,17 @@ async fn run(args: Args) -> anyhow::Result<()> {
         runner = runner.with_account_cache(cache);
     }
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, Rc::new(runner), cached).await;
+    let result = match execute!(stdout(), EnableMouseCapture) {
+        Ok(()) => event_loop(&mut terminal, Rc::new(runner), cached).await,
+        Err(error) => Err(error.into()),
+    };
+    // Restore the terminal even when the mouse could not be released
+    let released = execute!(stdout(), DisableMouseCapture);
     ratatui::restore();
-    result
+    result.and(released.map_err(Into::into))
 }
 
-/// Draws the state, then waits for a key or finished work, until the user quits.
+/// Draws the state, then waits for a key, the mouse or finished work, until the user quits.
 async fn event_loop(
     terminal: &mut DefaultTerminal,
     runner: Rc<AppRunner>,
@@ -122,11 +133,16 @@ async fn event_loop(
     while !state.quit {
         state.doc_height = ui::document_height(terminal.size()?);
         state.results_height = ui::results_height(terminal.size()?);
+        state.tree_height = ui::tree_height(terminal.size()?);
         terminal.draw(|frame| ui::draw(frame, &state))?;
         let event = tokio::select! {
             Some(input) = keys.next() => match input? {
                 // Windows also reports key releases
                 TermEvent::Key(key) if key.kind != KeyEventKind::Release => Event::Key(key),
+                TermEvent::Mouse(mouse) => match pane_mouse(terminal.size()?, mouse) {
+                    Some(mouse) => Event::Mouse(mouse),
+                    None => continue,
+                },
                 _ => continue,
             },
             Some(msg) = finished.recv() => Event::Msg(msg),
@@ -135,6 +151,18 @@ async fn event_loop(
         start(&runner, &sender, effects);
     }
     Ok(())
+}
+
+/// A left click or turn of the wheel, in terms of the pane it is over.
+fn pane_mouse(size: Size, mouse: MouseEvent) -> Option<Mouse> {
+    let action = match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => MouseAction::Click,
+        MouseEventKind::ScrollUp => MouseAction::ScrollUp,
+        MouseEventKind::ScrollDown => MouseAction::ScrollDown,
+        _ => return None,
+    };
+    let (pane, at) = ui::pane_at(size, Position::new(mouse.column, mouse.row))?;
+    Some(Mouse { action, pane, at })
 }
 
 /// Starts background work, which reports back through the sender when done.
