@@ -129,6 +129,7 @@ async fn event_loop(
 ) -> anyhow::Result<()> {
     let (sender, mut finished) = mpsc::unbounded_channel();
     let mut keys = EventStream::new();
+    let mut left_held = false;
     let (mut state, effects) = AppState::with_cached_accounts(cached_accounts);
     start(&runner, &sender, effects);
     while !state.quit {
@@ -140,7 +141,7 @@ async fn event_loop(
             Some(input) = keys.next() => match input? {
                 // Windows also reports key releases
                 TermEvent::Key(key) if key.kind != KeyEventKind::Release => Event::Key(key),
-                TermEvent::Mouse(mouse) => match pane_mouse(terminal.size()?, mouse, &state) {
+                TermEvent::Mouse(mouse) => match pane_mouse(terminal.size()?, mouse, &state, &mut left_held) {
                     Some(mouse) => Event::Mouse(mouse),
                     None => continue,
                 },
@@ -155,10 +156,26 @@ async fn event_loop(
 }
 
 /// A left click or drag or turn of the wheel, in terms of the pane it is over.
-fn pane_mouse(size: Size, mouse: MouseEvent, state: &AppState) -> Option<Mouse> {
+///
+/// `left_held` remembers whether the left button is down between events.
+fn pane_mouse(
+    size: Size,
+    mouse: MouseEvent,
+    state: &AppState,
+    left_held: &mut bool,
+) -> Option<Mouse> {
     let action = match mouse.kind {
-        MouseEventKind::Down(MouseButton::Left) => MouseAction::Click,
+        MouseEventKind::Down(MouseButton::Left) => {
+            *left_held = true;
+            MouseAction::Click
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            *left_held = false;
+            return None;
+        }
         MouseEventKind::Drag(MouseButton::Left) => MouseAction::Drag,
+        // Windows Terminal reports a move with the button held as a plain move
+        MouseEventKind::Moved if *left_held => MouseAction::Drag,
         MouseEventKind::ScrollUp => MouseAction::ScrollUp,
         MouseEventKind::ScrollDown => MouseAction::ScrollDown,
         _ => return None,
