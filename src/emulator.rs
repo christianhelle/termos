@@ -14,7 +14,7 @@ pub const DEFAULT_ENDPOINT: &str = "https://localhost:8081/";
 
 /// The key every emulator accepts, published in the emulator documentation.
 pub const DEFAULT_KEY: &str =
-    "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU9DAoPhTqgnGdmhIptVNsFvYgoyLCQy68hbWfaiYG3chcdZQ==";
+    "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
 
 /// Lists the emulator's databases and containers through its data plane.
 pub struct Emulator {
