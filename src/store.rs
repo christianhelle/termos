@@ -56,4 +56,8 @@ pub trait DataStore {
 
     /// Runs a query, handing out its documents as they are read, page by page.
     async fn documents(&self, sql: &str) -> anyhow::Result<Documents>;
+
+    /// Deletes the document with this id, in the partition with this key value.
+    /// A missing key value stands for a document without the partition key property.
+    async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()>;
 }

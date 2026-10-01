@@ -90,6 +90,8 @@ impl Management for FakeManagement {
 pub struct FakeContainer {
     pub docs: Vec<Value>,
     pub queries: Vec<String>,
+    /// The id and partition key value of each delete asked for.
+    pub deletes: Vec<(String, Option<Value>)>,
 }
 
 pub struct FakeDataPlane {
@@ -158,5 +160,16 @@ impl DataStore for FakeStore {
         container.queries.push(sql.to_string());
         let docs = container.docs.clone();
         Ok(futures::stream::iter(docs.into_iter().map(Ok)).boxed_local())
+    }
+
+    async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {
+        let mut container = self.container.borrow_mut();
+        container
+            .deletes
+            .push((id.to_string(), partition_key.cloned()));
+        let before = container.docs.len();
+        container.docs.retain(|doc| doc["id"] != id);
+        anyhow::ensure!(container.docs.len() < before, "document {id} not found");
+        Ok(())
     }
 }

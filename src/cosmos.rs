@@ -7,7 +7,7 @@ use azure_core::credentials::{Secret, TokenCredential};
 use azure_core::http::StatusCode;
 use azure_data_cosmos::{
     AccountEndpoint, AccountReference, ContainerClient, CosmosClient, CosmosError, FeedScope,
-    Query, RoutingStrategy,
+    PartitionKey, Query, RoutingStrategy,
 };
 use futures::{StreamExt, TryStreamExt};
 use serde_json::Value;
@@ -127,6 +127,22 @@ pub(crate) fn classify(error: CosmosError) -> anyhow::Error {
     }
 }
 
+/// The partition key of a document, from the value at the container's partition key path.
+fn partition_key_of(value: Option<&Value>) -> anyhow::Result<PartitionKey> {
+    Ok(match value {
+        None => PartitionKey::UNDEFINED.into(),
+        Some(Value::Null) => PartitionKey::NULL.into(),
+        Some(Value::String(s)) => PartitionKey::from(s.clone()),
+        Some(Value::Bool(b)) => PartitionKey::from(*b),
+        Some(Value::Number(n)) => match (n.as_i64(), n.as_f64()) {
+            (Some(i), _) => PartitionKey::from(i),
+            (None, Some(f)) => PartitionKey::from(f),
+            _ => anyhow::bail!("unsupported partition key {n}"),
+        },
+        Some(other) => anyhow::bail!("unsupported partition key {other}"),
+    })
+}
+
 pub struct CosmosStore {
     client: ContainerClient,
     pk_path: String,
@@ -144,6 +160,15 @@ impl DataStore for CosmosStore {
             .await
             .map_err(classify)?;
         Ok(items.map_err(classify).boxed_local())
+    }
+
+    async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {
+        let key = partition_key_of(partition_key)?;
+        self.client
+            .delete_item(key, id, None)
+            .await
+            .map_err(classify)?;
+        Ok(())
     }
 }
 
