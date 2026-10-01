@@ -165,13 +165,15 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 12] = [
+const HELP: [(&str, &str); 14] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("/", "Search: type SQL, a clause or a condition"),
     ("Enter", "Open a node, run the search, show a document"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
     ("→ ←  l h", "Open or close a node"),
-    ("PgUp PgDn Home End", "Scroll the document"),
+    ("PgUp PgDn Home End", "Scroll the results or document"),
+    ("Ctrl-U Ctrl-D", "Scroll half a page up or down"),
+    ("g g  G", "Jump to the first or last"),
     ("Esc", "Leave the search bar"),
     ("r", "Run the query again"),
     ("?", "Show this help"),
