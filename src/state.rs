@@ -195,6 +195,8 @@ pub struct AppState {
     pub show_help: bool,
     /// Whether the accounts tree is hidden, leaving its room to the other panes.
     pub tree_hidden: bool,
+    /// Whether the focused pane takes the whole screen.
+    pub zoomed: bool,
     pub focus: Focus,
     /// What is typed in the search bar.
     pub search: TextInput,
@@ -237,6 +239,7 @@ impl AppState {
             quit: false,
             show_help: false,
             tree_hidden: false,
+            zoomed: false,
             focus: Focus::Tree,
             search: TextInput::default(),
             tree_selected: 0,
@@ -307,6 +310,11 @@ impl AppState {
             }
         }
         rows
+    }
+
+    /// The pane that takes the whole screen, if any.
+    pub fn zoomed_pane(&self) -> Option<Focus> {
+        self.zoomed.then_some(self.focus)
     }
 
     /// The document shown in the document pane.
@@ -536,6 +544,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('q') => state.quit = true,
         KeyCode::Char('/') => state.focus = Focus::Search,
         KeyCode::Char('?') => state.show_help = true,
+        KeyCode::Char('z') => state.zoomed = !state.zoomed,
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
@@ -1031,6 +1040,19 @@ mod tests {
 
         press(&mut state, KeyCode::BackTab);
         assert_eq!(state.focus, Focus::Document);
+    }
+
+    #[test]
+    fn z_zooms_the_focused_pane_and_shows_every_pane_again() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Results;
+        assert_eq!(state.zoomed_pane(), None);
+
+        press(&mut state, KeyCode::Char('z'));
+        assert_eq!(state.zoomed_pane(), Some(Focus::Results));
+
+        press(&mut state, KeyCode::Char('z'));
+        assert_eq!(state.zoomed_pane(), None);
     }
 
     fn with_accounts(names: &[&str]) -> AppState {
