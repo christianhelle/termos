@@ -801,11 +801,15 @@ fn open_selected_container(state: &mut AppState) -> Vec<Effect> {
 }
 
 /// Opens a closed tree node, or closes an open one.
+/// A container's documents are listed already, so it moves on to them.
 fn toggle(state: &mut AppState) -> Vec<Effect> {
     let expanded = match state.selected_node() {
         Some(Node::Account(a)) => state.account_mut(a).is_some_and(|node| node.expanded),
         Some(Node::Database(a, d)) => state.database_mut(a, d).is_some_and(|node| node.expanded),
-        Some(Node::Container(a, d, c)) => return open_container(state, a, d, c),
+        Some(Node::Container(..)) => {
+            state.focus = Focus::Results;
+            return Vec::new();
+        }
         _ => false,
     };
     if expanded {
@@ -1358,6 +1362,17 @@ mod tests {
         let effects = [effects, press(&mut state, KeyCode::Enter)].concat();
         assert!(effects.is_empty());
         assert_eq!(outline(&state).len(), 7);
+    }
+
+    #[test]
+    fn enter_on_a_container_moves_to_its_documents_without_querying_again() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+
+        let effects = press(&mut state, KeyCode::Enter);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.focus, Focus::Results);
     }
 
     fn carts() -> Target {
