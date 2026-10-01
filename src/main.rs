@@ -155,7 +155,7 @@ async fn event_loop(
     Ok(())
 }
 
-/// A left click or drag or turn of the wheel, in terms of the pane it is over.
+/// A left click, drag or release or turn of the wheel, in terms of the pane it is over.
 ///
 /// `left_held` remembers whether the left button is down between events.
 fn pane_mouse(
@@ -171,7 +171,7 @@ fn pane_mouse(
         }
         MouseEventKind::Up(MouseButton::Left) => {
             *left_held = false;
-            return None;
+            MouseAction::Release
         }
         MouseEventKind::Drag(MouseButton::Left) => MouseAction::Drag,
         // Windows Terminal reports a move with the button held as a plain move

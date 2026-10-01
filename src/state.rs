@@ -77,7 +77,7 @@ pub enum Event {
     Msg(Msg),
 }
 
-/// A click, drag or turn of the wheel over a pane.
+/// A click, drag, release or turn of the wheel over a pane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Mouse {
     pub action: MouseAction,
@@ -91,6 +91,8 @@ pub enum MouseAction {
     Click,
     /// The mouse moved with its button held down.
     Drag,
+    /// The button was let go.
+    Release,
     ScrollUp,
     ScrollDown,
 }
@@ -545,7 +547,8 @@ fn on_mouse(state: &mut AppState, mouse: Mouse) -> Vec<Effect> {
     }
     match mouse.action {
         MouseAction::Click => on_click(state, mouse.pane, mouse.at),
-        MouseAction::Drag => on_drag(state, mouse.pane, mouse.at),
+        // Some terminals send no moves, so the release ends a drag too
+        MouseAction::Drag | MouseAction::Release => on_drag(state, mouse.pane, mouse.at),
         MouseAction::ScrollUp => on_wheel(state, mouse.pane, KeyCode::Up),
         MouseAction::ScrollDown => on_wheel(state, mouse.pane, KeyCode::Down),
     }
@@ -2069,6 +2072,20 @@ mod tests {
         drag(&mut state, Focus::Document, 5, 1);
 
         assert_eq!(state.focus, Focus::Document);
+        assert_eq!(state.selected_text().as_deref(), Some("\"id\""));
+    }
+
+    #[test]
+    fn letting_go_of_the_button_picks_the_text_without_any_drag() {
+        let mut state = with_cart_results();
+        state.doc_height = 10;
+
+        click(&mut state, Focus::Document, 2, 1);
+        let at = Some(Position::new(5, 1));
+        let action = MouseAction::Release;
+        let pane = Focus::Document;
+        update(&mut state, Event::Mouse(Mouse { action, pane, at }));
+
         assert_eq!(state.selected_text().as_deref(), Some("\"id\""));
     }
 
