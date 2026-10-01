@@ -574,13 +574,19 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
             let index = first_visible(state.result_selected, state.results_height) + line - 1;
             if index < state.results.len() && index != state.result_selected {
                 state.result_selected = index;
-                state.doc_scroll = 0;
+                show_from_top(state);
             }
         }
         Focus::Search => state.search.move_to(usize::from(at.x)),
         Focus::Results | Focus::Document => {}
     }
     Vec::new()
+}
+
+/// Shows another document from its top, with nothing picked.
+fn show_from_top(state: &mut AppState) {
+    state.doc_scroll = 0;
+    state.doc_selection = None;
 }
 
 /// Scrolls the pane under the mouse like the arrow keys, without focusing it.
@@ -651,7 +657,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     if let Some(target) = jump(key, &mut state.pending_g, selected, last, page) {
         state.result_selected = target;
         if target != selected {
-            state.doc_scroll = 0;
+            show_from_top(state);
         }
         return Vec::new();
     }
@@ -673,7 +679,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         _ => {}
     }
     if state.result_selected != selected {
-        state.doc_scroll = 0;
+        show_from_top(state);
     }
     Vec::new()
 }
@@ -890,7 +896,7 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
             state.more = result.more;
             state.loading_more = false;
             state.result_selected = 0;
-            state.doc_scroll = 0;
+            show_from_top(state);
             state.pk_path = result.pk_path;
         }
         Err(error) => state.status = Status::Error(error),
@@ -907,7 +913,7 @@ fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String
         Ok(result) => {
             if !result.docs.is_empty() {
                 state.result_selected = state.results.len();
-                state.doc_scroll = 0;
+                show_from_top(state);
             }
             state.results.extend(result.docs);
             state.more = result.more;
@@ -1909,6 +1915,16 @@ mod tests {
   \"id\": \"c-1\","
             )
         );
+    }
+
+    #[test]
+    fn showing_another_document_drops_the_selection() {
+        let mut state = with_cart_results();
+        pick(&mut state, (0, 0), (1, 4));
+
+        press(&mut state, KeyCode::Down);
+
+        assert_eq!(state.doc_selection, None);
     }
 
     #[test]
