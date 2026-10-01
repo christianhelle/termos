@@ -193,6 +193,8 @@ pub struct AppState {
     pub quit: bool,
     /// Whether the key help covers the screen.
     pub show_help: bool,
+    /// Whether the accounts tree is hidden, leaving its room to the other panes.
+    pub tree_hidden: bool,
     pub focus: Focus,
     /// What is typed in the search bar.
     pub search: TextInput,
@@ -234,6 +236,7 @@ impl AppState {
             status: Status::Info("Loading accounts…".into()),
             quit: false,
             show_help: false,
+            tree_hidden: false,
             focus: Focus::Tree,
             search: TextInput::default(),
             tree_selected: 0,
@@ -428,6 +431,7 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     }
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
+        KeyCode::Char('b') if ctrl => state.tree_hidden = !state.tree_hidden,
         KeyCode::Tab => state.focus = state.focus.next(),
         KeyCode::BackTab => state.focus = state.focus.previous(),
         _ => {
@@ -963,6 +967,23 @@ mod tests {
         let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         update(&mut state, Event::Key(ctrl_c));
         assert!(state.quit);
+    }
+
+    fn ctrl_b(state: &mut AppState) -> Vec<Effect> {
+        let key = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        update(state, Event::Key(key))
+    }
+
+    #[test]
+    fn ctrl_b_hides_the_tree_and_shows_it_again() {
+        let (mut state, _) = AppState::new();
+        assert!(!state.tree_hidden);
+
+        ctrl_b(&mut state);
+        assert!(state.tree_hidden);
+
+        ctrl_b(&mut state);
+        assert!(!state.tree_hidden);
     }
 
     fn with_accounts(names: &[&str]) -> AppState {
