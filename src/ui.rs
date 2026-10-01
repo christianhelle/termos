@@ -45,6 +45,13 @@ pub fn document_height(size: Size) -> u16 {
     document.height.saturating_sub(2)
 }
 
+/// How many documents the results table shows on a terminal of this size.
+pub fn results_height(size: Size) -> u16 {
+    let results = panes(Rect::from((Position::ORIGIN, size))).results;
+    // Less the borders and the header row
+    results.height.saturating_sub(3)
+}
+
 /// Draws the tree, search bar, results, document and status line.
 pub fn draw(frame: &mut Frame, state: &AppState) {
     let panes = panes(frame.area());
@@ -250,6 +257,12 @@ mod tests {
 
     fn press(state: &mut AppState, code: KeyCode) {
         update(state, Event::Key(KeyEvent::from(code)));
+    }
+
+    #[test]
+    fn the_results_table_shows_the_rows_between_its_borders_and_header() {
+        // 20 rows less the status line, search bar, borders and header
+        assert_eq!(results_height(Size::new(100, 20)), 13);
     }
 
     /// Orders expanded with its carts container open, and inventory collapsed.

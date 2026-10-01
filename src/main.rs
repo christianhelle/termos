@@ -121,6 +121,7 @@ async fn event_loop(
     start(&runner, &sender, effects);
     while !state.quit {
         state.doc_height = ui::document_height(terminal.size()?);
+        state.results_height = ui::results_height(terminal.size()?);
         terminal.draw(|frame| ui::draw(frame, &state))?;
         let event = tokio::select! {
             Some(input) = keys.next() => match input? {

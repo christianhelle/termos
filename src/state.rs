@@ -196,6 +196,10 @@ pub struct AppState {
     pub doc_scroll: u16,
     /// How many lines of a document the document pane shows at once.
     pub doc_height: u16,
+    /// How many documents the results table shows at once.
+    pub results_height: u16,
+    /// Whether a `g` was just pressed, waiting for a second one.
+    pub pending_g: bool,
     /// Whether the latest query found more documents than the results show.
     pub more: bool,
     /// Whether the next page of results is being read.
@@ -221,6 +225,8 @@ impl AppState {
             last_sql: String::new(),
             doc_scroll: 0,
             doc_height: 0,
+            results_height: 0,
+            pending_g: false,
             more: false,
             loading_more: false,
         };
