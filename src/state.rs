@@ -4,6 +4,7 @@ use crate::management::{Account, Container};
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Position;
 use serde_json::Value;
 
 use crate::input::TextInput;
@@ -69,7 +70,24 @@ pub struct QueryResult {
 #[derive(Debug)]
 pub enum Event {
     Key(KeyEvent),
+    Mouse(Mouse),
     Msg(Msg),
+}
+
+/// A click or turn of the wheel over a pane.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mouse {
+    pub action: MouseAction,
+    pub pane: Focus,
+    /// Where in the pane, inside its borders, or `None` on a border.
+    pub at: Option<Position>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MouseAction {
+    Click,
+    ScrollUp,
+    ScrollDown,
 }
 
 /// Something shown in a pane that may still be loading or may have failed.
@@ -198,6 +216,8 @@ pub struct AppState {
     pub doc_height: u16,
     /// How many documents the results table shows at once.
     pub results_height: u16,
+    /// How many rows the tree shows at once.
+    pub tree_height: u16,
     /// Whether a `g` was just pressed, waiting for a second one.
     pub pending_g: bool,
     /// Whether the latest query found more documents than the results show.
@@ -226,6 +246,7 @@ impl AppState {
             doc_scroll: 0,
             doc_height: 0,
             results_height: 0,
+            tree_height: 0,
             pending_g: false,
             more: false,
             loading_more: false,
@@ -389,6 +410,7 @@ fn row(node: Node, depth: usize, label: &str) -> TreeRow {
 pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
     match event {
         Event::Key(key) => on_key(state, key),
+        Event::Mouse(mouse) => on_mouse(state, mouse),
         Event::Msg(msg) => on_msg(state, msg),
     }
 }
@@ -416,6 +438,76 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         }
     }
     Vec::new()
+}
+
+/// How many lines the wheel scrolls the document.
+const WHEEL_LINES: usize = 3;
+
+fn on_mouse(state: &mut AppState, mouse: Mouse) -> Vec<Effect> {
+    state.pending_g = false;
+    if state.show_help {
+        // A click closes the help, and only that
+        if mouse.action == MouseAction::Click {
+            state.show_help = false;
+        }
+        return Vec::new();
+    }
+    match mouse.action {
+        MouseAction::Click => on_click(state, mouse.pane, mouse.at),
+        MouseAction::ScrollUp => on_wheel(state, mouse.pane, KeyCode::Up),
+        MouseAction::ScrollDown => on_wheel(state, mouse.pane, KeyCode::Down),
+    }
+}
+
+/// The first row a list shows, as ratatui scrolls it: from the top,
+/// until the selection would go past the bottom.
+fn first_visible(selected: usize, height: u16) -> usize {
+    selected.saturating_sub(usize::from(height).saturating_sub(1))
+}
+
+/// Focuses the clicked pane. A click on a row selects it,
+/// and a click on the selected tree row opens or closes it like Enter.
+fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effect> {
+    state.focus = pane;
+    let Some(at) = at else {
+        return Vec::new();
+    };
+    let line = usize::from(at.y);
+    match pane {
+        Focus::Tree => {
+            let index = first_visible(state.tree_selected, state.tree_height) + line;
+            if index == state.tree_selected {
+                return toggle(state);
+            }
+            if index < state.tree_rows().len() {
+                state.tree_selected = index;
+            }
+        }
+        // The first line is the header
+        Focus::Results if line > 0 => {
+            let index = first_visible(state.result_selected, state.results_height) + line - 1;
+            if index < state.results.len() && index != state.result_selected {
+                state.result_selected = index;
+                state.doc_scroll = 0;
+            }
+        }
+        Focus::Search => state.search.move_to(usize::from(at.x)),
+        Focus::Results | Focus::Document => {}
+    }
+    Vec::new()
+}
+
+/// Scrolls the pane under the mouse like the arrow keys, without focusing it.
+fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
+    let key = KeyEvent::from(code);
+    match pane {
+        Focus::Tree => on_tree_key(state, key),
+        Focus::Results => on_results_key(state, key),
+        Focus::Document => (0..WHEEL_LINES)
+            .flat_map(|_| on_document_key(state, key))
+            .collect(),
+        Focus::Search => Vec::new(),
+    }
 }
 
 /// Keys that work in every pane but the search bar, where they are typed instead.
@@ -1599,5 +1691,159 @@ mod tests {
             state.status,
             Status::Error("could not refresh accounts: az login first".into())
         );
+    }
+    fn click(state: &mut AppState, pane: Focus, x: u16, y: u16) -> Vec<Effect> {
+        let at = Some(Position::new(x, y));
+        let action = MouseAction::Click;
+        update(state, Event::Mouse(Mouse { action, pane, at }))
+    }
+
+    fn wheel(state: &mut AppState, pane: Focus, action: MouseAction) -> Vec<Effect> {
+        let at = Some(Position::new(0, 0));
+        update(state, Event::Mouse(Mouse { action, pane, at }))
+    }
+
+    #[test]
+    fn clicking_a_pane_focuses_it_even_on_its_border() {
+        let mut state = with_cart_results();
+
+        click(&mut state, Focus::Document, 4, 2);
+        assert_eq!(state.focus, Focus::Document);
+
+        let border = Mouse {
+            action: MouseAction::Click,
+            pane: Focus::Tree,
+            at: None,
+        };
+        update(&mut state, Event::Mouse(border));
+        assert_eq!(state.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn clicking_a_tree_row_selects_it_and_clicking_it_again_opens_it() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+        state.tree_height = 10;
+
+        let effects = click(&mut state, Focus::Tree, 3, 1);
+        assert!(effects.is_empty());
+        assert_eq!(selected_label(&state), "inventory");
+
+        let effects = click(&mut state, Focus::Tree, 3, 1);
+        assert_eq!(effects, vec![Effect::LoadContainers(account("inventory"))]);
+    }
+
+    #[test]
+    fn clicking_below_the_last_tree_row_selects_nothing() {
+        let mut state = with_accounts(&["orders", "inventory"]);
+        state.tree_height = 10;
+
+        click(&mut state, Focus::Tree, 3, 5);
+
+        assert_eq!(selected_label(&state), "orders");
+    }
+
+    #[test]
+    fn clicking_the_tree_counts_the_rows_scrolled_out_of_sight() {
+        let mut state = with_orders_expanded();
+        state.tree_height = 3;
+        for _ in 0..6 {
+            press(&mut state, KeyCode::Down);
+        }
+        // Showing rows 4 to 6, with the last one selected
+        assert_eq!(state.tree_selected, 6);
+
+        click(&mut state, Focus::Tree, 0, 0);
+
+        assert_eq!(state.tree_selected, 4);
+    }
+
+    #[test]
+    fn clicking_a_result_shows_its_document_from_the_top() {
+        let mut state = with_cart_results();
+        state.results_height = 10;
+        state.doc_scroll = 3;
+
+        click(&mut state, Focus::Results, 2, 2);
+
+        assert_eq!(state.selected_document(), Some(&cart_docs()[1]));
+        assert_eq!(state.doc_scroll, 0);
+    }
+
+    #[test]
+    fn clicking_the_results_header_selects_nothing() {
+        let mut state = with_cart_results();
+        state.results_height = 10;
+
+        click(&mut state, Focus::Results, 2, 0);
+
+        assert_eq!(state.result_selected, 0);
+    }
+
+    #[test]
+    fn clicking_the_results_counts_the_rows_scrolled_out_of_sight() {
+        let mut state = with_many_results(25);
+        press(&mut state, KeyCode::End);
+
+        // Showing documents 15 to 24 below the header
+        click(&mut state, Focus::Results, 0, 1);
+
+        assert_eq!(state.result_selected, 15);
+    }
+
+    #[test]
+    fn clicking_the_search_bar_puts_the_cursor_where_it_was_clicked() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Search;
+        type_text(&mut state, "c.total");
+
+        click(&mut state, Focus::Search, 2, 0);
+        assert_eq!(state.search.cursor(), 2);
+        click(&mut state, Focus::Search, 40, 0);
+        assert_eq!(state.search.cursor(), 7);
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_pane_under_it_without_focusing_it() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Tree;
+        state.results[0] = long_document(10);
+        state.doc_height = 5;
+
+        wheel(&mut state, Focus::Document, MouseAction::ScrollDown);
+        assert_eq!(state.doc_scroll, 3);
+        wheel(&mut state, Focus::Document, MouseAction::ScrollDown);
+        wheel(&mut state, Focus::Document, MouseAction::ScrollDown);
+        assert_eq!(state.doc_scroll, 7);
+        wheel(&mut state, Focus::Document, MouseAction::ScrollUp);
+        assert_eq!(state.doc_scroll, 4);
+
+        wheel(&mut state, Focus::Results, MouseAction::ScrollDown);
+        assert_eq!(state.result_selected, 1);
+        assert_eq!(state.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn the_wheel_past_the_last_result_loads_more() {
+        let mut state = with_first_page();
+        wheel(&mut state, Focus::Results, MouseAction::ScrollDown);
+        wheel(&mut state, Focus::Results, MouseAction::ScrollDown);
+
+        let effects = wheel(&mut state, Focus::Results, MouseAction::ScrollDown);
+
+        assert_eq!(effects, vec![Effect::LoadMore { id: 1 }]);
+    }
+
+    #[test]
+    fn a_click_only_closes_the_help() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Char('?'));
+
+        wheel(&mut state, Focus::Results, MouseAction::ScrollDown);
+        assert!(state.show_help);
+        assert_eq!(state.result_selected, 0);
+
+        click(&mut state, Focus::Document, 2, 2);
+        assert!(!state.show_help);
+        assert_eq!(state.focus, Focus::Results);
     }
 }
