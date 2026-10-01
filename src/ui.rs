@@ -63,8 +63,13 @@ pub fn tree_height(size: Size) -> u16 {
 
 /// The pane at a point on a terminal of this size, with the point inside its
 /// borders, or `None` for the point when it is on a border.
-pub fn pane_at(size: Size, at: Position, tree_hidden: bool) -> Option<(Focus, Option<Position>)> {
-    let panes = panes(Rect::from((Position::ORIGIN, size)), tree_hidden, None);
+pub fn pane_at(
+    size: Size,
+    at: Position,
+    tree_hidden: bool,
+    zoomed: Option<Focus>,
+) -> Option<(Focus, Option<Position>)> {
+    let panes = panes(Rect::from((Position::ORIGIN, size)), tree_hidden, zoomed);
     let (focus, area) = [
         (Focus::Tree, panes.tree),
         (Focus::Search, panes.search),
@@ -350,7 +355,7 @@ mod tests {
     #[test]
     fn finds_the_pane_at_a_point_and_where_the_point_is_inside_it() {
         let size = Size::new(100, 20);
-        let at = |x, y| pane_at(size, Position::new(x, y), false);
+        let at = |x, y| pane_at(size, Position::new(x, y), false, None);
 
         assert_eq!(at(3, 4), Some((Focus::Tree, Some(Position::new(2, 3)))));
         assert_eq!(at(27, 1), Some((Focus::Search, Some(Position::new(1, 0)))));
@@ -361,10 +366,20 @@ mod tests {
     #[test]
     fn finds_the_panes_that_take_the_room_of_a_hidden_tree() {
         let size = Size::new(100, 20);
-        let at = |x, y| pane_at(size, Position::new(x, y), true);
+        let at = |x, y| pane_at(size, Position::new(x, y), true, None);
 
         assert_eq!(at(3, 1), Some((Focus::Search, Some(Position::new(2, 0)))));
         assert_eq!(at(3, 5).map(|(pane, _)| pane), Some(Focus::Results));
+    }
+
+    #[test]
+    fn finds_the_zoomed_pane_wherever_it_reaches() {
+        let size = Size::new(100, 20);
+        let at = |x, y| pane_at(size, Position::new(x, y), false, Some(Focus::Document));
+
+        assert_eq!(at(3, 1), Some((Focus::Document, Some(Position::new(2, 0)))));
+        assert_eq!(at(90, 17).map(|(pane, _)| pane), Some(Focus::Document));
+        assert_eq!(at(5, 19), None);
     }
 
     #[test]
@@ -372,11 +387,11 @@ mod tests {
         let size = Size::new(100, 20);
 
         assert_eq!(
-            pane_at(size, Position::new(0, 5), false),
+            pane_at(size, Position::new(0, 5), false, None),
             Some((Focus::Tree, None))
         );
         assert_eq!(
-            pane_at(size, Position::new(30, 3), false),
+            pane_at(size, Position::new(30, 3), false, None),
             Some((Focus::Results, None))
         );
     }
@@ -384,7 +399,7 @@ mod tests {
     #[test]
     fn the_status_line_is_in_no_pane() {
         assert_eq!(
-            pane_at(Size::new(100, 20), Position::new(5, 19), false),
+            pane_at(Size::new(100, 20), Position::new(5, 19), false, None),
             None
         );
     }

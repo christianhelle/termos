@@ -139,7 +139,7 @@ async fn event_loop(
             Some(input) = keys.next() => match input? {
                 // Windows also reports key releases
                 TermEvent::Key(key) if key.kind != KeyEventKind::Release => Event::Key(key),
-                TermEvent::Mouse(mouse) => match pane_mouse(terminal.size()?, mouse, state.tree_hidden) {
+                TermEvent::Mouse(mouse) => match pane_mouse(terminal.size()?, mouse, &state) {
                     Some(mouse) => Event::Mouse(mouse),
                     None => continue,
                 },
@@ -154,14 +154,19 @@ async fn event_loop(
 }
 
 /// A left click or turn of the wheel, in terms of the pane it is over.
-fn pane_mouse(size: Size, mouse: MouseEvent, tree_hidden: bool) -> Option<Mouse> {
+fn pane_mouse(size: Size, mouse: MouseEvent, state: &AppState) -> Option<Mouse> {
     let action = match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => MouseAction::Click,
         MouseEventKind::ScrollUp => MouseAction::ScrollUp,
         MouseEventKind::ScrollDown => MouseAction::ScrollDown,
         _ => return None,
     };
-    let (pane, at) = ui::pane_at(size, Position::new(mouse.column, mouse.row), tree_hidden)?;
+    let (pane, at) = ui::pane_at(
+        size,
+        Position::new(mouse.column, mouse.row),
+        state.tree_hidden,
+        state.zoomed_pane(),
+    )?;
     Some(Mouse { action, pane, at })
 }
 
