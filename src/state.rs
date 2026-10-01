@@ -750,6 +750,10 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('y') => return copy_document(state),
+        KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.confirm_delete = state.selected_document().is_some();
+            return Vec::new();
+        }
         KeyCode::Esc => state.doc_selection = None,
         _ => {}
     }
@@ -1958,6 +1962,42 @@ mod tests {
             state.status,
             Status::Error("could not delete c-1: forbidden".into())
         );
+    }
+
+    #[test]
+    fn d_in_the_document_pane_asks_to_confirm_the_delete_too() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+
+        let effects = press(&mut state, KeyCode::Char('d'));
+        assert!(effects.is_empty());
+        assert!(state.confirm_delete);
+
+        let effects = press(&mut state, KeyCode::Char('y'));
+        assert!(matches!(effects[..], [Effect::Delete { ref id, .. }] if id == "c-1"));
+    }
+
+    #[test]
+    fn d_in_the_document_pane_without_a_document_asks_nothing() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Document;
+
+        press(&mut state, KeyCode::Char('d'));
+
+        assert!(!state.confirm_delete);
+    }
+
+    #[test]
+    fn ctrl_d_in_the_document_pane_still_scrolls_without_asking() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+        state.results[0] = long_document(40);
+        state.doc_height = 10;
+
+        press_ctrl(&mut state, 'd');
+
+        assert!(!state.confirm_delete);
+        assert_eq!(state.doc_scroll, 5);
     }
 
     #[test]
