@@ -10,6 +10,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Browse the local Cosmos DB emulator with `--emulator`, without Azure or `az login`.
 
+### Changed
+
+- Selecting a container lists its documents at once, and Enter on it moves to the results.
+
 ## [0.1.3] - 2026-10-01
 
 ### Added
