@@ -720,8 +720,10 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
-    if key.code == KeyCode::Char('y') {
-        return copy_document(state);
+    match key.code {
+        KeyCode::Char('y') => return copy_document(state),
+        KeyCode::Esc => state.doc_selection = None,
+        _ => {}
     }
     let last = usize::from(state.max_doc_scroll());
     let page = usize::from(state.doc_height).max(1);
@@ -1988,6 +1990,17 @@ mod tests {
 
         let whole = serde_json::to_string_pretty(&cart_docs()[0]).unwrap();
         assert_eq!(effects, vec![Effect::Copy(whole)]);
+    }
+
+    #[test]
+    fn esc_drops_the_picked_text() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+        pick(&mut state, (1, 2), (1, 5));
+
+        press(&mut state, KeyCode::Esc);
+
+        assert_eq!(state.doc_selection, None);
     }
 
     #[test]
