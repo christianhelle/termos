@@ -119,7 +119,7 @@ fn short_message(message: &str) -> &str {
 
 /// Shortens SDK errors and turns authorization failures into [`Unauthorized`]
 /// so callers can fall back.
-fn classify(error: CosmosError) -> anyhow::Error {
+pub(crate) fn classify(error: CosmosError) -> anyhow::Error {
     let message = short_message(&error.to_string()).to_string();
     match error.status().status_code() {
         StatusCode::Unauthorized | StatusCode::Forbidden => Unauthorized(message).into(),

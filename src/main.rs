@@ -5,6 +5,7 @@ mod connector;
 mod cosmos;
 mod credential;
 mod effects;
+mod emulator;
 mod input;
 mod json;
 mod management;
