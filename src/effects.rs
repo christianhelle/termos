@@ -11,6 +11,7 @@ use crate::management::Management;
 use crate::store::{DataPlane, DataStore, Documents};
 use futures::StreamExt;
 use futures::stream::Peekable;
+use serde_json::Value;
 
 use crate::state::{Effect, Msg, QueryResult, Target};
 
@@ -78,6 +79,17 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
                 id,
                 result: self.load_more(id).await.map_err(describe),
             },
+            Effect::Delete {
+                target,
+                id,
+                partition_key,
+            } => {
+                let result = self.delete(&target, &id, partition_key.as_ref()).await;
+                Msg::Deleted {
+                    id,
+                    result: result.map_err(describe),
+                }
+            }
             Effect::Copy(text) => {
                 Msg::Copied(self.clipboard.borrow_mut().copy(text).map_err(describe))
             }
@@ -97,6 +109,20 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             docs: store.documents(sql).await?.peekable(),
         };
         self.read_page(open, started).await
+    }
+
+    /// Deletes a document from a container.
+    async fn delete(
+        &self,
+        target: &Target,
+        id: &str,
+        partition_key: Option<&Value>,
+    ) -> anyhow::Result<()> {
+        let store = self
+            .connector
+            .connect_to(&target.account, &target.database, &target.container)
+            .await?;
+        store.delete(id, partition_key).await
     }
 
     /// Reads the next page of the latest query.
@@ -338,6 +364,50 @@ mod tests {
         else {
             panic!("unexpected {msg:?}");
         };
+    }
+
+    fn delete_cart(id: &str) -> Effect {
+        Effect::Delete {
+            target: carts(),
+            id: id.into(),
+            partition_key: Some(json!("contoso")),
+        }
+    }
+
+    #[tokio::test]
+    async fn deletes_a_document_by_id_and_partition_key() {
+        let mut runner = runner();
+        let docs = vec![json!({ "id": "c-1" }), json!({ "id": "c-2" })];
+        runner.connector.data = FakeDataPlane::new("/tenantId", docs);
+
+        let msg = runner.run(delete_cart("c-1")).await;
+
+        let Msg::Deleted { id, result: Ok(()) } = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(id, "c-1");
+        let container = runner.connector.data.container.borrow();
+        assert_eq!(container.docs, vec![json!({ "id": "c-2" })]);
+        assert_eq!(
+            container.deletes,
+            vec![("c-1".to_string(), Some(json!("contoso")))]
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_a_document_it_could_not_delete() {
+        let mut runner = runner();
+        runner.connector.data = FakeDataPlane::new("/tenantId", vec![]);
+
+        let msg = runner.run(delete_cart("gone")).await;
+
+        let Msg::Deleted {
+            result: Err(error), ..
+        } = msg
+        else {
+            panic!("unexpected {msg:?}");
+        };
+        assert!(error.contains("gone"), "{error}");
     }
 
     #[tokio::test]

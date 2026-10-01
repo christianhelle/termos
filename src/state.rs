@@ -8,6 +8,7 @@ use ratatui::layout::Position;
 use serde_json::Value;
 
 use crate::input::TextInput;
+use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
 
 /// Work for the runtime to do in the background.
@@ -27,6 +28,12 @@ pub enum Effect {
     },
     /// Puts text on the system clipboard.
     Copy(String),
+    /// Deletes a document, found by its id and partition key value.
+    Delete {
+        target: Target,
+        id: String,
+        partition_key: Option<Value>,
+    },
 }
 
 /// A container to query.
@@ -56,6 +63,11 @@ pub enum Msg {
         result: Result<QueryResult, String>,
     },
     Copied(Result<(), String>),
+    /// The outcome of deleting the document with this id.
+    Deleted {
+        id: String,
+        result: Result<(), String>,
+    },
 }
 
 /// The documents a query found.
@@ -500,6 +512,14 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let ctrl_c = ctrl && key.code == KeyCode::Char('c');
+    if state.confirm_delete && !ctrl_c {
+        // Only y or Enter confirms. Any other key cancels, and only that
+        state.confirm_delete = false;
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
+            return delete_selected(state);
+        }
+        return Vec::new();
+    }
     if state.show_help && !ctrl_c {
         // Any other key closes the help, and only that
         state.show_help = false;
@@ -743,6 +763,21 @@ fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     });
     state.doc_scroll = u16::try_from(target).unwrap_or(u16::MAX);
     Vec::new()
+}
+
+/// Deletes the selected document from the current container.
+fn delete_selected(state: &mut AppState) -> Vec<Effect> {
+    let (Some(target), Some(doc)) = (state.target.clone(), state.selected_document()) else {
+        return Vec::new();
+    };
+    let id = display_value(doc.get("id"));
+    let partition_key = value_at_path(doc, &state.pk_path).cloned();
+    state.status = Status::Info(format!("Deleting {id}…"));
+    vec![Effect::Delete {
+        target,
+        id,
+        partition_key,
+    }]
 }
 
 /// Copies the picked text, or the whole document when nothing is picked.
@@ -1047,6 +1082,25 @@ fn accounts_loaded(state: &mut AppState, result: Result<Vec<Account>, String>) {
     state.reselect(selected);
 }
 
+/// Drops a deleted document from the results, or says why it was not deleted.
+fn deleted(state: &mut AppState, id: &str, result: Result<(), String>) {
+    if let Err(error) = result {
+        state.status = Status::Error(format!("could not delete {id}: {error}"));
+        return;
+    }
+    let position = state
+        .results
+        .iter()
+        .position(|doc| display_value(doc.get("id")) == id);
+    if let Some(position) = position {
+        state.results.remove(position);
+        let last = state.results.len().saturating_sub(1);
+        state.result_selected = state.result_selected.min(last);
+        show_from_top(state);
+    }
+    state.status = Status::Info(format!("Deleted {id}"));
+}
+
 /// Counts documents in words, such as "1 document" or "3 documents".
 fn documents(count: usize) -> String {
     match count {
@@ -1061,6 +1115,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
         Msg::QueryDone { id, result } => query_done(state, id, result),
         Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
+        Msg::Deleted { id, result } => deleted(state, &id, result),
         Msg::Copied(Ok(())) => state.status = Status::Info("Copied to the clipboard".into()),
         Msg::Copied(Err(error)) => {
             state.status = Status::Error(format!("could not copy: {error}"));
@@ -1830,6 +1885,79 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(state.confirm_delete);
+    }
+
+    #[test]
+    fn any_other_key_cancels_the_delete_and_does_nothing_else() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Char('d'));
+
+        let effects = press(&mut state, KeyCode::Down);
+
+        assert!(effects.is_empty());
+        assert!(!state.confirm_delete);
+        assert_eq!(state.result_selected, 0);
+        assert_eq!(state.results.len(), 2);
+    }
+
+    #[test]
+    fn y_confirms_the_delete_of_the_selected_document() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char('d'));
+
+        let effects = press(&mut state, KeyCode::Char('y'));
+
+        assert_eq!(
+            effects,
+            vec![Effect::Delete {
+                target: carts(),
+                id: "c-2".into(),
+                partition_key: Some(json!("fabrikam")),
+            }]
+        );
+        assert!(!state.confirm_delete);
+        assert_eq!(state.status, Status::Info("Deleting c-2…".into()));
+    }
+
+    fn deleted(state: &mut AppState, id: &str, result: Result<(), String>) {
+        let id = id.to_string();
+        update(state, Event::Msg(Msg::Deleted { id, result }));
+    }
+
+    #[test]
+    fn a_deleted_document_leaves_the_results() {
+        let mut state = with_cart_results();
+
+        deleted(&mut state, "c-1", Ok(()));
+
+        assert_eq!(state.results, vec![cart_docs()[1].clone()]);
+        assert_eq!(state.selected_document(), Some(&cart_docs()[1]));
+        assert_eq!(state.status, Status::Info("Deleted c-1".into()));
+    }
+
+    #[test]
+    fn deleting_the_last_result_selects_the_one_before() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Down);
+
+        deleted(&mut state, "c-2", Ok(()));
+
+        assert_eq!(state.result_selected, 0);
+        assert_eq!(state.selected_document(), Some(&cart_docs()[0]));
+    }
+
+    #[test]
+    fn a_failed_delete_keeps_the_document_and_says_why() {
+        let mut state = with_cart_results();
+
+        deleted(&mut state, "c-1", Err("forbidden".into()));
+
+        assert_eq!(state.results, cart_docs());
+        assert_eq!(
+            state.status,
+            Status::Error("could not delete c-1: forbidden".into())
+        );
     }
 
     #[test]
