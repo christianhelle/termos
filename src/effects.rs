@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::time::Instant;
 
 use crate::cache::AccountCache;
+use crate::clipboard::Clipboard;
 use crate::connector::Connector;
 use crate::management::Management;
 use crate::store::{DataPlane, DataStore, Documents};
@@ -20,6 +21,7 @@ pub struct Runner<M, D: DataPlane> {
     open_query: RefCell<Option<OpenQuery>>,
     /// Where listed accounts are saved for the next run.
     account_cache: Option<AccountCache>,
+    clipboard: RefCell<Clipboard>,
 }
 
 /// A query with documents left to read.
@@ -35,6 +37,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             connector,
             open_query: RefCell::default(),
             account_cache: None,
+            clipboard: RefCell::default(),
         }
     }
 
@@ -75,6 +78,9 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
                 id,
                 result: self.load_more(id).await.map_err(describe),
             },
+            Effect::Copy(text) => {
+                Msg::Copied(self.clipboard.borrow_mut().copy(text).map_err(describe))
+            }
         }
     }
 

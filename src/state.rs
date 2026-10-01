@@ -25,6 +25,8 @@ pub enum Effect {
     LoadMore {
         id: u64,
     },
+    /// Puts text on the system clipboard.
+    Copy(String),
 }
 
 /// A container to query.
@@ -53,6 +55,7 @@ pub enum Msg {
         id: u64,
         result: Result<QueryResult, String>,
     },
+    Copied(Result<(), String>),
 }
 
 /// The documents a query found.
@@ -1020,6 +1023,10 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::ContainersLoaded { account, result } => containers_loaded(state, &account, result),
         Msg::QueryDone { id, result } => query_done(state, id, result),
         Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
+        Msg::Copied(Ok(())) => state.status = Status::Info("Copied to the clipboard".into()),
+        Msg::Copied(Err(error)) => {
+            state.status = Status::Error(format!("could not copy: {error}"));
+        }
     }
     Vec::new()
 }
@@ -1946,6 +1953,23 @@ mod tests {
                 "{
   \"id\": \"c-1\","
             )
+        );
+    }
+
+    #[test]
+    fn tells_whether_the_text_was_copied() {
+        let (mut state, _) = AppState::new();
+
+        update(&mut state, Event::Msg(Msg::Copied(Ok(()))));
+        assert_eq!(state.status, Status::Info("Copied to the clipboard".into()));
+
+        update(
+            &mut state,
+            Event::Msg(Msg::Copied(Err("no display".into()))),
+        );
+        assert_eq!(
+            state.status,
+            Status::Error("could not copy: no display".into())
         );
     }
 

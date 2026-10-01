@@ -1,5 +1,6 @@
 mod arm;
 mod cache;
+mod clipboard;
 mod connector;
 mod cosmos;
 mod credential;
