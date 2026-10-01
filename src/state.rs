@@ -221,6 +221,8 @@ pub struct AppState {
     pub quit: bool,
     /// Whether the key help covers the screen.
     pub show_help: bool,
+    /// Whether a dialog asks to confirm deleting the selected document.
+    pub confirm_delete: bool,
     /// Whether the accounts tree is hidden, leaving its room to the other panes.
     pub tree_hidden: bool,
     /// Whether the focused pane takes the whole screen.
@@ -268,6 +270,7 @@ impl AppState {
             status: Status::Info("Loading accounts…".into()),
             quit: false,
             show_help: false,
+            confirm_delete: false,
             tree_hidden: false,
             zoomed: false,
             focus: Focus::Tree,
@@ -715,6 +718,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         }
         KeyCode::Enter if state.selected_document().is_some() => state.focus = Focus::Document,
         KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
+        KeyCode::Char('d') if state.selected_document().is_some() => state.confirm_delete = true,
         _ => {}
     }
     if state.result_selected != selected {
@@ -1816,6 +1820,26 @@ mod tests {
             Status::Error("throttled, press r to run the query again".into())
         );
         assert!(press(&mut state, KeyCode::Down).is_empty());
+    }
+
+    #[test]
+    fn d_on_a_result_asks_to_confirm_the_delete_without_deleting() {
+        let mut state = with_cart_results();
+
+        let effects = press(&mut state, KeyCode::Char('d'));
+
+        assert!(effects.is_empty());
+        assert!(state.confirm_delete);
+    }
+
+    #[test]
+    fn d_without_results_asks_nothing() {
+        let mut state = with_orders_expanded();
+        state.focus = Focus::Results;
+
+        press(&mut state, KeyCode::Char('d'));
+
+        assert!(!state.confirm_delete);
     }
 
     #[test]
