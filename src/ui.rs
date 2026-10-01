@@ -2,7 +2,7 @@
 
 use crate::partition::{display_value, value_at_path};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Position, Rect, Size};
+use ratatui::layout::{Constraint, Layout, Margin, Position, Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -36,6 +36,32 @@ fn panes(area: Rect) -> Panes {
         document,
         status,
     }
+}
+
+/// How many tree rows the tree pane shows on a terminal of this size.
+pub fn tree_height(size: Size) -> u16 {
+    let tree = panes(Rect::from((Position::ORIGIN, size))).tree;
+    // Less the top and bottom borders
+    tree.height.saturating_sub(2)
+}
+
+/// The pane at a point on a terminal of this size, with the point inside its
+/// borders, or `None` for the point when it is on a border.
+pub fn pane_at(size: Size, at: Position) -> Option<(Focus, Option<Position>)> {
+    let panes = panes(Rect::from((Position::ORIGIN, size)));
+    let (focus, area) = [
+        (Focus::Tree, panes.tree),
+        (Focus::Search, panes.search),
+        (Focus::Results, panes.results),
+        (Focus::Document, panes.document),
+    ]
+    .into_iter()
+    .find(|(_, area)| area.contains(at))?;
+    let inner = area.inner(Margin::new(1, 1));
+    let inside = inner
+        .contains(at)
+        .then(|| Position::new(at.x - inner.x, at.y - inner.y));
+    Some((focus, inside))
 }
 
 /// How many document lines the document pane shows on a terminal of this size.
@@ -265,6 +291,36 @@ mod tests {
     fn the_results_table_shows_the_rows_between_its_borders_and_header() {
         // 20 rows less the status line, search bar, borders and header
         assert_eq!(results_height(Size::new(100, 20)), 13);
+    }
+
+    #[test]
+    fn the_tree_shows_the_rows_between_its_borders() {
+        // 20 rows less the status line and borders
+        assert_eq!(tree_height(Size::new(100, 20)), 17);
+    }
+
+    #[test]
+    fn finds_the_pane_at_a_point_and_where_the_point_is_inside_it() {
+        let size = Size::new(100, 20);
+        let at = |x, y| pane_at(size, Position::new(x, y));
+
+        assert_eq!(at(3, 4), Some((Focus::Tree, Some(Position::new(2, 3)))));
+        assert_eq!(at(27, 1), Some((Focus::Search, Some(Position::new(1, 0)))));
+        assert_eq!(at(30, 5).map(|(pane, _)| pane), Some(Focus::Results));
+        assert_eq!(at(90, 5).map(|(pane, _)| pane), Some(Focus::Document));
+    }
+
+    #[test]
+    fn a_point_on_a_border_is_in_the_pane_but_not_inside_it() {
+        let size = Size::new(100, 20);
+
+        assert_eq!(pane_at(size, Position::new(0, 5)), Some((Focus::Tree, None)));
+        assert_eq!(pane_at(size, Position::new(30, 3)), Some((Focus::Results, None)));
+    }
+
+    #[test]
+    fn the_status_line_is_in_no_pane() {
+        assert_eq!(pane_at(Size::new(100, 20), Position::new(5, 19)), None);
     }
 
     /// Orders expanded with its carts container open, and inventory collapsed.
