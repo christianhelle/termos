@@ -394,6 +394,9 @@ pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
 }
 
 fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    if key.code != KeyCode::Char('g') {
+        state.pending_g = false;
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let ctrl_c = ctrl && key.code == KeyCode::Char('c');
     if state.show_help && !ctrl_c {
@@ -434,10 +437,23 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 /// Where a key that jumps by pages or to an end moves a position, from 0 to `last`.
-fn jump(key: KeyEvent, position: usize, last: usize, page: usize) -> Option<usize> {
+///
+/// `gg` takes two presses, so `pending_g` remembers a first one.
+fn jump(
+    key: KeyEvent,
+    pending_g: &mut bool,
+    position: usize,
+    last: usize,
+    page: usize,
+) -> Option<usize> {
     let half = (page / 2).max(1);
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let first_g = key.code == KeyCode::Char('g') && !*pending_g;
+    *pending_g = first_g;
     let target = match key.code {
+        KeyCode::Char('g') if first_g => return None,
+        KeyCode::Char('g') => 0,
+        KeyCode::Char('G') => last,
         KeyCode::PageDown => position.saturating_add(page),
         KeyCode::PageUp => position.saturating_sub(page),
         KeyCode::Char('d') if ctrl => position.saturating_add(half),
@@ -453,7 +469,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let selected = state.result_selected;
     let last = state.results.len().saturating_sub(1);
     let page = usize::from(state.results_height).max(1);
-    if let Some(target) = jump(key, selected, last, page) {
+    if let Some(target) = jump(key, &mut state.pending_g, selected, last, page) {
         state.result_selected = target;
         if target != selected {
             state.doc_scroll = 0;
@@ -1248,6 +1264,30 @@ mod tests {
         press_ctrl(&mut state, 'u');
         press_ctrl(&mut state, 'u');
         assert_eq!(state.result_selected, 0);
+    }
+
+    #[test]
+    fn gg_selects_the_first_document_and_shift_g_the_last() {
+        let mut state = with_many_results(25);
+
+        press(&mut state, KeyCode::Char('G'));
+        assert_eq!(state.result_selected, 24);
+        press(&mut state, KeyCode::Char('g'));
+        assert_eq!(state.result_selected, 24);
+        press(&mut state, KeyCode::Char('g'));
+        assert_eq!(state.result_selected, 0);
+    }
+
+    #[test]
+    fn a_g_followed_by_another_key_does_not_jump() {
+        let mut state = with_many_results(25);
+        press(&mut state, KeyCode::PageDown);
+
+        press(&mut state, KeyCode::Char('g'));
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char('g'));
+
+        assert_eq!(state.result_selected, 11);
     }
 
     #[test]
