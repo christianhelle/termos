@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Browse the local Cosmos DB emulator with `--emulator`, without Azure or `az login`.
+- Delete the selected document with `d` in the results, after confirming in a dialog.
 
 ### Changed
 
