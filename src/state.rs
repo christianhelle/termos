@@ -1101,6 +1101,16 @@ mod tests {
     }
 
     #[test]
+    fn home_and_end_select_the_first_and_last_tree_row() {
+        let mut state = with_accounts(&["orders", "inventory", "billing"]);
+
+        press(&mut state, KeyCode::End);
+        assert_eq!(state.tree_selected, 2);
+        press(&mut state, KeyCode::Home);
+        assert_eq!(state.tree_selected, 0);
+    }
+
+    #[test]
     fn expanding_an_account_loads_its_containers() {
         let mut state = with_accounts(&["orders", "inventory"]);
 
