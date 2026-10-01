@@ -10,7 +10,7 @@ use ratatui::widgets::{
 };
 
 use crate::json::highlight_json;
-use crate::state::{AppState, Focus, Status};
+use crate::state::{AppState, Focus, Selection, Status};
 
 /// Where each part of the screen goes.
 struct Panes {
@@ -181,10 +181,45 @@ fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
         .selected_document()
         .map(highlight_json)
         .unwrap_or_default();
+    let widths: Vec<usize> = lines.iter().map(Line::width).collect();
     let document = Paragraph::new(lines)
         .block(pane("Document", state, Focus::Document))
         .scroll((scroll, 0));
     frame.render_widget(document, area);
+    if let Some(selection) = state.doc_selection.filter(|s| s.anchor != s.head) {
+        draw_selection(frame, selection, &widths, scroll, area);
+    }
+}
+
+/// Reverses the picked text of the document, as far as each line reaches.
+fn draw_selection(
+    frame: &mut Frame,
+    selection: Selection,
+    widths: &[usize],
+    scroll: u16,
+    area: Rect,
+) {
+    let inner = area.inner(Margin::new(1, 1));
+    let (start, end) = selection.range();
+    for row in 0..inner.height {
+        let line = usize::from(scroll) + usize::from(row);
+        if line < start.line || line > end.line {
+            continue;
+        }
+        let width = widths.get(line).copied().unwrap_or(0);
+        let from = if line == start.line { start.column } else { 0 };
+        let to = if line == end.line {
+            (end.column + 1).min(width)
+        } else {
+            width
+        };
+        for column in from..to.min(usize::from(inner.width)) {
+            let x = inner.x + u16::try_from(column).unwrap_or(u16::MAX);
+            if let Some(cell) = frame.buffer_mut().cell_mut((x, inner.y + row)) {
+                cell.modifier.insert(Modifier::REVERSED);
+            }
+        }
+    }
 }
 
 /// A bordered pane, highlighted when it has focus.
@@ -263,7 +298,7 @@ fn draw_help(frame: &mut Frame) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Event, Focus, Msg, QueryResult, update};
+    use crate::state::{DocPoint, Event, Focus, Msg, QueryResult, update};
     use crate::testing::{account, container};
     use crossterm::event::{KeyCode, KeyEvent};
     use ratatui::Terminal;
@@ -607,6 +642,33 @@ mod tests {
             screen.join("\n")
         );
         assert!(!shows(&screen, r#""f00""#), "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn draws_the_picked_document_text_reversed() {
+        let mut state = with_results();
+        let point = |line, column| DocPoint { line, column };
+        state.doc_selection = Some(Selection {
+            anchor: point(1, 2),
+            head: point(1, 5),
+        });
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        let row = screen(&state)
+            .iter()
+            .position(|line| line.contains(r#""id": "c-1""#))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let row = u16::try_from(row).unwrap();
+        let document = panes(buffer.area, false, None).document;
+        let reversed: String = (document.x..document.right())
+            .map(|x| &buffer[(x, row)])
+            .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
+            .map(|cell| cell.symbol())
+            .collect();
+        assert_eq!(reversed, r#""id""#);
     }
 
     #[test]
