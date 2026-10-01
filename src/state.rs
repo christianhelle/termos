@@ -431,7 +431,7 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     }
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
-        KeyCode::Char('b') if ctrl => state.tree_hidden = !state.tree_hidden,
+        KeyCode::Char('b') if ctrl => toggle_tree(state),
         KeyCode::Tab => state.focus = state.focus.next(),
         KeyCode::BackTab => state.focus = state.focus.previous(),
         _ => {
@@ -442,6 +442,14 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         }
     }
     Vec::new()
+}
+
+/// Hides or shows the tree, moving the focus off it when it hides.
+fn toggle_tree(state: &mut AppState) {
+    state.tree_hidden = !state.tree_hidden;
+    if state.tree_hidden && state.focus == Focus::Tree {
+        state.focus = Focus::Search;
+    }
 }
 
 /// How many lines the wheel scrolls the document.
@@ -984,6 +992,24 @@ mod tests {
 
         ctrl_b(&mut state);
         assert!(!state.tree_hidden);
+    }
+
+    #[test]
+    fn hiding_the_focused_tree_focuses_the_search_bar() {
+        let (mut state, _) = AppState::new();
+        assert_eq!(state.focus, Focus::Tree);
+
+        ctrl_b(&mut state);
+        assert_eq!(state.focus, Focus::Search);
+    }
+
+    #[test]
+    fn hiding_the_tree_keeps_the_focus_on_another_pane() {
+        let (mut state, _) = AppState::new();
+        state.focus = Focus::Results;
+
+        ctrl_b(&mut state);
+        assert_eq!(state.focus, Focus::Results);
     }
 
     fn with_accounts(names: &[&str]) -> AppState {
