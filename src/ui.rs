@@ -85,16 +85,18 @@ pub fn pane_at(
     Some((focus, inside))
 }
 
-/// How many document lines the document pane shows on a terminal of this size.
-pub fn document_height(size: Size) -> u16 {
-    let document = panes(Rect::from((Position::ORIGIN, size)), false, None).document;
+/// How many document lines the document pane shows on a terminal of this size,
+/// or none when another pane is zoomed.
+pub fn document_height(size: Size, zoomed: Option<Focus>) -> u16 {
+    let document = panes(Rect::from((Position::ORIGIN, size)), false, zoomed).document;
     // Less the top and bottom borders
     document.height.saturating_sub(2)
 }
 
-/// How many documents the results table shows on a terminal of this size.
-pub fn results_height(size: Size) -> u16 {
-    let results = panes(Rect::from((Position::ORIGIN, size)), false, None).results;
+/// How many documents the results table shows on a terminal of this size,
+/// or none when another pane is zoomed.
+pub fn results_height(size: Size, zoomed: Option<Focus>) -> u16 {
+    let results = panes(Rect::from((Position::ORIGIN, size)), false, zoomed).results;
     // Less the borders and the header row
     results.height.saturating_sub(3)
 }
@@ -343,13 +345,23 @@ mod tests {
     #[test]
     fn the_results_table_shows_the_rows_between_its_borders_and_header() {
         // 20 rows less the status line, search bar, borders and header
-        assert_eq!(results_height(Size::new(100, 20)), 13);
+        assert_eq!(results_height(Size::new(100, 20), None), 13);
     }
 
     #[test]
     fn the_tree_shows_the_rows_between_its_borders() {
         // 20 rows less the status line and borders
         assert_eq!(tree_height(Size::new(100, 20)), 17);
+    }
+
+    #[test]
+    fn a_zoomed_pane_shows_the_rows_down_to_the_status_line() {
+        let size = Size::new(100, 20);
+
+        // 20 rows less the status line and borders
+        assert_eq!(document_height(size, Some(Focus::Document)), 17);
+        // and the header
+        assert_eq!(results_height(size, Some(Focus::Results)), 16);
     }
 
     #[test]
@@ -495,7 +507,7 @@ mod tests {
             long.insert(format!("x{i:02}"), json!(i));
         }
         state.results[1] = serde_json::Value::Object(long);
-        state.doc_height = document_height(Size::new(100, 20));
+        state.doc_height = document_height(Size::new(100, 20), None);
         state.focus = Focus::Results;
         press(&mut state, KeyCode::Down);
 
@@ -566,7 +578,7 @@ mod tests {
         let mut state = with_results();
         let fields = (0..40).map(|i| (format!("f{i:02}"), json!(i)));
         state.results[0] = serde_json::Value::Object(fields.collect());
-        state.doc_height = document_height(Size::new(100, 20));
+        state.doc_height = document_height(Size::new(100, 20), None);
         state.focus = Focus::Document;
 
         press(&mut state, KeyCode::End);

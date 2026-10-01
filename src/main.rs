@@ -131,8 +131,8 @@ async fn event_loop(
     let (mut state, effects) = AppState::with_cached_accounts(cached_accounts);
     start(&runner, &sender, effects);
     while !state.quit {
-        state.doc_height = ui::document_height(terminal.size()?);
-        state.results_height = ui::results_height(terminal.size()?);
+        state.doc_height = ui::document_height(terminal.size()?, state.zoomed_pane());
+        state.results_height = ui::results_height(terminal.size()?, state.zoomed_pane());
         state.tree_height = ui::tree_height(terminal.size()?);
         terminal.draw(|frame| ui::draw(frame, &state))?;
         let event = tokio::select! {
