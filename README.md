@@ -65,7 +65,7 @@ termos --emulator [<ENDPOINT>] [--key <KEY>]
 
 Tab and Shift-Tab move between the accounts, results and document (the search bar is reached with `/`), Ctrl-B hides or shows the accounts to give the other panes more room, `z` zooms the focused pane to fill the screen and shows every pane again, `r` runs the query again, `?` shows every key and `q` quits.
 
-The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. Because termos captures the mouse, drag in the document to pick text there, or hold Shift to select text anywhere in most terminals.
+The mouse works too. Click a pane to focus it, or a node or document to select it. Click a selected node again to open or close it, the same as Enter. The wheel scrolls the pane under the mouse. A pane with more than fits shows a scrollbar on its right border. Because termos captures the mouse, drag in the document to pick text there, or hold Shift to select text anywhere in most terminals.
 
 ## Screenshots
 
