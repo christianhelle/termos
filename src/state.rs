@@ -35,6 +35,11 @@ pub enum Effect {
         id: String,
         partition_key: Option<Value>,
     },
+    /// Deletes several documents, each found by its id and partition key value.
+    DeleteMany {
+        target: Target,
+        items: Vec<(String, Option<Value>)>,
+    },
 }
 
 /// A container to query.
@@ -68,6 +73,10 @@ pub enum Msg {
     Deleted {
         id: String,
         result: Result<(), String>,
+    },
+    /// The outcome of deleting each of several documents, by id.
+    DeletedMany {
+        results: Vec<(String, Result<(), String>)>,
     },
 }
 
@@ -785,6 +794,9 @@ fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 
 /// Deletes the selected document from the current container.
 fn delete_selected(state: &mut AppState) -> Vec<Effect> {
+    if !state.marked.is_empty() {
+        return delete_marked(state);
+    }
     let (Some(target), Some(doc)) = (state.target.clone(), state.selected_document()) else {
         return Vec::new();
     };
@@ -796,6 +808,25 @@ fn delete_selected(state: &mut AppState) -> Vec<Effect> {
         id,
         partition_key,
     }]
+}
+
+fn delete_marked(state: &mut AppState) -> Vec<Effect> {
+    let Some(target) = state.target.clone() else {
+        return Vec::new();
+    };
+    let items: Vec<(String, Option<Value>)> = state
+        .marked
+        .iter()
+        .filter_map(|&index| state.results.get(index))
+        .map(|doc| {
+            (
+                display_value(doc.get("id")),
+                value_at_path(doc, &state.pk_path).cloned(),
+            )
+        })
+        .collect();
+    state.status = Status::Info(format!("Deleting {}…", documents(items.len())));
+    vec![Effect::DeleteMany { target, items }]
 }
 
 /// Copies the picked text, or the whole document when nothing is picked.
@@ -1136,6 +1167,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::QueryDone { id, result } => query_done(state, id, result),
         Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
         Msg::Deleted { id, result } => deleted(state, &id, result),
+        Msg::DeletedMany { .. } => {}
         Msg::Copied(Ok(())) => state.status = Status::Info("Copied to the clipboard".into()),
         Msg::Copied(Err(error)) => {
             state.status = Status::Error(format!("could not copy: {error}"));
@@ -1970,6 +2002,26 @@ mod tests {
         assert!(!state.confirm_delete);
         assert_eq!(state.result_selected, 0);
         assert_eq!(state.results.len(), 2);
+    }
+
+    #[test]
+    fn y_confirms_the_delete_of_the_marked_documents_only() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char(' '));
+        press(&mut state, KeyCode::Up);
+
+        press(&mut state, KeyCode::Char('d'));
+        assert!(state.confirm_delete);
+        let effects = press(&mut state, KeyCode::Char('y'));
+
+        assert_eq!(
+            effects,
+            vec![Effect::DeleteMany {
+                target: carts(),
+                items: vec![("c-2".into(), Some(json!("fabrikam")))],
+            }]
+        );
     }
 
     #[test]

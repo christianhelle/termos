@@ -90,6 +90,9 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
                     result: result.map_err(describe),
                 }
             }
+            Effect::DeleteMany { target, items } => Msg::DeletedMany {
+                results: self.delete_many(&target, items).await,
+            },
             Effect::Copy(text) => {
                 Msg::Copied(self.clipboard.borrow_mut().copy(text).map_err(describe))
             }
@@ -123,6 +126,27 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             .connect_to(&target.account, &target.database, &target.container)
             .await?;
         store.delete(id, partition_key).await
+    }
+
+    /// Deletes documents from a container, one at a time, keeping each outcome.
+    async fn delete_many(
+        &self,
+        target: &Target,
+        items: Vec<(String, Option<Value>)>,
+    ) -> Vec<(String, Result<(), String>)> {
+        let store = self
+            .connector
+            .connect_to(&target.account, &target.database, &target.container)
+            .await;
+        let mut results = Vec::with_capacity(items.len());
+        for (id, partition_key) in items {
+            let result = match &store {
+                Ok(store) => store.delete(&id, partition_key.as_ref()).await,
+                Err(error) => Err(anyhow::anyhow!("{error:#}")),
+            };
+            results.push((id, result.map_err(describe)));
+        }
+        results
     }
 
     /// Reads the next page of the latest query.
@@ -392,6 +416,34 @@ mod tests {
             container.deletes,
             vec![("c-1".to_string(), Some(json!("contoso")))]
         );
+    }
+
+    #[tokio::test]
+    async fn deletes_many_documents_and_reports_each_outcome() {
+        let mut runner = runner();
+        let docs = vec![json!({ "id": "c-1" }), json!({ "id": "c-2" })];
+        runner.connector.data = FakeDataPlane::new("/tenantId", docs);
+
+        let msg = runner
+            .run(Effect::DeleteMany {
+                target: carts(),
+                items: vec![
+                    ("c-1".into(), Some(json!("contoso"))),
+                    ("gone".into(), Some(json!("contoso"))),
+                    ("c-2".into(), Some(json!("contoso"))),
+                ],
+            })
+            .await;
+
+        let Msg::DeletedMany { results } = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        let outcomes: Vec<(&str, bool)> = results
+            .iter()
+            .map(|(id, result)| (id.as_str(), result.is_ok()))
+            .collect();
+        assert_eq!(outcomes, [("c-1", true), ("gone", false), ("c-2", true)]);
+        assert!(runner.connector.data.container.borrow().docs.is_empty());
     }
 
     #[tokio::test]
