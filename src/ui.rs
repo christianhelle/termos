@@ -342,7 +342,7 @@ const HELP: [(&str, &str); 20] = [
     ("Enter", "Open a node, search, go to the documents"),
     ("↑ ↓  j k", "Move, scroll, or load more at the end"),
     ("→ ←  l h", "Open or close a node"),
-    ("PgUp PgDn Home End", "Scroll the results or document"),
+    ("PgUp PgDn Home End", "Move or scroll a page, or to an end"),
     ("Ctrl-U Ctrl-D", "Scroll half a page up or down"),
     ("g g  G", "Jump to the first or last"),
     ("Click, again", "Pick a pane or row, then open it"),
