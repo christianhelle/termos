@@ -6,7 +6,8 @@ use ratatui::layout::{Constraint, Layout, Margin, Position, Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
+    Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, TableState,
 };
 
 use crate::json::highlight_json;
@@ -224,6 +225,12 @@ fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
         .block(pane("Document", state, Focus::Document))
         .scroll((scroll, 0));
     frame.render_widget(document, area);
+    draw_scrollbar(
+        frame,
+        area.inner(Margin::new(0, 1)),
+        usize::from(state.document_lines()),
+        usize::from(scroll),
+    );
     if let Some(selection) = state.doc_selection.filter(|s| s.anchor != s.head) {
         draw_selection(frame, selection, &widths, scroll, area);
     }
@@ -258,6 +265,24 @@ fn draw_selection(
             }
         }
     }
+}
+
+/// Draws a scrollbar thumb on the right border of `area`, the rows that show
+/// `total` lines from `offset` on, when they do not all fit.
+fn draw_scrollbar(frame: &mut Frame, area: Rect, total: usize, offset: usize) {
+    let viewport = usize::from(area.height);
+    if total <= viewport {
+        return;
+    }
+    // One position for each offset the rows can scroll to
+    let mut scrollbar = ScrollbarState::new(total - viewport + 1)
+        .position(offset)
+        .viewport_content_length(viewport);
+    let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .track_symbol(None);
+    frame.render_stateful_widget(bar, area, &mut scrollbar);
 }
 
 /// A bordered pane, highlighted when it has focus.
@@ -895,5 +920,32 @@ mod tests {
         state.doc_scroll = 50;
 
         assert!(shows(&screen(&state), r#""id": "c-1","#));
+    }
+
+    #[test]
+    fn a_long_document_shows_a_scrollbar_on_its_right_border() {
+        let mut state = with_results();
+        assert!(!shows(&screen(&state), "█"));
+
+        let fields = (0..40).map(|i| (format!("f{i:02}"), json!(i)));
+        state.results[0] = serde_json::Value::Object(fields.collect());
+
+        let screen = screen(&state);
+        assert!(
+            screen[4].ends_with("█"),
+            "{}",
+            screen.join(
+                "
+"
+            )
+        );
+        assert!(
+            !screen[16].ends_with("█"),
+            "{}",
+            screen.join(
+                "
+"
+            )
+        );
     }
 }
