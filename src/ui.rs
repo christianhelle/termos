@@ -308,12 +308,19 @@ fn draw_help(frame: &mut Frame) {
 
 /// A dialog asking whether to delete the selected document.
 fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
-    let id = state
-        .selected_document()
-        .map(|doc| display_value(doc.get("id")))
-        .unwrap_or_default();
+    let (title, question) = match state.marked.len() {
+        0 => {
+            let id = state
+                .selected_document()
+                .map(|doc| display_value(doc.get("id")))
+                .unwrap_or_default();
+            ("Delete document", format!("Delete {id}?"))
+        }
+        1 => ("Delete document", "Delete 1 marked document?".to_string()),
+        count => ("Delete documents", format!("Delete {count} documents?")),
+    };
     let lines = vec![
-        Line::raw(format!("Delete {id}?")),
+        Line::raw(question),
         Line::raw("This cannot be undone."),
         Line::raw(""),
         Line::from(vec![
@@ -331,7 +338,7 @@ fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
     frame.render_widget(
         Paragraph::new(lines).block(
             Block::bordered()
-                .title("Delete document")
+                .title(title)
                 .border_style(Style::new().fg(Color::Red)),
         ),
         area,
@@ -343,7 +350,7 @@ mod tests {
     use super::*;
     use crate::state::{DocPoint, Event, Focus, Msg, QueryResult, update};
     use crate::testing::{account, container};
-    use crossterm::event::{KeyCode, KeyEvent};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Size;
@@ -661,6 +668,25 @@ mod tests {
         assert!(shows(&screen, "● c-1"), "{}", screen.join("\n"));
         assert!(!shows(&screen, "● c-2"), "{}", screen.join("\n"));
         assert!(shows(&screen, "1 marked"), "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn the_delete_dialog_counts_the_marked_documents() {
+        let mut state = with_results();
+        state.focus = Focus::Results;
+        let ctrl_a = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        update(&mut state, Event::Key(ctrl_a));
+        press(&mut state, KeyCode::Char('d'));
+
+        let screen = screen(&state);
+
+        for text in ["Delete documents", "Delete 2 documents?"] {
+            assert!(
+                shows(&screen, text),
+                "{text} missing from\n{}",
+                screen.join("\n")
+            );
+        }
     }
 
     #[test]
