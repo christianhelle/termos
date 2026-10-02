@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Mark several results with Space or Ctrl-A, and delete them together with `d`.
 - Show `SELECT * FROM c` to the left of the search bar, and a dimmed hint in it while it is empty.
 - Show a scrollbar on the right border of the accounts, results and document when they hold more than fits.
-- Move the tree selection half a page with Ctrl-D and Ctrl-U, and to the first or last row with `gg` and `G`.
+- Move the tree selection a page with PgUp and PgDn, half a page with Ctrl-D and Ctrl-U, and to the first or last row with `gg` and `G`.
 
 ### Changed
 
