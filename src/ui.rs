@@ -938,22 +938,8 @@ mod tests {
         state.results[0] = serde_json::Value::Object(fields.collect());
 
         let screen = screen(&state);
-        assert!(
-            screen[4].ends_with("█"),
-            "{}",
-            screen.join(
-                "
-"
-            )
-        );
-        assert!(
-            !screen[16].ends_with("█"),
-            "{}",
-            screen.join(
-                "
-"
-            )
-        );
+        assert!(screen[4].ends_with("█"), "{}", screen.join("\n"));
+        assert!(!screen[16].ends_with("█"), "{}", screen.join("\n"));
     }
 
     #[test]
@@ -975,13 +961,6 @@ mod tests {
 
         state.results = (0..40).map(|i| json!({ "id": format!("c-{i}") })).collect();
 
-        assert!(
-            thumb(&screen(&state)),
-            "{}",
-            screen(&state).join(
-                "
-"
-            )
-        );
+        assert!(thumb(&screen(&state)), "{}", screen(&state).join("\n"));
     }
 }
