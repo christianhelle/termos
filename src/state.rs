@@ -895,6 +895,7 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
     };
     state.target = Some(target);
     state.results.clear();
+    state.marked.clear();
     state.result_selected = 0;
     run_query(state, DEFAULT_QUERY.to_string())
 }
@@ -1019,6 +1020,7 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
                 result.elapsed.as_secs_f64()
             ));
             state.results = result.docs;
+            state.marked.clear();
             state.more = result.more;
             state.loading_more = false;
             state.result_selected = 0;
@@ -1686,6 +1688,17 @@ mod tests {
         press_ctrl(&mut state, 'a');
 
         press(&mut state, KeyCode::Esc);
+
+        assert!(state.marked.is_empty());
+    }
+
+    #[test]
+    fn new_results_clear_the_marks() {
+        let mut state = with_cart_results();
+        press_ctrl(&mut state, 'a');
+
+        press(&mut state, KeyCode::Char('r'));
+        query_done(&mut state, 2, Ok(cart_docs()));
 
         assert!(state.marked.is_empty());
     }
