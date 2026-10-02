@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Selecting a container lists its documents at once, and Enter on it moves to the results.
+- Tab and Shift-Tab skip the search bar, which is reached with `/`.
 
 ## [0.1.3] - 2026-10-01
 
