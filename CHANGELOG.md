@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Delete the selected document with `d` in the results or document pane, after confirming in a dialog.
 - Mark several results with Space or Ctrl-A, and delete them together with `d`.
 - Show `SELECT * FROM c` to the left of the search bar, and a dimmed hint in it while it is empty.
+- Show a scrollbar on the right border of the accounts, results and document when they hold more than fits.
 
 ### Changed
 
