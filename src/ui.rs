@@ -182,6 +182,13 @@ fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
         .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED));
     let mut table_state = TableState::default().with_selected(Some(state.result_selected));
     frame.render_stateful_widget(table, area, &mut table_state);
+    // Below the header row
+    let rows = Rect {
+        y: area.y.saturating_add(2),
+        height: area.height.saturating_sub(3),
+        ..area
+    };
+    draw_scrollbar(frame, rows, state.results.len(), table_state.offset());
 }
 
 /// Shows the query the search bar text completes, level with the text.
@@ -943,6 +950,35 @@ mod tests {
             !screen[16].ends_with("█"),
             "{}",
             screen.join(
+                "
+"
+            )
+        );
+    }
+
+    #[test]
+    fn more_results_than_fit_show_a_scrollbar_on_their_right_border() {
+        let mut state = with_results();
+        let results = Size::new(100, 20);
+        let column = usize::from(
+            panes(Rect::from((Position::ORIGIN, results)), false, None)
+                .results
+                .right()
+                - 1,
+        );
+        let thumb = |screen: &[String]| {
+            screen
+                .iter()
+                .any(|line| line.chars().nth(column) == Some('█'))
+        };
+        assert!(!thumb(&screen(&state)));
+
+        state.results = (0..40).map(|i| json!({ "id": format!("c-{i}") })).collect();
+
+        assert!(
+            thumb(&screen(&state)),
+            "{}",
+            screen(&state).join(
                 "
 "
             )
