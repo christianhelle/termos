@@ -137,25 +137,32 @@ fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
 /// The results title, with how many documents are shown and whether more can load.
 fn results_title(state: &AppState) -> String {
     let count = state.results.len();
-    if state.loading_more {
-        format!("Results ({count}, loading…)")
-    } else if state.more {
-        format!("Results ({count}, more ↓)")
-    } else if state.target.is_some() {
-        format!("Results ({count})")
-    } else {
-        "Results".to_string()
+    if state.target.is_none() {
+        return "Results".to_string();
     }
+    let mut details = count.to_string();
+    if !state.marked.is_empty() {
+        details.push_str(&format!(", {} marked", state.marked.len()));
+    }
+    if state.loading_more {
+        details.push_str(", loading…");
+    } else if state.more {
+        details.push_str(", more ↓");
+    }
+    format!("Results ({details})")
 }
 
 fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
     let header = Row::new([Cell::from("id"), Cell::from(state.pk_path.as_str())])
         .style(Style::new().add_modifier(Modifier::BOLD));
-    let rows = state.results.iter().map(|doc| {
-        Row::new([
-            display_value(doc.get("id")),
-            display_value(value_at_path(doc, &state.pk_path)),
-        ])
+    let rows = state.results.iter().enumerate().map(|(index, doc)| {
+        let id = display_value(doc.get("id"));
+        let id = if state.marked.contains(&index) {
+            format!("● {id}")
+        } else {
+            id
+        };
+        Row::new([id, display_value(value_at_path(doc, &state.pk_path))])
     });
     let table = Table::new(rows, [Constraint::Fill(1), Constraint::Fill(1)])
         .header(header)
@@ -641,6 +648,19 @@ mod tests {
                 screen.join("\n")
             );
         }
+    }
+
+    #[test]
+    fn marks_the_results_picked_to_delete_together() {
+        let mut state = with_results();
+        state.focus = Focus::Results;
+        press(&mut state, KeyCode::Char(' '));
+
+        let screen = screen(&state);
+
+        assert!(shows(&screen, "● c-1"), "{}", screen.join("\n"));
+        assert!(!shows(&screen, "● c-2"), "{}", screen.join("\n"));
+        assert!(shows(&screen, "1 marked"), "{}", screen.join("\n"));
     }
 
     #[test]
