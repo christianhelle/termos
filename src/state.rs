@@ -1,6 +1,7 @@
 //! What the screen shows, and how keys and finished work change it.
 
 use crate::management::{Account, Container};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -254,6 +255,8 @@ pub struct AppState {
     pub pk_path: String,
     /// Index of the selected document in the results.
     pub result_selected: usize,
+    /// Indices of the results marked to delete together.
+    pub marked: BTreeSet<usize>,
     /// The SQL of the latest query, to run again on refresh.
     pub last_sql: String,
     /// How many lines the document pane is scrolled down.
@@ -293,6 +296,7 @@ impl AppState {
             results: Vec::new(),
             pk_path: String::new(),
             result_selected: 0,
+            marked: BTreeSet::new(),
             last_sql: String::new(),
             doc_scroll: 0,
             doc_height: 0,
@@ -737,6 +741,12 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             state.result_selected = state.result_selected.saturating_sub(1);
         }
         KeyCode::Enter if state.selected_document().is_some() => state.focus = Focus::Document,
+        KeyCode::Char(' ') if state.selected_document().is_some() => {
+            if !state.marked.remove(&state.result_selected) {
+                state.marked.insert(state.result_selected);
+            }
+            state.result_selected = (state.result_selected + 1).min(last);
+        }
         KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
         KeyCode::Char('d') if state.selected_document().is_some() => state.confirm_delete = true,
         _ => {}
@@ -1633,6 +1643,27 @@ mod tests {
         query_done(&mut state, 1, Ok(cart_docs()));
         state.focus = Focus::Results;
         state
+    }
+
+    #[test]
+    fn space_marks_the_selected_result_and_moves_down() {
+        let mut state = with_cart_results();
+
+        press(&mut state, KeyCode::Char(' '));
+
+        assert_eq!(state.marked, BTreeSet::from([0]));
+        assert_eq!(state.result_selected, 1);
+    }
+
+    #[test]
+    fn space_on_a_marked_result_unmarks_it() {
+        let mut state = with_cart_results();
+        press(&mut state, KeyCode::Char(' '));
+        press(&mut state, KeyCode::Up);
+
+        press(&mut state, KeyCode::Char(' '));
+
+        assert!(state.marked.is_empty());
     }
 
     #[test]
