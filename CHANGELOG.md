@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Browse the local Cosmos DB emulator with `--emulator`, without Azure or `az login`.
 - Delete the selected document with `d` in the results or document pane, after confirming in a dialog.
 - Mark several results with Space or Ctrl-A, and delete them together with `d`.
+- Show `SELECT * FROM c` to the left of the search bar, and a dimmed hint in it while it is empty.
 
 ### Changed
 
