@@ -263,7 +263,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 19] = [
+const HELP: [(&str, &str); 20] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, or show every pane again"),
@@ -279,7 +279,14 @@ const HELP: [(&str, &str); 19] = [
     ("Drag, y", "Pick text in the document, copy it"),
     ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
-    ("d", "Delete the selected document, after confirming"),
+    (
+        "Space, Ctrl-A",
+        "Mark a result, mark all results (Esc clears)",
+    ),
+    (
+        "d",
+        "Delete the marked or selected documents, after confirming",
+    ),
     ("?", "Show this help"),
     ("q, Ctrl-C", "Quit"),
     ("", "Press any key to close"),
@@ -360,7 +367,11 @@ mod tests {
 
     /// Draws the state on a small terminal and returns its lines.
     fn screen(state: &AppState) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        screen_with_height(state, 20)
+    }
+
+    fn screen_with_height(state: &AppState, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(100, height)).unwrap();
         terminal.draw(|frame| draw(frame, state)).unwrap();
         let buffer = terminal.backend().buffer();
         buffer
@@ -637,7 +648,7 @@ mod tests {
         let mut state = browsing();
         press(&mut state, KeyCode::Char('?'));
 
-        let screen = screen(&state);
+        let screen = screen_with_height(&state, 24);
 
         for text in [
             "Keys",
@@ -711,7 +722,15 @@ mod tests {
         let mut state = browsing();
         press(&mut state, KeyCode::Char('?'));
 
-        assert!(shows(&screen(&state), "Delete the selected document"));
+        assert!(shows(&screen(&state), "Delete the marked or selected"));
+    }
+
+    #[test]
+    fn the_key_help_lists_the_marking_keys() {
+        let mut state = browsing();
+        press(&mut state, KeyCode::Char('?'));
+
+        assert!(shows(&screen(&state), "Space, Ctrl-A"));
     }
 
     #[test]
