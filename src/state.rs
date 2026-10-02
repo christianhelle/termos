@@ -1152,6 +1152,41 @@ fn deleted(state: &mut AppState, id: &str, result: Result<(), String>) {
     state.status = Status::Info(format!("Deleted {id}"));
 }
 
+fn deleted_many(state: &mut AppState, results: Vec<(String, Result<(), String>)>) {
+    let mut gone = 0;
+    let mut failed = 0;
+    let mut first_error = None;
+    for (id, result) in results {
+        match result {
+            Ok(()) => {
+                let position = state
+                    .results
+                    .iter()
+                    .position(|doc| display_value(doc.get("id")) == id);
+                if let Some(position) = position {
+                    state.results.remove(position);
+                }
+                gone += 1;
+            }
+            Err(error) => {
+                failed += 1;
+                first_error.get_or_insert(format!("could not delete {id}: {error}"));
+            }
+        }
+    }
+    state.marked.clear();
+    let last = state.results.len().saturating_sub(1);
+    state.result_selected = state.result_selected.min(last);
+    show_from_top(state);
+    state.status = match first_error {
+        None => Status::Info(format!("Deleted {}", documents(gone))),
+        Some(error) => Status::Error(format!(
+            "deleted {}, {failed} failed: {error}",
+            documents(gone)
+        )),
+    };
+}
+
 /// Counts documents in words, such as "1 document" or "3 documents".
 fn documents(count: usize) -> String {
     match count {
@@ -1167,7 +1202,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::QueryDone { id, result } => query_done(state, id, result),
         Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
         Msg::Deleted { id, result } => deleted(state, &id, result),
-        Msg::DeletedMany { .. } => {}
+        Msg::DeletedMany { results } => deleted_many(state, results),
         Msg::Copied(Ok(())) => state.status = Status::Info("Copied to the clipboard".into()),
         Msg::Copied(Err(error)) => {
             state.status = Status::Error(format!("could not copy: {error}"));
@@ -2069,6 +2104,45 @@ mod tests {
 
         assert_eq!(state.result_selected, 0);
         assert_eq!(state.selected_document(), Some(&cart_docs()[0]));
+    }
+
+    fn deleted_many(state: &mut AppState, results: &[(&str, Result<(), &str>)]) {
+        let results = results
+            .iter()
+            .map(|(id, result)| {
+                let result = result.map_err(String::from);
+                (id.to_string(), result)
+            })
+            .collect();
+        update(state, Event::Msg(Msg::DeletedMany { results }));
+    }
+
+    #[test]
+    fn deleted_marked_documents_leave_the_results_and_the_marks() {
+        let mut state = with_cart_results();
+        press_ctrl(&mut state, 'a');
+
+        deleted_many(&mut state, &[("c-1", Ok(())), ("c-2", Ok(()))]);
+
+        assert!(state.results.is_empty());
+        assert!(state.marked.is_empty());
+        assert_eq!(state.status, Status::Info("Deleted 2 documents".into()));
+    }
+
+    #[test]
+    fn a_partly_failed_delete_keeps_the_failed_documents_and_says_why() {
+        let mut state = with_cart_results();
+        press_ctrl(&mut state, 'a');
+
+        deleted_many(&mut state, &[("c-1", Ok(())), ("c-2", Err("forbidden"))]);
+
+        assert_eq!(state.results, cart_docs()[1..]);
+        assert!(state.marked.is_empty());
+        assert_eq!(state.result_selected, 0);
+        assert_eq!(
+            state.status,
+            Status::Error("deleted 1 document, 1 failed: could not delete c-2: forbidden".into())
+        );
     }
 
     #[test]
