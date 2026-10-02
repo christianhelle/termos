@@ -873,7 +873,15 @@ fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             state.tree_selected = state.tree_selected.saturating_sub(1);
         }
         KeyCode::Home => state.tree_selected = 0,
-        KeyCode::End => state.tree_selected = state.tree_rows().len().saturating_sub(1),
+        KeyCode::End | KeyCode::Char('G') => {
+            state.tree_selected = state.tree_rows().len().saturating_sub(1);
+        }
+        // `gg` takes two presses, so `pending_g` remembers a first one
+        KeyCode::Char('g') if state.pending_g => {
+            state.pending_g = false;
+            state.tree_selected = 0;
+        }
+        KeyCode::Char('g') => state.pending_g = true,
         KeyCode::Enter => return toggle(state),
         KeyCode::Right | KeyCode::Char('l') => return expand(state),
         KeyCode::Left | KeyCode::Char('h') => collapse(state),
@@ -1393,6 +1401,18 @@ mod tests {
         press(&mut state, KeyCode::End);
         assert_eq!(state.tree_selected, 2);
         press(&mut state, KeyCode::Home);
+        assert_eq!(state.tree_selected, 0);
+    }
+
+    #[test]
+    fn gg_selects_the_first_tree_row_and_shift_g_the_last() {
+        let mut state = with_accounts(&["orders", "inventory", "billing"]);
+
+        press(&mut state, KeyCode::Char('G'));
+        assert_eq!(state.tree_selected, 2);
+        press(&mut state, KeyCode::Char('g'));
+        assert_eq!(state.tree_selected, 2);
+        press(&mut state, KeyCode::Char('g'));
         assert_eq!(state.tree_selected, 0);
     }
 
