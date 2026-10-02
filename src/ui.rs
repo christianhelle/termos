@@ -10,11 +10,16 @@ use ratatui::widgets::{
 };
 
 use crate::json::highlight_json;
+use crate::query::DEFAULT_QUERY;
 use crate::state::{AppState, Focus, Selection, Status};
+
+/// Room for the query the search bar completes, and a space after it.
+const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
 
 /// Where each part of the screen goes.
 struct Panes {
     tree: Rect,
+    query: Rect,
     search: Rect,
     results: Rect,
     document: Rect,
@@ -30,12 +35,16 @@ fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
         Constraint::Percentage(25)
     };
     let [tree, right] = Layout::horizontal([tree_width, Constraint::Fill(1)]).areas(main);
-    let [search, body] =
+    let [search_row, body] =
         Layout::vertical([Constraint::Length(3), Constraint::Fill(1)]).areas(right);
+    let [query, search] =
+        Layout::horizontal([Constraint::Length(QUERY_WIDTH), Constraint::Fill(1)])
+            .areas(search_row);
     let [results, document] =
         Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(1)]).areas(body);
     let mut panes = Panes {
         tree,
+        query,
         search,
         results,
         document,
@@ -50,6 +59,7 @@ fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
         ] {
             *area = if pane == focus { main } else { Rect::default() };
         }
+        panes.query = Rect::default();
     }
     panes
 }
@@ -105,6 +115,7 @@ pub fn results_height(size: Size, zoomed: Option<Focus>) -> u16 {
 pub fn draw(frame: &mut Frame, state: &AppState) {
     let panes = panes(frame.area(), state.tree_hidden, state.zoomed_pane());
     draw_tree(frame, state, panes.tree);
+    draw_query(frame, panes.query);
     draw_search(frame, state, panes.search);
     draw_results(frame, state, panes.results);
     draw_document(frame, state, panes.document);
@@ -170,6 +181,16 @@ fn draw_results(frame: &mut Frame, state: &AppState, area: Rect) {
         .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED));
     let mut table_state = TableState::default().with_selected(Some(state.result_selected));
     frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+/// Shows the query the search bar text completes, level with the text.
+fn draw_query(frame: &mut Frame, area: Rect) {
+    let middle = Rect {
+        y: area.y + 1,
+        height: 1,
+        ..area
+    };
+    frame.render_widget(Paragraph::new(DEFAULT_QUERY), middle.intersection(area));
 }
 
 fn draw_search(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -414,8 +435,12 @@ mod tests {
         let screen = screen(&state);
 
         assert!(!shows(&screen, "Accounts"), "{}", screen.join("\n"));
-        // The search bar starts at the left edge
-        assert!(screen[0].starts_with("┌Search"), "{}", screen.join("\n"));
+        // The query before the search bar starts at the left edge
+        assert!(
+            screen[1].starts_with("SELECT * FROM c"),
+            "{}",
+            screen.join("\n")
+        );
     }
 
     #[test]
@@ -481,7 +506,8 @@ mod tests {
         let at = |x, y| pane_at(size, Position::new(x, y), false, None);
 
         assert_eq!(at(3, 4), Some((Focus::Tree, Some(Position::new(2, 3)))));
-        assert_eq!(at(27, 1), Some((Focus::Search, Some(Position::new(1, 0)))));
+        assert_eq!(at(27, 1), None);
+        assert_eq!(at(43, 1), Some((Focus::Search, Some(Position::new(1, 0)))));
         assert_eq!(at(30, 5).map(|(pane, _)| pane), Some(Focus::Results));
         assert_eq!(at(90, 5).map(|(pane, _)| pane), Some(Focus::Document));
     }
@@ -491,7 +517,8 @@ mod tests {
         let size = Size::new(100, 20);
         let at = |x, y| pane_at(size, Position::new(x, y), true, None);
 
-        assert_eq!(at(3, 1), Some((Focus::Search, Some(Position::new(2, 0)))));
+        assert_eq!(at(3, 1), None);
+        assert_eq!(at(19, 1), Some((Focus::Search, Some(Position::new(2, 0)))));
         assert_eq!(at(3, 5).map(|(pane, _)| pane), Some(Focus::Results));
     }
 
@@ -641,6 +668,25 @@ mod tests {
         }
 
         assert!(shows(&screen(&state), "c.qty > 1"));
+    }
+
+    #[test]
+    fn the_search_bar_follows_the_query_it_completes() {
+        let (mut state, _) = AppState::new();
+        state.tree_hidden = true;
+
+        let screen = screen(&state);
+
+        assert!(
+            screen[0].starts_with("                ┌Search"),
+            "{}",
+            screen.join("\n")
+        );
+        assert!(
+            screen[1].starts_with("SELECT * FROM c │"),
+            "{}",
+            screen.join("\n")
+        );
     }
 
     #[test]
