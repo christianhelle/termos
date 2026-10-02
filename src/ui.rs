@@ -193,8 +193,15 @@ fn draw_query(frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(DEFAULT_QUERY), middle.intersection(area));
 }
 
+/// Shown in the empty search bar, like the hint in the Azure portal's Data Explorer.
+const SEARCH_HINT: &str = "Type a query predicate (e.g. WHERE c.id = '1' or ORDER BY c._ts DESC)";
+
 fn draw_search(frame: &mut Frame, state: &AppState, area: Rect) {
-    let input = Paragraph::new(state.search.text()).block(pane("Search", state, Focus::Search));
+    let text = match state.search.text() {
+        "" => Span::styled(SEARCH_HINT, Style::new().add_modifier(Modifier::DIM)),
+        text => Span::raw(text),
+    };
+    let input = Paragraph::new(text).block(pane("Search", state, Focus::Search));
     frame.render_widget(input, area);
     if state.focus == Focus::Search {
         let cursor = u16::try_from(state.search.cursor()).unwrap_or(u16::MAX);
@@ -687,6 +694,29 @@ mod tests {
             "{}",
             screen.join("\n")
         );
+    }
+
+    #[test]
+    fn an_empty_search_bar_hints_at_what_to_type_in_dim_text() {
+        let (mut state, _) = AppState::new();
+        state.tree_hidden = true;
+        let hint = "Type a query predicate (e.g. WHERE c.id = '1' or ORDER BY c._ts DESC)";
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let search = panes(buffer.area, true, None).search;
+        let dimmed: String = (search.x..search.right())
+            .map(|x| &buffer[(x, 1)])
+            .filter(|cell| cell.modifier.contains(Modifier::DIM))
+            .map(|cell| cell.symbol())
+            .collect();
+        assert_eq!(dimmed.trim_end(), hint);
+
+        state.focus = Focus::Search;
+        press(&mut state, KeyCode::Char('c'));
+        assert!(!shows(&screen(&state), "Type a query predicate"));
     }
 
     #[test]
