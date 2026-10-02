@@ -747,6 +747,10 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             }
             state.result_selected = (state.result_selected + 1).min(last);
         }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.marked = (0..state.results.len()).collect();
+        }
+        KeyCode::Esc => state.marked.clear(),
         KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
         KeyCode::Char('d') if state.selected_document().is_some() => state.confirm_delete = true,
         _ => {}
@@ -1662,6 +1666,26 @@ mod tests {
         press(&mut state, KeyCode::Up);
 
         press(&mut state, KeyCode::Char(' '));
+
+        assert!(state.marked.is_empty());
+    }
+
+    #[test]
+    fn ctrl_a_marks_every_result() {
+        let mut state = with_cart_results();
+
+        press_ctrl(&mut state, 'a');
+
+        assert_eq!(state.marked, BTreeSet::from([0, 1]));
+        assert_eq!(state.result_selected, 0);
+    }
+
+    #[test]
+    fn escape_clears_the_marks() {
+        let mut state = with_cart_results();
+        press_ctrl(&mut state, 'a');
+
+        press(&mut state, KeyCode::Esc);
 
         assert!(state.marked.is_empty());
     }
