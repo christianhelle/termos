@@ -864,33 +864,18 @@ fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 
 fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let selected = state.tree_selected;
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let half = usize::from(state.tree_height / 2).max(1);
+    let last = state.tree_rows().len().saturating_sub(1);
+    let page = usize::from(state.tree_height).max(1);
+    if let Some(target) = jump(key, &mut state.pending_g, selected, last, page) {
+        state.tree_selected = target;
+    }
     match key.code {
-        KeyCode::Char('d') if ctrl => {
-            let last = state.tree_rows().len().saturating_sub(1);
-            state.tree_selected = (state.tree_selected + half).min(last);
-        }
-        KeyCode::Char('u') if ctrl => {
-            state.tree_selected = state.tree_selected.saturating_sub(half);
-        }
         KeyCode::Down | KeyCode::Char('j') => {
-            let last = state.tree_rows().len().saturating_sub(1);
             state.tree_selected = (state.tree_selected + 1).min(last);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             state.tree_selected = state.tree_selected.saturating_sub(1);
         }
-        KeyCode::Home => state.tree_selected = 0,
-        KeyCode::End | KeyCode::Char('G') => {
-            state.tree_selected = state.tree_rows().len().saturating_sub(1);
-        }
-        // `gg` takes two presses, so `pending_g` remembers a first one
-        KeyCode::Char('g') if state.pending_g => {
-            state.pending_g = false;
-            state.tree_selected = 0;
-        }
-        KeyCode::Char('g') => state.pending_g = true,
         KeyCode::Enter => return toggle(state),
         KeyCode::Right | KeyCode::Char('l') => return expand(state),
         KeyCode::Left | KeyCode::Char('h') => collapse(state),
@@ -1422,6 +1407,25 @@ mod tests {
         press(&mut state, KeyCode::Char('g'));
         assert_eq!(state.tree_selected, 2);
         press(&mut state, KeyCode::Char('g'));
+        assert_eq!(state.tree_selected, 0);
+    }
+
+    #[test]
+    fn page_down_and_page_up_move_the_tree_selection_a_page() {
+        let names: Vec<String> = (0..25).map(|i| format!("account{i:02}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut state = with_accounts(&names);
+        state.tree_height = 10;
+
+        press(&mut state, KeyCode::PageDown);
+        assert_eq!(state.tree_selected, 10);
+        press(&mut state, KeyCode::PageDown);
+        press(&mut state, KeyCode::PageDown);
+        assert_eq!(state.tree_selected, 24);
+        press(&mut state, KeyCode::PageUp);
+        assert_eq!(state.tree_selected, 14);
+        press(&mut state, KeyCode::PageUp);
+        press(&mut state, KeyCode::PageUp);
         assert_eq!(state.tree_selected, 0);
     }
 
