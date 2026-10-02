@@ -223,16 +223,21 @@ pub enum Focus {
 }
 
 impl Focus {
-    const ORDER: [Focus; 4] = [Focus::Tree, Focus::Search, Focus::Results, Focus::Document];
+    /// The panes Tab cycles through; the search bar is only reached with `/`.
+    const ORDER: [Focus; 3] = [Focus::Tree, Focus::Results, Focus::Document];
 
     fn next(self) -> Focus {
-        let index = Self::ORDER.iter().position(|f| *f == self).unwrap_or(0);
-        Self::ORDER[(index + 1) % Self::ORDER.len()]
+        match Self::ORDER.iter().position(|f| *f == self) {
+            Some(index) => Self::ORDER[(index + 1) % Self::ORDER.len()],
+            None => Focus::Results,
+        }
     }
 
     fn previous(self) -> Focus {
-        let index = Self::ORDER.iter().position(|f| *f == self).unwrap_or(0);
-        Self::ORDER[(index + Self::ORDER.len() - 1) % Self::ORDER.len()]
+        match Self::ORDER.iter().position(|f| *f == self) {
+            Some(index) => Self::ORDER[(index + Self::ORDER.len() - 1) % Self::ORDER.len()],
+            None => Focus::Tree,
+        }
     }
 }
 
@@ -1321,7 +1326,7 @@ mod tests {
         state.focus = Focus::Document;
 
         press(&mut state, KeyCode::Tab);
-        assert_eq!(state.focus, Focus::Search);
+        assert_eq!(state.focus, Focus::Results);
 
         press(&mut state, KeyCode::BackTab);
         assert_eq!(state.focus, Focus::Document);
@@ -1605,23 +1610,33 @@ mod tests {
     }
 
     #[test]
-    fn tab_and_shift_tab_cycle_through_the_panes() {
+    fn tab_and_shift_tab_cycle_through_the_panes_but_the_search_bar() {
         let (mut state, _) = AppState::new();
         assert_eq!(state.focus, Focus::Tree);
 
-        let order: Vec<Focus> = (0..4)
+        let order: Vec<Focus> = (0..3)
             .map(|_| {
                 press(&mut state, KeyCode::Tab);
                 state.focus
             })
             .collect();
-        assert_eq!(
-            order,
-            vec![Focus::Search, Focus::Results, Focus::Document, Focus::Tree]
-        );
+        assert_eq!(order, vec![Focus::Results, Focus::Document, Focus::Tree]);
 
         press(&mut state, KeyCode::BackTab);
         assert_eq!(state.focus, Focus::Document);
+    }
+
+    #[test]
+    fn tab_and_shift_tab_leave_the_search_bar() {
+        let (mut state, _) = AppState::new();
+
+        press(&mut state, KeyCode::Char('/'));
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.focus, Focus::Results);
+
+        press(&mut state, KeyCode::Char('/'));
+        press(&mut state, KeyCode::BackTab);
+        assert_eq!(state.focus, Focus::Tree);
     }
 
     #[test]
