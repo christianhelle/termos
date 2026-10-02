@@ -305,7 +305,7 @@ fn draw_help(frame: &mut Frame) {
     let height = u16::try_from(lines.len()).unwrap_or(u16::MAX) + 2;
     let area = frame
         .area()
-        .centered(Constraint::Length(64), Constraint::Length(height));
+        .centered(Constraint::Length(80), Constraint::Length(height));
     frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).block(Block::bordered().title("Keys")),
@@ -723,6 +723,22 @@ mod tests {
         press(&mut state, KeyCode::Char('?'));
 
         assert!(shows(&screen(&state), "Delete the marked or selected"));
+    }
+
+    #[test]
+    fn the_key_help_is_wide_enough_for_its_longest_line() {
+        let mut state = browsing();
+        press(&mut state, KeyCode::Char('?'));
+
+        let screen = screen_with_height(&state, 24);
+
+        for (_, action) in HELP {
+            assert!(
+                shows(&screen, action),
+                "{action} cut off in\n{}",
+                screen.join("\n")
+            );
+        }
     }
 
     #[test]
