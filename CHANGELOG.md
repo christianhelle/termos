@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## 0.1.5 - 2026-10-02
 
 ### Added
 
@@ -52,6 +52,5 @@ First release of termos, a terminal UI for browsing Azure Cosmos DB.
 - Release builds for Linux, macOS and Windows on x64 and ARM64.
 - Install scripts for macOS, Linux and Windows.
 
-[Unreleased]: https://github.com/christianhelle/termos/compare/0.1.3...HEAD
 [0.1.3]: https://github.com/christianhelle/termos/compare/0.1.2...0.1.3
 [0.1.2]: https://github.com/christianhelle/termos/releases/tag/0.1.2
