@@ -130,20 +130,31 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
 }
 
 fn draw_tree(frame: &mut Frame, state: &AppState, area: Rect) {
-    let items = state.tree_rows().into_iter().map(|row| {
-        let marker = match row.expanded {
-            Some(true) => "▾ ",
-            Some(false) => "▸ ",
-            None => "  ",
-        };
-        let indent = "  ".repeat(row.depth);
-        ListItem::new(format!("{indent}{marker}{}", row.label))
-    });
+    let items: Vec<ListItem> = state
+        .tree_rows()
+        .into_iter()
+        .map(|row| {
+            let marker = match row.expanded {
+                Some(true) => "▾ ",
+                Some(false) => "▸ ",
+                None => "  ",
+            };
+            let indent = "  ".repeat(row.depth);
+            ListItem::new(format!("{indent}{marker}{}", row.label))
+        })
+        .collect();
+    let rows = items.len();
     let list = List::new(items)
         .block(pane("Accounts", state, Focus::Tree))
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
     let mut list_state = ListState::default().with_selected(Some(state.tree_selected));
     frame.render_stateful_widget(list, area, &mut list_state);
+    draw_scrollbar(
+        frame,
+        area.inner(Margin::new(0, 1)),
+        rows,
+        list_state.offset(),
+    );
 }
 
 /// The results title, with how many documents are shown and whether more can load.
@@ -960,6 +971,24 @@ mod tests {
         assert!(!thumb(&screen(&state)));
 
         state.results = (0..40).map(|i| json!({ "id": format!("c-{i}") })).collect();
+
+        assert!(thumb(&screen(&state)), "{}", screen(&state).join("\n"));
+    }
+
+    #[test]
+    fn more_accounts_than_fit_show_a_scrollbar_on_the_tree_border() {
+        let (mut state, _) = AppState::new();
+        let size = Rect::from((Position::ORIGIN, Size::new(100, 20)));
+        let column = usize::from(panes(size, false, None).tree.right() - 1);
+        let thumb = |screen: &[String]| {
+            screen
+                .iter()
+                .any(|line| line.chars().nth(column) == Some('█'))
+        };
+        assert!(!thumb(&screen(&browsing())));
+
+        let accounts = (0..40).map(|i| account(&format!("a{i:02}"))).collect();
+        send(&mut state, Msg::AccountsLoaded(Ok(accounts)));
 
         assert!(thumb(&screen(&state)), "{}", screen(&state).join("\n"));
     }
