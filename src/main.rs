@@ -234,6 +234,7 @@ fn pane_mouse(
     let (pane, at) = ui::pane_at(
         size,
         Position::new(mouse.column, mouse.row),
+        state.mode,
         state.tree_hidden,
         state.zoomed_pane(),
     )?;

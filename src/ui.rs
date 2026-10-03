@@ -12,7 +12,7 @@ use ratatui::widgets::{
 
 use crate::json::highlight_json;
 use crate::query::DEFAULT_QUERY;
-use crate::state::{AppState, Focus, Selection, Status};
+use crate::state::{AppState, Focus, Mode, Selection, Status};
 
 /// Room for the query the search bar completes, and a space after it.
 const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
@@ -24,11 +24,13 @@ struct Panes {
     search: Rect,
     results: Rect,
     document: Rect,
+    editor: Rect,
+    output: Rect,
     status: Rect,
 }
 
-/// Lays out the panes, leaving all the room to the zoomed pane if there is one.
-fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
+/// Lays out the panes of the mode, leaving all the room to the zoomed pane if there is one.
+fn panes(area: Rect, mode: Mode, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
     let [main, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
     let tree_width = if tree_hidden {
         Constraint::Length(0)
@@ -43,13 +45,29 @@ fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
             .areas(search_row);
     let [results, document] =
         Layout::horizontal([Constraint::Percentage(45), Constraint::Fill(1)]).areas(body);
-    let mut panes = Panes {
-        tree,
-        query,
-        search,
-        results,
-        document,
-        status,
+    let [editor, output] =
+        Layout::vertical([Constraint::Percentage(35), Constraint::Fill(1)]).areas(right);
+    let mut panes = match mode {
+        Mode::Browse => Panes {
+            tree,
+            query,
+            search,
+            results,
+            document,
+            editor: Rect::default(),
+            output: Rect::default(),
+            status,
+        },
+        Mode::Query => Panes {
+            tree,
+            query: Rect::default(),
+            search: Rect::default(),
+            results: Rect::default(),
+            document: Rect::default(),
+            editor,
+            output,
+            status,
+        },
     };
     if let Some(focus) = zoomed {
         for (pane, area) in [
@@ -57,6 +75,8 @@ fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
             (Focus::Search, &mut panes.search),
             (Focus::Results, &mut panes.results),
             (Focus::Document, &mut panes.document),
+            (Focus::Editor, &mut panes.editor),
+            (Focus::Output, &mut panes.output),
         ] {
             *area = if pane == focus { main } else { Rect::default() };
         }
@@ -67,7 +87,13 @@ fn panes(area: Rect, tree_hidden: bool, zoomed: Option<Focus>) -> Panes {
 
 /// How many tree rows the tree pane shows on a terminal of this size.
 pub fn tree_height(size: Size) -> u16 {
-    let tree = panes(Rect::from((Position::ORIGIN, size)), false, None).tree;
+    let tree = panes(
+        Rect::from((Position::ORIGIN, size)),
+        Mode::Browse,
+        false,
+        None,
+    )
+    .tree;
     // Less the top and bottom borders
     tree.height.saturating_sub(2)
 }
@@ -77,15 +103,23 @@ pub fn tree_height(size: Size) -> u16 {
 pub fn pane_at(
     size: Size,
     at: Position,
+    mode: Mode,
     tree_hidden: bool,
     zoomed: Option<Focus>,
 ) -> Option<(Focus, Option<Position>)> {
-    let panes = panes(Rect::from((Position::ORIGIN, size)), tree_hidden, zoomed);
+    let panes = panes(
+        Rect::from((Position::ORIGIN, size)),
+        mode,
+        tree_hidden,
+        zoomed,
+    );
     let (focus, area) = [
         (Focus::Tree, panes.tree),
         (Focus::Search, panes.search),
         (Focus::Results, panes.results),
         (Focus::Document, panes.document),
+        (Focus::Editor, panes.editor),
+        (Focus::Output, panes.output),
     ]
     .into_iter()
     .find(|(_, area)| area.contains(at))?;
@@ -99,7 +133,13 @@ pub fn pane_at(
 /// How many document lines the document pane shows on a terminal of this size,
 /// or none when another pane is zoomed.
 pub fn document_height(size: Size, zoomed: Option<Focus>) -> u16 {
-    let document = panes(Rect::from((Position::ORIGIN, size)), false, zoomed).document;
+    let document = panes(
+        Rect::from((Position::ORIGIN, size)),
+        Mode::Browse,
+        false,
+        zoomed,
+    )
+    .document;
     // Less the top and bottom borders
     document.height.saturating_sub(2)
 }
@@ -107,19 +147,38 @@ pub fn document_height(size: Size, zoomed: Option<Focus>) -> u16 {
 /// How many documents the results table shows on a terminal of this size,
 /// or none when another pane is zoomed.
 pub fn results_height(size: Size, zoomed: Option<Focus>) -> u16 {
-    let results = panes(Rect::from((Position::ORIGIN, size)), false, zoomed).results;
+    let results = panes(
+        Rect::from((Position::ORIGIN, size)),
+        Mode::Browse,
+        false,
+        zoomed,
+    )
+    .results;
     // Less the borders and the header row
     results.height.saturating_sub(3)
 }
 
 /// Draws the tree, search bar, results, document and status line.
 pub fn draw(frame: &mut Frame, state: &AppState) {
-    let panes = panes(frame.area(), state.tree_hidden, state.zoomed_pane());
+    let panes = panes(
+        frame.area(),
+        state.mode,
+        state.tree_hidden,
+        state.zoomed_pane(),
+    );
     draw_tree(frame, state, panes.tree);
-    draw_query(frame, panes.query);
-    draw_search(frame, state, panes.search);
-    draw_results(frame, state, panes.results);
-    draw_document(frame, state, panes.document);
+    match state.mode {
+        Mode::Browse => {
+            draw_query(frame, panes.query);
+            draw_search(frame, state, panes.search);
+            draw_results(frame, state, panes.results);
+            draw_document(frame, state, panes.document);
+        }
+        Mode::Query => {
+            draw_editor(frame, state, panes.editor);
+            draw_output(frame, state, panes.output);
+        }
+    }
     draw_status(frame, state, panes.status);
     if state.show_help {
         draw_help(frame);
@@ -226,6 +285,25 @@ fn draw_search(frame: &mut Frame, state: &AppState, area: Rect) {
         let cursor = u16::try_from(state.search.cursor()).unwrap_or(u16::MAX);
         frame.set_cursor_position((area.x + 1 + cursor, area.y + 1));
     }
+}
+
+fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
+    let title = match &state.target {
+        Some(target) => format!("Query: {}/{}", target.database, target.container),
+        None => "Query".to_string(),
+    };
+    let lines: Vec<Line> = state
+        .editor
+        .lines()
+        .iter()
+        .map(|l| Line::raw(l.as_str()))
+        .collect();
+    let editor = Paragraph::new(lines).block(pane(title, state, Focus::Editor));
+    frame.render_widget(editor, area);
+}
+
+fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
+    frame.render_widget(pane("Results", state, Focus::Output), area);
 }
 
 fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -553,7 +631,7 @@ mod tests {
     #[test]
     fn finds_the_pane_at_a_point_and_where_the_point_is_inside_it() {
         let size = Size::new(100, 20);
-        let at = |x, y| pane_at(size, Position::new(x, y), false, None);
+        let at = |x, y| pane_at(size, Position::new(x, y), Mode::Browse, false, None);
 
         assert_eq!(at(3, 4), Some((Focus::Tree, Some(Position::new(2, 3)))));
         assert_eq!(at(27, 1), None);
@@ -565,7 +643,7 @@ mod tests {
     #[test]
     fn finds_the_panes_that_take_the_room_of_a_hidden_tree() {
         let size = Size::new(100, 20);
-        let at = |x, y| pane_at(size, Position::new(x, y), true, None);
+        let at = |x, y| pane_at(size, Position::new(x, y), Mode::Browse, true, None);
 
         assert_eq!(at(3, 1), None);
         assert_eq!(at(19, 1), Some((Focus::Search, Some(Position::new(2, 0)))));
@@ -575,7 +653,15 @@ mod tests {
     #[test]
     fn finds_the_zoomed_pane_wherever_it_reaches() {
         let size = Size::new(100, 20);
-        let at = |x, y| pane_at(size, Position::new(x, y), false, Some(Focus::Document));
+        let at = |x, y| {
+            pane_at(
+                size,
+                Position::new(x, y),
+                Mode::Browse,
+                false,
+                Some(Focus::Document),
+            )
+        };
 
         assert_eq!(at(3, 1), Some((Focus::Document, Some(Position::new(2, 0)))));
         assert_eq!(at(90, 17).map(|(pane, _)| pane), Some(Focus::Document));
@@ -587,11 +673,11 @@ mod tests {
         let size = Size::new(100, 20);
 
         assert_eq!(
-            pane_at(size, Position::new(0, 5), false, None),
+            pane_at(size, Position::new(0, 5), Mode::Browse, false, None),
             Some((Focus::Tree, None))
         );
         assert_eq!(
-            pane_at(size, Position::new(30, 3), false, None),
+            pane_at(size, Position::new(30, 3), Mode::Browse, false, None),
             Some((Focus::Results, None))
         );
     }
@@ -599,7 +685,13 @@ mod tests {
     #[test]
     fn the_status_line_is_in_no_pane() {
         assert_eq!(
-            pane_at(Size::new(100, 20), Position::new(5, 19), false, None),
+            pane_at(
+                Size::new(100, 20),
+                Position::new(5, 19),
+                Mode::Browse,
+                false,
+                None
+            ),
             None
         );
     }
@@ -666,6 +758,21 @@ mod tests {
             let found: Vec<&str> = line.split([' ', '│']).filter(|w| !w.is_empty()).collect();
             found.windows(words.len()).any(|window| window == words)
         })
+    }
+
+    #[test]
+    fn query_mode_draws_the_editor_and_output_in_place_of_the_other_panes() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+
+        let screen = screen(&state);
+
+        for title in ["Search", "Document", "/tenantId"] {
+            assert!(!shows(&screen, title), "{}", screen.join("\n"));
+        }
+        for title in ["Accounts", "Query: shop/carts", "Results"] {
+            assert!(shows(&screen, title), "{}", screen.join("\n"));
+        }
     }
 
     #[test]
@@ -749,7 +856,7 @@ mod tests {
         terminal.draw(|frame| draw(frame, &state)).unwrap();
 
         let buffer = terminal.backend().buffer();
-        let search = panes(buffer.area, true, None).search;
+        let search = panes(buffer.area, Mode::Browse, true, None).search;
         let dimmed: String = (search.x..search.right())
             .map(|x| &buffer[(x, 1)])
             .filter(|cell| cell.modifier.contains(Modifier::DIM))
@@ -923,7 +1030,7 @@ mod tests {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let row = u16::try_from(row).unwrap();
-        let document = panes(buffer.area, false, None).document;
+        let document = panes(buffer.area, Mode::Browse, false, None).document;
         let reversed: String = (document.x..document.right())
             .map(|x| &buffer[(x, row)])
             .filter(|cell| cell.modifier.contains(Modifier::REVERSED))
@@ -958,9 +1065,14 @@ mod tests {
         let mut state = with_results();
         let results = Size::new(100, 20);
         let column = usize::from(
-            panes(Rect::from((Position::ORIGIN, results)), false, None)
-                .results
-                .right()
+            panes(
+                Rect::from((Position::ORIGIN, results)),
+                Mode::Browse,
+                false,
+                None,
+            )
+            .results
+            .right()
                 - 1,
         );
         let thumb = |screen: &[String]| {
@@ -979,7 +1091,7 @@ mod tests {
     fn more_accounts_than_fit_show_a_scrollbar_on_the_tree_border() {
         let (mut state, _) = AppState::new();
         let size = Rect::from((Position::ORIGIN, Size::new(100, 20)));
-        let column = usize::from(panes(size, false, None).tree.right() - 1);
+        let column = usize::from(panes(size, Mode::Browse, false, None).tree.right() - 1);
         let thumb = |screen: &[String]| {
             screen
                 .iter()
