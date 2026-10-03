@@ -94,6 +94,8 @@ pub struct FakeContainer {
     pub deletes: Vec<(String, Option<Value>)>,
     /// How many documents each page of a query holds.
     pub page_size: usize,
+    /// The request units each page of a query costs.
+    pub page_charge: f64,
 }
 
 pub struct FakeDataPlane {
@@ -163,12 +165,14 @@ impl DataStore for FakeStore {
         let mut container = self.container.borrow_mut();
         container.queries.push(sql.to_string());
         let size = container.page_size.max(1);
+        let charge = container.page_charge;
         let pages: Vec<anyhow::Result<Page>> = container
             .docs
             .chunks(size)
             .map(|docs| {
                 Ok(Page {
                     docs: docs.to_vec(),
+                    request_charge: charge,
                 })
             })
             .collect();

@@ -843,6 +843,7 @@ mod tests {
             more: false,
             pk_path: "/tenantId".into(),
             elapsed: Duration::from_millis(40),
+            stats: crate::state::QueryStats::default(),
         };
         send(
             &mut state,

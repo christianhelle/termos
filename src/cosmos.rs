@@ -161,8 +161,10 @@ impl DataStore for CosmosStore {
             .map_err(classify)?;
         let pages = items.into_pages().map(|page| {
             let page = page.map_err(classify)?;
+            let request_charge = page.headers().request_charge().map_or(0.0, |c| c.value());
             Ok(Page {
                 docs: page.into_items(),
+                request_charge,
             })
         });
         Ok(pages.boxed_local())

@@ -12,7 +12,7 @@ use crate::store::{DataPlane, DataStore, Documents};
 use futures::StreamExt;
 use serde_json::Value;
 
-use crate::state::{Effect, Msg, QueryResult, Target};
+use crate::state::{Effect, Msg, QueryResult, QueryStats, Target};
 
 /// Does background work against the control and data planes.
 pub struct Runner<M, D: DataPlane> {
@@ -31,6 +31,8 @@ struct OpenQuery {
     pages: Documents,
     /// Documents read with a page but not handed out yet.
     unread: VecDeque<Value>,
+    /// What the pages read since the documents were last handed out cost.
+    stats: QueryStats,
 }
 
 impl OpenQuery {
@@ -39,7 +41,12 @@ impl OpenQuery {
     async fn fill(&mut self) -> anyhow::Result<bool> {
         while self.unread.is_empty() {
             match self.pages.next().await {
-                Some(page) => self.unread.extend(page?.docs),
+                Some(page) => {
+                    let page = page?;
+                    self.stats.request_charge += page.request_charge;
+                    self.stats.round_trips += 1;
+                    self.unread.extend(page.docs);
+                }
                 None => return Ok(false),
             }
         }
@@ -126,6 +133,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             pk_path: store.partition_key_path().to_string(),
             pages: store.documents(sql).await?,
             unread: VecDeque::new(),
+            stats: QueryStats::default(),
         };
         self.read_page(open, started).await
     }
@@ -187,6 +195,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         }
         let more = docs.len() == PAGE_SIZE && open.fill().await?;
         let pk_path = open.pk_path.clone();
+        let stats = std::mem::take(&mut open.stats);
         if more {
             *self.open_query.borrow_mut() = Some(open);
         }
@@ -195,6 +204,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             more,
             pk_path,
             elapsed: started.elapsed(),
+            stats,
         })
     }
 }
@@ -415,6 +425,35 @@ mod tests {
             (100..130).map(|i| format!("c-{i}")).collect::<Vec<_>>()
         );
         assert!(!second.more);
+    }
+
+    #[tokio::test]
+    async fn counts_the_request_units_and_round_trips_each_read_took() {
+        let runner = with_carts(130);
+        {
+            let mut container = runner.connector.data.container.borrow_mut();
+            container.page_size = 30;
+            container.page_charge = 2.5;
+        }
+
+        let Msg::QueryDone {
+            result: Ok(first), ..
+        } = runner.run(query_carts(1)).await
+        else {
+            panic!("the query failed");
+        };
+        let Msg::MoreLoaded {
+            result: Ok(second), ..
+        } = runner.run(Effect::LoadMore { id: 1 }).await
+        else {
+            panic!("loading more failed");
+        };
+
+        // Four pages hold the first hundred, and the fifth the last ten
+        assert_eq!(first.stats.round_trips, 4);
+        assert_eq!(first.stats.request_charge, 10.0);
+        assert_eq!(second.stats.round_trips, 1);
+        assert_eq!(second.stats.request_charge, 2.5);
     }
 
     #[tokio::test]

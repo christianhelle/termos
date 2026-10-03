@@ -48,10 +48,12 @@ pub trait DataPlane {
 /// The pages of documents a query finds, read as they are needed.
 pub type Documents = LocalBoxStream<'static, anyhow::Result<Page>>;
 
-/// The documents one round trip of a query read.
+/// The documents one round trip of a query read, and what it cost.
 #[derive(Debug, Default)]
 pub struct Page {
     pub docs: Vec<Value>,
+    /// The request units the round trip used.
+    pub request_charge: f64,
 }
 
 /// Document operations on a single container.

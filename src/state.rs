@@ -91,6 +91,16 @@ pub struct QueryResult {
     /// The partition key path of the queried container.
     pub pk_path: String,
     pub elapsed: Duration,
+    pub stats: QueryStats,
+}
+
+/// What reading documents of a query cost.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QueryStats {
+    /// The request units the reads used.
+    pub request_charge: f64,
+    /// How many pages were read from the service.
+    pub round_trips: usize,
 }
 
 /// Something that happened, for [`update`] to act on.
@@ -322,6 +332,8 @@ pub struct AppState {
     pub more: bool,
     /// Whether the next page of results is being read.
     pub loading_more: bool,
+    /// What reading the latest query's results cost so far.
+    pub stats: QueryStats,
 }
 
 impl AppState {
@@ -358,6 +370,7 @@ impl AppState {
             pending_g: false,
             more: false,
             loading_more: false,
+            stats: QueryStats::default(),
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -1225,11 +1238,8 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
     }
     match result {
         Ok(result) => {
-            state.status = Status::Info(format!(
-                "{} in {:.2}s",
-                documents(result.docs.len()),
-                result.elapsed.as_secs_f64()
-            ));
+            state.stats = result.stats;
+            state.status = Status::Info(found(result.docs.len(), &state.stats, result.elapsed));
             state.results = result.docs;
             state.marked.clear();
             state.more = result.more;
@@ -1257,11 +1267,9 @@ fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String
             }
             state.results.extend(result.docs);
             state.more = result.more;
-            state.status = Status::Info(format!(
-                "{} in {:.2}s",
-                documents(state.results.len()),
-                result.elapsed.as_secs_f64()
-            ));
+            state.stats.request_charge += result.stats.request_charge;
+            state.stats.round_trips += result.stats.round_trips;
+            state.status = Status::Info(found(state.results.len(), &state.stats, result.elapsed));
         }
         Err(error) => {
             // The open query is gone, so only running it again gets the rest
@@ -1369,6 +1377,20 @@ fn deleted_many(state: &mut AppState, results: Vec<(String, Result<(), String>)>
 }
 
 /// Counts documents in words, such as "1 document" or "3 documents".
+/// How many documents a query found, what reading them cost, when known, and how long it took.
+fn found(count: usize, stats: &QueryStats, elapsed: Duration) -> String {
+    let cost = if stats.round_trips > 0 {
+        format!(" · {:.2} RU", stats.request_charge)
+    } else {
+        String::new()
+    };
+    format!(
+        "{}{cost} in {:.2}s",
+        documents(count),
+        elapsed.as_secs_f64()
+    )
+}
+
 fn documents(count: usize) -> String {
     match count {
         1 => "1 document".to_string(),
@@ -1797,6 +1819,7 @@ mod tests {
             more: false,
             pk_path: "/tenantId".into(),
             elapsed: Duration::from_millis(250),
+            stats: QueryStats::default(),
         });
         update(state, Event::Msg(Msg::QueryDone { id, result }));
     }
@@ -2412,6 +2435,7 @@ mod tests {
             more,
             pk_path: "/tenantId".into(),
             elapsed: Duration::from_millis(250),
+            stats: QueryStats::default(),
         }
     }
 
@@ -3218,5 +3242,56 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&cart_docs()).unwrap();
         assert_eq!(effects, vec![Effect::Copy(json)]);
+    }
+
+    fn costing(stats: QueryStats, docs: Vec<Value>) -> Result<QueryResult, String> {
+        Ok(QueryResult {
+            docs,
+            more: true,
+            pk_path: "/tenantId".into(),
+            elapsed: Duration::from_millis(250),
+            stats,
+        })
+    }
+
+    #[test]
+    fn the_status_line_and_stats_add_up_what_the_query_cost() {
+        let mut state = with_output();
+        press(&mut state, KeyCode::F(5));
+        let stats = QueryStats {
+            request_charge: 3.5,
+            round_trips: 2,
+        };
+        update(
+            &mut state,
+            Event::Msg(Msg::QueryDone {
+                id: 2,
+                result: costing(stats.clone(), cart_docs()),
+            }),
+        );
+        assert_eq!(
+            state.status,
+            Status::Info("2 documents · 3.50 RU in 0.25s".into())
+        );
+
+        update(
+            &mut state,
+            Event::Msg(Msg::MoreLoaded {
+                id: 2,
+                result: costing(stats, cart_docs()),
+            }),
+        );
+
+        assert_eq!(
+            state.stats,
+            QueryStats {
+                request_charge: 7.0,
+                round_trips: 4
+            }
+        );
+        assert_eq!(
+            state.status,
+            Status::Info("4 documents · 7.00 RU in 0.25s".into())
+        );
     }
 }
