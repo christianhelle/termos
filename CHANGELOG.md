@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+
+- Write SQL in a query editor with `n`, with numbered, coloured lines, and run it with F5, Ctrl-R or Shift-Enter.
+- Show the query editor's results as one JSON array, and load more with ↓ at the end.
+- Show the request charge, round trips and query metrics in a stats tab, switched to with `s`.
+- Copy the query results with `y`, save them to a JSON file with `w`, and save the query with Ctrl-S.
+- Show the request charge of each query on the status line.
+
 ## [0.1.5](https://github.com/christianhelle/termos/compare/0.1.3...0.1.5) - 2026-10-02
 
 ### Added
