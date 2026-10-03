@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use azure_core::credentials::{Secret, TokenCredential};
 use azure_core::http::StatusCode;
+use azure_data_cosmos::models::ContainerProperties;
 use azure_data_cosmos::options::QueryOptions;
 use azure_data_cosmos::{
     AccountEndpoint, AccountReference, ContainerClient, CosmosClient, CosmosError, FeedScope,
@@ -264,6 +265,16 @@ fn explain(error: CosmosError, messages: impl Fn(&str) -> Option<String>) -> any
     }
 }
 
+/// The SDK's model of container properties, read from their JSON.
+fn container_properties(properties: Value) -> anyhow::Result<ContainerProperties> {
+    Ok(serde_json::from_value(properties)?)
+}
+
+/// The JSON of container properties, holding the settings the model keeps without fields for them.
+fn properties_json(properties: ContainerProperties) -> anyhow::Result<Value> {
+    Ok(serde_json::to_value(properties)?)
+}
+
 /// The partition key of a document, from the value at the container's partition key path.
 fn partition_key_of(value: Option<&Value>) -> anyhow::Result<PartitionKey> {
     Ok(match value {
@@ -310,6 +321,16 @@ impl DataStore for CosmosStore {
             })
         });
         Ok(pages.boxed_local())
+    }
+
+    async fn properties(&self) -> anyhow::Result<Value> {
+        let properties = self
+            .client
+            .read(None)
+            .await
+            .map_err(classify)?
+            .into_model()?;
+        properties_json(properties)
     }
 
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {
@@ -441,6 +462,38 @@ mod tests {
         assert_eq!(
             unset_parameter("400: Bad", "SELECT * FROM c WHERE c.a = @x"),
             None
+        );
+    }
+
+    #[test]
+    fn container_properties_keep_the_settings_the_sdk_has_no_fields_for() {
+        let properties = serde_json::json!({
+            "id": "drivers",
+            "partitionKey": {"paths": ["/driverId"], "kind": "Hash", "version": 2},
+            "defaultTtl": -1,
+            "geospatialConfig": {"type": "Geometry"},
+            "computedProperties": [{"name": "cp", "query": "SELECT VALUE 1 FROM c"}],
+            "indexingPolicy": {
+                "automatic": true,
+                "indexingMode": "consistent",
+                "includedPaths": [{"path": "/*"}],
+                "excludedPaths": [{"path": "/\"_etag\"/?"}]
+            }
+        });
+
+        let model = container_properties(properties.clone()).unwrap();
+
+        let back = properties_json(model).unwrap();
+        assert_eq!(back["geospatialConfig"], properties["geospatialConfig"]);
+        assert_eq!(back["computedProperties"], properties["computedProperties"]);
+        assert_eq!(back["defaultTtl"], -1);
+        assert_eq!(
+            back["partitionKey"]["paths"],
+            serde_json::json!(["/driverId"])
+        );
+        assert_eq!(
+            back["indexingPolicy"]["excludedPaths"],
+            properties["indexingPolicy"]["excludedPaths"]
         );
     }
 }

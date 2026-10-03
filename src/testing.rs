@@ -98,6 +98,8 @@ pub struct FakeContainer {
     pub page_charge: f64,
     /// The query metrics reported with each page of a query.
     pub page_metrics: Option<String>,
+    /// The properties of the container, such as its indexing policy.
+    pub properties: Value,
 }
 
 pub struct FakeDataPlane {
@@ -181,6 +183,10 @@ impl DataStore for FakeStore {
             })
             .collect();
         Ok(futures::stream::iter(pages).boxed_local())
+    }
+
+    async fn properties(&self) -> anyhow::Result<Value> {
+        Ok(self.container.borrow().properties.clone())
     }
 
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {
