@@ -12,6 +12,7 @@ mod json;
 mod management;
 mod partition;
 mod query;
+mod settings;
 mod sql;
 mod state;
 mod store;
