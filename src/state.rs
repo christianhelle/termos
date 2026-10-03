@@ -834,6 +834,7 @@ fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
 fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('q') => state.quit = true,
+        KeyCode::Char('/') if state.mode == Mode::Query => state.focus = Focus::Editor,
         KeyCode::Char('/') => state.focus = Focus::Search,
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
@@ -3572,5 +3573,14 @@ mod tests {
         press_ctrl(&mut state, 'u');
 
         assert_eq!(state.editor.text(), "SELECT * FROM c");
+    }
+
+    #[test]
+    fn slash_in_query_mode_jumps_to_the_editor() {
+        let mut state = with_output();
+
+        press(&mut state, KeyCode::Char('/'));
+
+        assert_eq!(state.focus, Focus::Editor);
     }
 }
