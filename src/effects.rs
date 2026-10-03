@@ -1,7 +1,7 @@
 //! Runs the background work that updates ask for.
 
 use std::cell::RefCell;
-use std::pin::Pin;
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::cache::AccountCache;
@@ -10,7 +10,6 @@ use crate::connector::Connector;
 use crate::management::Management;
 use crate::store::{DataPlane, DataStore, Documents};
 use futures::StreamExt;
-use futures::stream::Peekable;
 use serde_json::Value;
 
 use crate::state::{Effect, Msg, QueryResult, Target};
@@ -29,7 +28,23 @@ pub struct Runner<M, D: DataPlane> {
 struct OpenQuery {
     id: u64,
     pk_path: String,
-    docs: Peekable<Documents>,
+    pages: Documents,
+    /// Documents read with a page but not handed out yet.
+    unread: VecDeque<Value>,
+}
+
+impl OpenQuery {
+    /// Reads pages until there are documents to hand out, returning false when
+    /// the query has none left.
+    async fn fill(&mut self) -> anyhow::Result<bool> {
+        while self.unread.is_empty() {
+            match self.pages.next().await {
+                Some(page) => self.unread.extend(page?.docs),
+                None => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
 }
 
 impl<M: Management, D: DataPlane> Runner<M, D> {
@@ -109,7 +124,8 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         let open = OpenQuery {
             id,
             pk_path: store.partition_key_path().to_string(),
-            docs: store.documents(sql).await?.peekable(),
+            pages: store.documents(sql).await?,
+            unread: VecDeque::new(),
         };
         self.read_page(open, started).await
     }
@@ -165,13 +181,11 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         started: Instant,
     ) -> anyhow::Result<QueryResult> {
         let mut docs = Vec::with_capacity(PAGE_SIZE);
-        while docs.len() < PAGE_SIZE {
-            match open.docs.next().await {
-                Some(doc) => docs.push(doc?),
-                None => break,
-            }
+        while docs.len() < PAGE_SIZE && open.fill().await? {
+            let count = (PAGE_SIZE - docs.len()).min(open.unread.len());
+            docs.extend(open.unread.drain(..count));
         }
-        let more = docs.len() == PAGE_SIZE && Pin::new(&mut open.docs).peek().await.is_some();
+        let more = docs.len() == PAGE_SIZE && open.fill().await?;
         let pk_path = open.pk_path.clone();
         if more {
             *self.open_query.borrow_mut() = Some(open);
@@ -371,6 +385,36 @@ mod tests {
         );
         assert!(!third.more);
         assert_eq!(runner.connector.data.container.borrow().queries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn hands_out_a_hundred_documents_at_a_time_whatever_the_page_size() {
+        let runner = with_carts(130);
+        runner.connector.data.container.borrow_mut().page_size = 30;
+
+        let Msg::QueryDone {
+            result: Ok(first), ..
+        } = runner.run(query_carts(1)).await
+        else {
+            panic!("the query failed");
+        };
+        let Msg::MoreLoaded {
+            result: Ok(second), ..
+        } = runner.run(Effect::LoadMore { id: 1 }).await
+        else {
+            panic!("loading more failed");
+        };
+
+        assert_eq!(
+            ids(&first.docs),
+            (0..100).map(|i| format!("c-{i}")).collect::<Vec<_>>()
+        );
+        assert!(first.more);
+        assert_eq!(
+            ids(&second.docs),
+            (100..130).map(|i| format!("c-{i}")).collect::<Vec<_>>()
+        );
+        assert!(!second.more);
     }
 
     #[tokio::test]

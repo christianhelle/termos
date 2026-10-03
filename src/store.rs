@@ -45,8 +45,14 @@ pub trait DataPlane {
     async fn prepare(&self, _account: &Account, _credential: Credential) {}
 }
 
-/// The documents a query finds, read as they are needed.
-pub type Documents = LocalBoxStream<'static, anyhow::Result<Value>>;
+/// The pages of documents a query finds, read as they are needed.
+pub type Documents = LocalBoxStream<'static, anyhow::Result<Page>>;
+
+/// The documents one round trip of a query read.
+#[derive(Debug, Default)]
+pub struct Page {
+    pub docs: Vec<Value>,
+}
 
 /// Document operations on a single container.
 #[allow(async_fn_in_trait)]

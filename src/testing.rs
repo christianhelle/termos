@@ -6,7 +6,7 @@ use std::rc::Rc;
 use serde_json::Value;
 
 use crate::management::{Account, Container, Management};
-use crate::store::{Credential, DataPlane, DataStore, Documents, Unauthorized};
+use crate::store::{Credential, DataPlane, DataStore, Documents, Page, Unauthorized};
 use futures::StreamExt;
 
 pub fn account(name: &str) -> Account {
@@ -92,6 +92,8 @@ pub struct FakeContainer {
     pub queries: Vec<String>,
     /// The id and partition key value of each delete asked for.
     pub deletes: Vec<(String, Option<Value>)>,
+    /// How many documents each page of a query holds.
+    pub page_size: usize,
 }
 
 pub struct FakeDataPlane {
@@ -111,6 +113,7 @@ impl FakeDataPlane {
             entra_allowed: true,
             container: Rc::new(RefCell::new(FakeContainer {
                 docs,
+                page_size: 1000,
                 ..Default::default()
             })),
             connections: RefCell::default(),
@@ -154,12 +157,22 @@ impl DataStore for FakeStore {
         &self.pk_path
     }
 
-    /// Records the SQL and returns every document, since the fake cannot run SQL.
+    /// Records the SQL and returns every document, since the fake cannot run SQL,
+    /// in pages of the container's page size.
     async fn documents(&self, sql: &str) -> anyhow::Result<Documents> {
         let mut container = self.container.borrow_mut();
         container.queries.push(sql.to_string());
-        let docs = container.docs.clone();
-        Ok(futures::stream::iter(docs.into_iter().map(Ok)).boxed_local())
+        let size = container.page_size.max(1);
+        let pages: Vec<anyhow::Result<Page>> = container
+            .docs
+            .chunks(size)
+            .map(|docs| {
+                Ok(Page {
+                    docs: docs.to_vec(),
+                })
+            })
+            .collect();
+        Ok(futures::stream::iter(pages).boxed_local())
     }
 
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {

@@ -9,11 +9,11 @@ use azure_data_cosmos::{
     AccountEndpoint, AccountReference, ContainerClient, CosmosClient, CosmosError, FeedScope,
     PartitionKey, Query, RoutingStrategy,
 };
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use serde_json::Value;
 
 use crate::management::Account;
-use crate::store::{Credential, DataPlane, DataStore, Documents, Unauthorized};
+use crate::store::{Credential, DataPlane, DataStore, Documents, Page, Unauthorized};
 
 /// Connects to containers with the Cosmos DB SDK.
 pub struct CosmosDataPlane {
@@ -159,7 +159,13 @@ impl DataStore for CosmosStore {
             .query_items::<Value>(Query::from(sql), FeedScope::full_container(), None)
             .await
             .map_err(classify)?;
-        Ok(items.map_err(classify).boxed_local())
+        let pages = items.into_pages().map(|page| {
+            let page = page.map_err(classify)?;
+            Ok(Page {
+                docs: page.into_items(),
+            })
+        });
+        Ok(pages.boxed_local())
     }
 
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {
