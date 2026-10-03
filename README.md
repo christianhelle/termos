@@ -5,6 +5,8 @@
 
 A terminal UI for Azure Cosmos DB (NoSQL API). It browses accounts, containers and documents in three panes, like the Data Explorer in the Azure portal.
 
+![Animated demo of termos browsing Azure Cosmos DB](images/ventablack/usage.gif)
+
 ## Requirements
 
 - Rust 1.88 or later, when installing with `cargo`
