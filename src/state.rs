@@ -1819,6 +1819,26 @@ fn settings_loaded(state: &mut AppState, target: &Target, result: Result<Value, 
     });
 }
 
+fn settings_saved(state: &mut AppState, target: &Target, result: Result<Value, String>) {
+    if !shows_settings_of(state, target) {
+        return;
+    }
+    match result {
+        Ok(properties) => {
+            let settings = ContainerSettings::from_properties(&properties);
+            state.settings = Some(Load::Loaded(settings));
+            state.status = Status::Info(format!(
+                "Saved the settings of {}/{}",
+                target.database, target.container
+            ));
+        }
+        Err(error) => {
+            state.error = Some(error);
+            state.status = Status::Error("could not save the settings".into());
+        }
+    }
+}
+
 fn found(count: usize, stats: &QueryStats, elapsed: Duration) -> String {
     let cost = if stats.round_trips > 0 {
         format!(" · {:.2} RU", stats.request_charge)
@@ -1856,7 +1876,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
             state.status = Status::Error(format!("could not save: {error}"));
         }
         Msg::SettingsLoaded { target, result } => settings_loaded(state, &target, result),
-        Msg::SettingsSaved { .. } => {}
+        Msg::SettingsSaved { target, result } => settings_saved(state, &target, result),
     }
     Vec::new()
 }
@@ -4165,6 +4185,47 @@ mod tests {
         assert_eq!(
             state.error.as_deref(),
             Some("The indexing policy is not valid JSON: expected value at line 1 column 1")
+        );
+    }
+
+    fn settings_saved(state: &mut AppState, result: Result<Value, String>) {
+        let target = carts();
+        update(state, Event::Msg(Msg::SettingsSaved { target, result }));
+    }
+
+    #[test]
+    fn shows_the_saved_settings_with_no_changes_left() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+        ctrl_s(&mut state);
+
+        settings_saved(&mut state, Ok(json!({"id": "carts", "defaultTtl": -1})));
+
+        let settings = shown_settings(&state);
+        assert_eq!(settings.ttl, TimeToLive::NoDefault);
+        assert!(!settings.modified(SettingsTab::Settings));
+        assert_eq!(
+            state.status,
+            Status::Info("Saved the settings of shop/carts".into())
+        );
+    }
+
+    #[test]
+    fn keeps_the_edits_when_saving_the_settings_fails() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+        ctrl_s(&mut state);
+
+        settings_saved(&mut state, Err("The indexing policy is invalid".into()));
+
+        assert!(shown_settings(&state).modified(SettingsTab::Settings));
+        assert_eq!(
+            state.error.as_deref(),
+            Some("The indexing policy is invalid")
+        );
+        assert_eq!(
+            state.status,
+            Status::Error("could not save the settings".into())
         );
     }
 }
