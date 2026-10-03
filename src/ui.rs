@@ -371,13 +371,13 @@ fn output_title(state: &AppState) -> Line<'static> {
             Span::styled(name, Style::new().add_modifier(Modifier::DIM))
         }
     };
-    let mut range = match state.results.len() {
+    let mut range = match state.output.results.len() {
         0 => "0".to_string(),
         count => format!("1 - {count}"),
     };
-    if state.loading_more {
+    if state.output.loading_more {
         range.push_str(", loading…");
-    } else if state.more {
+    } else if state.output.more {
         range.push_str(", more ↓");
     }
     Line::from(vec![
@@ -394,7 +394,7 @@ fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
         frame.render_widget(stats_table(state).block(block), area);
         return;
     }
-    let lines = highlight_json_array(&state.results);
+    let lines = highlight_json_array(&state.output.results);
     let total = lines.len();
     let height = area.height.saturating_sub(2);
     let last = u16::try_from(total)
@@ -414,13 +414,16 @@ fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
 
 /// What the query cost, then each metric the service reported for it.
 fn stats_table(state: &AppState) -> Table<'static> {
-    let stats = &state.stats;
+    let stats = &state.output.stats;
     let mut rows = vec![
         Row::new([
             "Request charge".to_string(),
             format!("{:.2} RU", stats.request_charge),
         ]),
-        Row::new(["Documents".to_string(), state.results.len().to_string()]),
+        Row::new([
+            "Documents".to_string(),
+            state.output.results.len().to_string(),
+        ]),
         Row::new(["Round trips".to_string(), stats.round_trips.to_string()]),
     ];
     rows.extend(
@@ -1073,6 +1076,7 @@ mod tests {
     fn the_output_shows_the_results_as_one_json_array_with_their_range() {
         let mut state = with_results();
         press(&mut state, KeyCode::Char('n'));
+        state.output.results = state.results.clone();
 
         let screen = screen_with_height(&state, 30);
 
@@ -1095,7 +1099,7 @@ mod tests {
             );
         }
 
-        state.more = true;
+        state.output.more = true;
         assert!(shows(
             &screen_with_height(&state, 30),
             "Stats (1 - 2, more ↓)"
@@ -1106,9 +1110,11 @@ mod tests {
     fn the_stats_tab_lists_what_the_query_cost_and_its_metrics() {
         let mut state = with_results();
         press(&mut state, KeyCode::Char('n'));
-        state.stats.request_charge = 3.5;
-        state.stats.round_trips = 2;
+        state.output.results = state.results.clone();
+        state.output.stats.request_charge = 3.5;
+        state.output.stats.round_trips = 2;
         state
+            .output
             .stats
             .add_query_metrics("retrievedDocumentCount=40;totalExecutionTimeInMs=1.75");
         state.output_tab = crate::state::OutputTab::Stats;

@@ -111,6 +111,21 @@ pub struct QueryResult {
     pub stats: QueryStats,
 }
 
+/// The latest query of the query editor and the documents it found,
+/// kept apart from the results the browse panes show.
+#[derive(Debug, Default)]
+pub struct QueryOutput {
+    /// The id of the latest editor query.
+    pub id: u64,
+    pub results: Vec<Value>,
+    /// Whether the query found more documents than the results show.
+    pub more: bool,
+    /// Whether the next page of results is being read.
+    pub loading_more: bool,
+    /// What reading the results cost so far.
+    pub stats: QueryStats,
+}
+
 /// What reading documents of a query cost.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QueryStats {
@@ -380,7 +395,9 @@ pub struct AppState {
     pub tree_selected: usize,
     /// The container that queries run against.
     pub target: Option<Target>,
-    /// The id of the latest query.
+    /// How many queries were asked for, to give each its own id.
+    pub queries: u64,
+    /// The id of the latest browse query.
     pub query_id: u64,
     /// The documents the latest query found.
     pub results: Vec<Value>,
@@ -412,6 +429,8 @@ pub struct AppState {
     pub stats: QueryStats,
     /// The dialog asking where to save, while it is open.
     pub prompt: Option<SavePrompt>,
+    /// What the query editor's latest query found.
+    pub output: QueryOutput,
     /// Why the latest query failed, shown in a dialog until the next key.
     pub error: Option<String>,
 }
@@ -437,6 +456,7 @@ impl AppState {
             search: TextInput::default(),
             tree_selected: 0,
             target: None,
+            queries: 0,
             query_id: 0,
             results: Vec::new(),
             pk_path: String::new(),
@@ -453,6 +473,7 @@ impl AppState {
             loading_more: false,
             stats: QueryStats::default(),
             prompt: None,
+            output: QueryOutput::default(),
             error: None,
         };
         (state, vec![Effect::LoadAccounts])
@@ -538,7 +559,7 @@ impl AppState {
 
     /// How many lines the query output takes: the results as one pretty-printed array.
     pub fn output_lines(&self) -> u16 {
-        u16::try_from(highlight_json_array(&self.results).len()).unwrap_or(u16::MAX)
+        u16::try_from(highlight_json_array(&self.output.results).len()).unwrap_or(u16::MAX)
     }
 
     /// How far the query output scrolls: until its last line is at the bottom.
@@ -899,14 +920,14 @@ fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         return Vec::new();
     }
     if key.code == KeyCode::Char('y') {
-        let json = serde_json::to_string_pretty(&state.results).unwrap_or_default();
+        let json = serde_json::to_string_pretty(&state.output.results).unwrap_or_default();
         return vec![Effect::Copy(json)];
     }
     let last = usize::from(state.max_output_scroll());
     let page = usize::from(state.output_height).max(1);
     let scroll = usize::from(state.output_scroll);
     let target = jump(key, &mut state.pending_g, scroll, last, page).unwrap_or(match key.code {
-        KeyCode::Down | KeyCode::Char('j') if scroll >= last => return load_more(state),
+        KeyCode::Down | KeyCode::Char('j') if scroll >= last => return load_more_output(state),
         KeyCode::Down | KeyCode::Char('j') => scroll + 1,
         KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
         KeyCode::Esc => {
@@ -1011,7 +1032,18 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Reads the next page of the latest query, unless it found everything or is reading it already.
+/// Reads the next page of the query editor's query, unless it found everything or is reading it already.
+fn load_more_output(state: &mut AppState) -> Vec<Effect> {
+    let output = &mut state.output;
+    if !output.more || output.loading_more {
+        return Vec::new();
+    }
+    output.loading_more = true;
+    state.status = Status::Info("Loading more documents…".into());
+    vec![Effect::LoadMore { id: output.id }]
+}
+
+/// Reads the next page of the latest browse query, unless it found everything or is reading it already.
 fn load_more(state: &mut AppState) -> Vec<Effect> {
     if !state.more || state.loading_more {
         return Vec::new();
@@ -1175,7 +1207,9 @@ fn on_prompt_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             state.prompt = None;
             let text = match saving {
                 Saving::Query => state.editor.text(),
-                Saving::Results => serde_json::to_string_pretty(&state.results).unwrap_or_default(),
+                Saving::Results => {
+                    serde_json::to_string_pretty(&state.output.results).unwrap_or_default()
+                }
             };
             let contents = format!("{text}\n");
             return vec![Effect::Save { path, contents }];
@@ -1289,16 +1323,27 @@ fn run_query(state: &mut AppState, sql: String, origin: Origin) -> Vec<Effect> {
         state.status = Status::Error("pick a container first".into());
         return Vec::new();
     };
-    state.query_id += 1;
-    state.more = false;
-    state.loading_more = false;
-    state.last_sql.clone_from(&sql);
+    state.queries += 1;
+    let id = state.queries;
+    match origin {
+        Origin::Browse => {
+            state.query_id = id;
+            state.more = false;
+            state.loading_more = false;
+            state.last_sql.clone_from(&sql);
+        }
+        Origin::Editor => {
+            state.output.id = id;
+            state.output.more = false;
+            state.output.loading_more = false;
+        }
+    }
     state.status = Status::Info(format!(
         "Querying {}/{}…",
         target.database, target.container
     ));
     vec![Effect::Query {
-        id: state.query_id,
+        id,
         target,
         sql,
         origin,
@@ -1393,6 +1438,9 @@ fn containers_loaded(
 
 /// Shows the documents a query found.
 fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>) {
+    if id == state.output.id {
+        return output_done(state, result);
+    }
     if id != state.query_id {
         return;
     }
@@ -1405,7 +1453,6 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
             state.more = result.more;
             state.loading_more = false;
             state.result_selected = 0;
-            state.output_scroll = 0;
             show_from_top(state);
             state.pk_path = result.pk_path;
         }
@@ -1416,8 +1463,49 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
     }
 }
 
+/// Shows the documents the query editor's query found in its output, from the top.
+fn output_done(state: &mut AppState, result: Result<QueryResult, String>) {
+    let output = &mut state.output;
+    match result {
+        Ok(result) => {
+            output.stats = result.stats;
+            output.results = result.docs;
+            output.more = result.more;
+            output.loading_more = false;
+            state.output_scroll = 0;
+            state.status = Status::Info(found(output.results.len(), &output.stats, result.elapsed));
+        }
+        Err(error) => {
+            state.status = Status::Error("the query failed".into());
+            state.error = Some(error);
+        }
+    }
+}
+
+/// Adds the next page of the query editor's query to its output.
+fn more_output_loaded(state: &mut AppState, result: Result<QueryResult, String>) {
+    let output = &mut state.output;
+    output.loading_more = false;
+    match result {
+        Ok(result) => {
+            output.results.extend(result.docs);
+            output.more = result.more;
+            output.stats.add(result.stats);
+            state.status = Status::Info(found(output.results.len(), &output.stats, result.elapsed));
+        }
+        Err(error) => {
+            // The open query is gone, so only running it again gets the rest
+            output.more = false;
+            state.status = Status::Error(format!("{error}, press F5 to run the query again"));
+        }
+    }
+}
+
 /// Adds the next page of a query to the results, selecting its first document.
 fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String>) {
+    if id == state.output.id {
+        return more_output_loaded(state, result);
+    }
     if id != state.query_id {
         return;
     }
@@ -2329,9 +2417,12 @@ mod tests {
         assert_eq!(state.focus, Focus::Editor);
     }
 
-    /// The query editor's output focused, four lines high, holding the two carts in ten lines.
+    /// The query editor's output focused, four lines high, holding the two carts
+    /// its query found in ten lines.
     fn with_output() -> AppState {
         let mut state = with_query_editor();
+        press(&mut state, KeyCode::F(5));
+        query_done(&mut state, 2, Ok(cart_docs()));
         state.output_height = 4;
         press(&mut state, KeyCode::Esc);
         state
@@ -2357,11 +2448,11 @@ mod tests {
     #[test]
     fn down_at_the_bottom_of_the_output_loads_more_once() {
         let mut state = with_output();
-        state.more = true;
+        state.output.more = true;
         press(&mut state, KeyCode::End);
 
         let effects = press(&mut state, KeyCode::Down);
-        assert_eq!(effects, vec![Effect::LoadMore { id: 1 }]);
+        assert_eq!(effects, vec![Effect::LoadMore { id: 2 }]);
         assert!(press(&mut state, KeyCode::Down).is_empty());
     }
 
@@ -2372,7 +2463,7 @@ mod tests {
         state.focus = Focus::Editor;
 
         press(&mut state, KeyCode::F(5));
-        query_done(&mut state, 2, Ok(cart_docs()));
+        query_done(&mut state, 3, Ok(cart_docs()));
 
         assert_eq!(state.output_scroll, 0);
     }
@@ -2388,7 +2479,7 @@ mod tests {
             assert_eq!(
                 effects,
                 vec![Effect::Query {
-                    id: 2,
+                    id: 3,
                     target: carts(),
                     sql: "SELECT VALUE c.id FROM c".into(),
                     origin: Origin::Editor,
@@ -3450,7 +3541,7 @@ mod tests {
         update(
             &mut state,
             Event::Msg(Msg::QueryDone {
-                id: 2,
+                id: 3,
                 result: costing(stats.clone(), cart_docs()),
             }),
         );
@@ -3462,13 +3553,13 @@ mod tests {
         update(
             &mut state,
             Event::Msg(Msg::MoreLoaded {
-                id: 2,
+                id: 3,
                 result: costing(stats, cart_docs()),
             }),
         );
 
         assert_eq!(
-            state.stats,
+            state.output.stats,
             QueryStats {
                 request_charge: 7.0,
                 round_trips: 4,
@@ -3622,5 +3713,46 @@ mod tests {
         press(&mut state, KeyCode::Char('/'));
 
         assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn the_editor_query_shows_its_results_apart_from_the_browse_results() {
+        let mut state = with_query_editor();
+        state.editor.set_text("SELECT c.name FROM c");
+        press(&mut state, KeyCode::F(5));
+
+        query_done(&mut state, 2, Ok(vec![json!({ "name": "Taylor" })]));
+
+        assert_eq!(state.results, cart_docs());
+        assert_eq!(state.output.results, vec![json!({ "name": "Taylor" })]);
+    }
+
+    #[test]
+    fn the_browse_query_leaves_the_editor_results_alone() {
+        let mut state = with_query_editor();
+        press(&mut state, KeyCode::F(5));
+        query_done(&mut state, 2, Ok(vec![json!(1)]));
+        press(&mut state, KeyCode::Esc);
+        press(&mut state, KeyCode::Esc);
+
+        press(&mut state, KeyCode::Char('r'));
+        query_done(&mut state, 3, Ok(cart_docs()));
+
+        assert_eq!(state.results, cart_docs());
+        assert_eq!(state.output.results, vec![json!(1)]);
+    }
+
+    #[test]
+    fn more_editor_results_follow_its_output_and_leave_the_browse_results_alone() {
+        let mut state = with_output();
+        state.output.more = true;
+        press(&mut state, KeyCode::End);
+        press(&mut state, KeyCode::Down);
+
+        more_loaded(&mut state, 2, Ok(page(2, 4, false)));
+
+        assert_eq!(state.output.results.len(), 4);
+        assert!(!state.output.more && !state.output.loading_more);
+        assert_eq!(state.results, cart_docs());
     }
 }
