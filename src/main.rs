@@ -200,6 +200,7 @@ async fn event_loop<M: Management + 'static>(
         state.tree_height = ui::tree_height(terminal.size()?);
         state.editor_height = ui::editor_height(terminal.size()?, state.zoomed_pane());
         state.output_height = ui::output_height(terminal.size()?, state.zoomed_pane());
+        state.settings_height = ui::settings_height(terminal.size()?, state.zoomed_pane());
         terminal.draw(|frame| ui::draw(frame, &state))?;
         let event = tokio::select! {
             Some(input) = keys.next() => match input? {

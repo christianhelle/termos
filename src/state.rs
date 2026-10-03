@@ -381,7 +381,7 @@ impl Mode {
 
 impl Focus {
     /// The settings tab this pane shows, for the panes of settings mode.
-    fn settings_tab(self) -> Option<SettingsTab> {
+    pub fn settings_tab(self) -> Option<SettingsTab> {
         match self {
             Focus::SettingsForm => Some(SettingsTab::Settings),
             Focus::IndexingPolicy => Some(SettingsTab::IndexingPolicy),

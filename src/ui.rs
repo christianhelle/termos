@@ -27,6 +27,8 @@ struct Panes {
     document: Rect,
     editor: Rect,
     output: Rect,
+    /// The settings of the picked container, whichever tab shows.
+    settings: Rect,
     status: Rect,
 }
 
@@ -57,6 +59,7 @@ fn panes(area: Rect, mode: Mode, tree_hidden: bool, zoomed: Option<Focus>) -> Pa
             document,
             editor: Rect::default(),
             output: Rect::default(),
+            settings: Rect::default(),
             status,
         },
         Mode::Query => Panes {
@@ -67,6 +70,7 @@ fn panes(area: Rect, mode: Mode, tree_hidden: bool, zoomed: Option<Focus>) -> Pa
             document: Rect::default(),
             editor,
             output,
+            settings: Rect::default(),
             status,
         },
         Mode::Settings => Panes {
@@ -77,6 +81,7 @@ fn panes(area: Rect, mode: Mode, tree_hidden: bool, zoomed: Option<Focus>) -> Pa
             document: Rect::default(),
             editor: Rect::default(),
             output: Rect::default(),
+            settings: right,
             status,
         },
     };
@@ -91,6 +96,11 @@ fn panes(area: Rect, mode: Mode, tree_hidden: bool, zoomed: Option<Focus>) -> Pa
         ] {
             *area = if pane == focus { main } else { Rect::default() };
         }
+        panes.settings = if focus.settings_tab().is_some() {
+            main
+        } else {
+            Rect::default()
+        };
         panes.query = Rect::default();
     }
     panes
@@ -131,6 +141,7 @@ pub fn pane_at(
         (Focus::Document, panes.document),
         (Focus::Editor, panes.editor),
         (Focus::Output, panes.output),
+        (Focus::SettingsForm, panes.settings),
     ]
     .into_iter()
     .find(|(_, area)| area.contains(at))?;
@@ -181,6 +192,20 @@ pub fn output_height(size: Size, zoomed: Option<Focus>) -> u16 {
     .output;
     // Less the top and bottom borders
     output.height.saturating_sub(2)
+}
+
+/// How many lines the settings tabs show on a terminal of this size,
+/// or none when another pane is zoomed.
+pub fn settings_height(size: Size, zoomed: Option<Focus>) -> u16 {
+    let settings = panes(
+        Rect::from((Position::ORIGIN, size)),
+        Mode::Settings,
+        false,
+        zoomed,
+    )
+    .settings;
+    // Less the top and bottom borders
+    settings.height.saturating_sub(2)
 }
 
 /// How many documents the results table shows on a terminal of this size,
@@ -885,6 +910,22 @@ mod tests {
         assert_eq!(output_height(size, None), 10);
         assert_eq!(output_height(size, Some(Focus::Output)), 17);
         assert_eq!(editor_height(size, Some(Focus::Output)), 0);
+    }
+
+    #[test]
+    fn the_settings_take_the_rows_beside_the_tree() {
+        let size = Size::new(100, 20);
+
+        // 20 rows less the status line and the borders
+        assert_eq!(settings_height(size, None), 17);
+        assert_eq!(settings_height(size, Some(Focus::IndexingPolicy)), 17);
+        assert_eq!(settings_height(size, Some(Focus::Tree)), 0);
+        let at = |x, y| pane_at(size, Position::new(x, y), Mode::Settings, false, None);
+        assert_eq!(
+            at(30, 2),
+            Some((Focus::SettingsForm, Some(Position::new(4, 1))))
+        );
+        assert_eq!(at(5, 2), Some((Focus::Tree, Some(Position::new(4, 1)))));
     }
 
     #[test]
