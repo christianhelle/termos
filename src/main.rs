@@ -4,6 +4,8 @@ mod clipboard;
 mod connector;
 mod cosmos;
 mod credential;
+#[allow(dead_code)] // Used by the query editor as it comes together
+mod editor;
 mod effects;
 mod emulator;
 mod input;
