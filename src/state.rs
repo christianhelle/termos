@@ -13,6 +13,7 @@ use crate::input::TextInput;
 use crate::json::highlight_json_array;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
+use crate::settings::ContainerSettings;
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -318,6 +319,8 @@ pub enum Focus {
     Editor,
     /// The documents the query editor's query found, in query mode.
     Output,
+    /// The settings tab, with time to live and the geospatial type, in settings mode.
+    SettingsForm,
 }
 
 /// A dialog asking where to save the query or its results.
@@ -343,6 +346,8 @@ pub enum Mode {
     Browse,
     /// The query editor and the documents its query found.
     Query,
+    /// The settings of the picked container.
+    Settings,
 }
 
 /// What the query editor's output shows.
@@ -356,10 +361,11 @@ pub enum OutputTab {
 
 impl Mode {
     /// The panes Tab cycles through; the search bar is only reached with `/`.
-    fn panes(self) -> [Focus; 3] {
+    fn panes(self) -> &'static [Focus] {
         match self {
-            Mode::Browse => [Focus::Tree, Focus::Results, Focus::Document],
-            Mode::Query => [Focus::Tree, Focus::Editor, Focus::Output],
+            Mode::Browse => &[Focus::Tree, Focus::Results, Focus::Document],
+            Mode::Query => &[Focus::Tree, Focus::Editor, Focus::Output],
+            Mode::Settings => &[Focus::Tree, Focus::SettingsForm],
         }
     }
 }
@@ -453,6 +459,10 @@ pub struct AppState {
     pub browse_stale: bool,
     /// Why the latest query failed, shown in a dialog until the next key.
     pub error: Option<String>,
+    /// The settings of the picked container, while settings mode shows them.
+    pub settings: Option<Load<ContainerSettings>>,
+    /// The mode to go back to when settings mode is left.
+    pub settings_from: Mode,
 }
 
 impl AppState {
@@ -496,6 +506,8 @@ impl AppState {
             output: QueryOutput::default(),
             browse_stale: false,
             error: None,
+            settings: None,
+            settings_from: Mode::Browse,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -768,6 +780,7 @@ fn toggle_tree(state: &mut AppState) {
         state.focus = match state.mode {
             Mode::Browse => Focus::Search,
             Mode::Query => Focus::Editor,
+            Mode::Settings => Focus::SettingsForm,
         };
     }
 }
@@ -842,7 +855,7 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
                 head: point,
             });
         }
-        Focus::Results | Focus::Output => {}
+        Focus::Results | Focus::Output | Focus::SettingsForm => {}
     }
     Vec::new()
 }
@@ -886,7 +899,7 @@ fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
         Focus::Output => (0..WHEEL_LINES)
             .flat_map(|_| on_output_key(state, key))
             .collect(),
-        Focus::Search | Focus::Editor => Vec::new(),
+        Focus::Search | Focus::Editor | Focus::SettingsForm => Vec::new(),
     }
 }
 
@@ -900,13 +913,14 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
         KeyCode::Char('n') if state.mode == Mode::Query => return leave_query_editor(state),
         KeyCode::Char('n') => open_query_editor(state),
+        KeyCode::Char('S') => return open_settings(state),
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
                 Focus::Results => on_results_key(state, key),
                 Focus::Document => on_document_key(state, key),
                 Focus::Output => on_output_key(state, key),
-                Focus::Search | Focus::Editor => Vec::new(),
+                Focus::Search | Focus::Editor | Focus::SettingsForm => Vec::new(),
             };
         }
     }
@@ -981,6 +995,20 @@ fn open_query_editor(state: &mut AppState) {
         &state.last_sql
     };
     state.editor.set_text(sql);
+}
+
+/// Shows the settings of the picked container in place of the other panes,
+/// and asks for them.
+fn open_settings(state: &mut AppState) -> Vec<Effect> {
+    let Some(target) = state.target.clone() else {
+        state.status = Status::Error("pick a container first".into());
+        return Vec::new();
+    };
+    state.settings_from = state.mode;
+    state.mode = Mode::Settings;
+    state.focus = Focus::SettingsForm;
+    state.settings = Some(Load::Loading);
+    vec![Effect::LoadSettings(target)]
 }
 
 /// Where a key that jumps by pages or to an end moves a position, from 0 to `last`.
@@ -3813,5 +3841,29 @@ mod tests {
         assert_eq!(state.output.results.len(), 4);
         assert!(!state.output.more && !state.output.loading_more);
         assert_eq!(state.results, cart_docs());
+    }
+
+    #[test]
+    fn shift_s_opens_the_settings_of_the_picked_container() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+
+        let effects = press(&mut state, KeyCode::Char('S'));
+
+        assert_eq!(effects, vec![Effect::LoadSettings(carts())]);
+        assert_eq!(state.mode, Mode::Settings);
+        assert_eq!(state.focus, Focus::SettingsForm);
+        assert!(matches!(state.settings, Some(Load::Loading)));
+    }
+
+    #[test]
+    fn shift_s_without_a_container_asks_for_one() {
+        let mut state = with_accounts(&["orders"]);
+
+        let effects = press(&mut state, KeyCode::Char('S'));
+
+        assert!(effects.is_empty());
+        assert_eq!(state.mode, Mode::Browse);
+        assert_eq!(state.status, Status::Error("pick a container first".into()));
     }
 }

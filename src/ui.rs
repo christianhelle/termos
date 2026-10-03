@@ -69,6 +69,16 @@ fn panes(area: Rect, mode: Mode, tree_hidden: bool, zoomed: Option<Focus>) -> Pa
             output,
             status,
         },
+        Mode::Settings => Panes {
+            tree,
+            query: Rect::default(),
+            search: Rect::default(),
+            results: Rect::default(),
+            document: Rect::default(),
+            editor: Rect::default(),
+            output: Rect::default(),
+            status,
+        },
     };
     if let Some(focus) = zoomed {
         for (pane, area) in [
@@ -207,6 +217,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             draw_editor(frame, state, panes.editor);
             draw_output(frame, state, panes.output);
         }
+        Mode::Settings => {}
     }
     draw_status(frame, state, panes.status);
     if state.show_help {
@@ -536,6 +547,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
         (Mode::Browse, true) => "z unzoom · Tab next pane · / search · n query · ? help · q quit",
         (Mode::Browse, false) => "Tab next pane · / search · n query · ? help · q quit",
         (Mode::Query, _) => "F5 run · Esc back · Tab next pane · ? help",
+        (Mode::Settings, _) => "Ctrl-S save · Esc back · Tab next tab · ? help",
     };
     let width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
     let [message, keys] =
@@ -609,7 +621,7 @@ const QUERY_HELP: [(&str, &str); 19] = [
 fn draw_help(frame: &mut Frame, state: &AppState) {
     let help: &[(&str, &str)] = match state.mode {
         Mode::Browse => &HELP,
-        Mode::Query => &QUERY_HELP,
+        Mode::Query | Mode::Settings => &QUERY_HELP,
     };
     let lines: Vec<Line> = help
         .iter()
