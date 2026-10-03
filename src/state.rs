@@ -13,7 +13,7 @@ use crate::input::TextInput;
 use crate::json::highlight_json_array;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
-use crate::settings::ContainerSettings;
+use crate::settings::{ContainerSettings, SettingsTab};
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -321,6 +321,10 @@ pub enum Focus {
     Output,
     /// The settings tab, with time to live and the geospatial type, in settings mode.
     SettingsForm,
+    /// The indexing policy tab, in settings mode.
+    IndexingPolicy,
+    /// The computed properties tab, in settings mode.
+    ComputedProperties,
 }
 
 /// A dialog asking where to save the query or its results.
@@ -365,12 +369,27 @@ impl Mode {
         match self {
             Mode::Browse => &[Focus::Tree, Focus::Results, Focus::Document],
             Mode::Query => &[Focus::Tree, Focus::Editor, Focus::Output],
-            Mode::Settings => &[Focus::Tree, Focus::SettingsForm],
+            Mode::Settings => &[
+                Focus::Tree,
+                Focus::SettingsForm,
+                Focus::IndexingPolicy,
+                Focus::ComputedProperties,
+            ],
         }
     }
 }
 
 impl Focus {
+    /// The settings tab this pane shows, for the panes of settings mode.
+    fn settings_tab(self) -> Option<SettingsTab> {
+        match self {
+            Focus::SettingsForm => Some(SettingsTab::Settings),
+            Focus::IndexingPolicy => Some(SettingsTab::IndexingPolicy),
+            Focus::ComputedProperties => Some(SettingsTab::ComputedProperties),
+            _ => None,
+        }
+    }
+
     fn next(self, mode: Mode) -> Focus {
         let order = mode.panes();
         match order.iter().position(|f| *f == self) {
@@ -463,6 +482,8 @@ pub struct AppState {
     pub settings: Option<Load<ContainerSettings>>,
     /// The mode to go back to when settings mode is left.
     pub settings_from: Mode,
+    /// The settings tab shown, also while the tree has the focus.
+    pub settings_tab: SettingsTab,
 }
 
 impl AppState {
@@ -508,6 +529,7 @@ impl AppState {
             error: None,
             settings: None,
             settings_from: Mode::Browse,
+            settings_tab: SettingsTab::Settings,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -771,6 +793,9 @@ fn move_focus(state: &mut AppState, step: fn(Focus, Mode) -> Focus) {
     if state.tree_hidden && state.focus == Focus::Tree {
         state.focus = step(state.focus, state.mode);
     }
+    if let Some(tab) = state.focus.settings_tab() {
+        state.settings_tab = tab;
+    }
 }
 
 /// Hides or shows the tree, moving the focus off it when it hides.
@@ -855,7 +880,11 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
                 head: point,
             });
         }
-        Focus::Results | Focus::Output | Focus::SettingsForm => {}
+        Focus::Results
+        | Focus::Output
+        | Focus::SettingsForm
+        | Focus::IndexingPolicy
+        | Focus::ComputedProperties => {}
     }
     Vec::new()
 }
@@ -899,7 +928,11 @@ fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
         Focus::Output => (0..WHEEL_LINES)
             .flat_map(|_| on_output_key(state, key))
             .collect(),
-        Focus::Search | Focus::Editor | Focus::SettingsForm => Vec::new(),
+        Focus::Search
+        | Focus::Editor
+        | Focus::SettingsForm
+        | Focus::IndexingPolicy
+        | Focus::ComputedProperties => Vec::new(),
     }
 }
 
@@ -920,7 +953,11 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
                 Focus::Results => on_results_key(state, key),
                 Focus::Document => on_document_key(state, key),
                 Focus::Output => on_output_key(state, key),
-                Focus::Search | Focus::Editor | Focus::SettingsForm => Vec::new(),
+                Focus::Search
+                | Focus::Editor
+                | Focus::SettingsForm
+                | Focus::IndexingPolicy
+                | Focus::ComputedProperties => Vec::new(),
             };
         }
     }
@@ -1007,6 +1044,7 @@ fn open_settings(state: &mut AppState) -> Vec<Effect> {
     state.settings_from = state.mode;
     state.mode = Mode::Settings;
     state.focus = Focus::SettingsForm;
+    state.settings_tab = SettingsTab::Settings;
     state.settings = Some(Load::Loading);
     vec![Effect::LoadSettings(target)]
 }
@@ -1741,7 +1779,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::TimeToLive;
+    use crate::settings::{SettingsTab, TimeToLive};
     use crate::testing::{account, container};
     use serde_json::{Value, json};
     use std::time::Duration;
@@ -3906,7 +3944,11 @@ mod tests {
     fn shows_the_loaded_settings() {
         let mut state = with_carts_settings();
 
-        settings_loaded(&mut state, carts(), Ok(json!({"id": "carts", "defaultTtl": -1})));
+        settings_loaded(
+            &mut state,
+            carts(),
+            Ok(json!({"id": "carts", "defaultTtl": -1})),
+        );
 
         assert_eq!(shown_settings(&state).ttl, TimeToLive::NoDefault);
     }
@@ -3931,5 +3973,29 @@ mod tests {
         settings_loaded(&mut state, other, Ok(json!({"id": "orders"})));
 
         assert!(matches!(state.settings, Some(Load::Loading)));
+    }
+
+    #[test]
+    fn tab_cycles_through_the_tree_and_the_settings_tabs() {
+        let mut state = with_carts_settings();
+        let mut visited = vec![(state.focus, state.settings_tab)];
+
+        for _ in 0..4 {
+            press(&mut state, KeyCode::Tab);
+            visited.push((state.focus, state.settings_tab));
+        }
+        press(&mut state, KeyCode::BackTab);
+
+        assert_eq!(
+            visited,
+            [
+                (Focus::SettingsForm, SettingsTab::Settings),
+                (Focus::IndexingPolicy, SettingsTab::IndexingPolicy),
+                (Focus::ComputedProperties, SettingsTab::ComputedProperties),
+                (Focus::Tree, SettingsTab::ComputedProperties),
+                (Focus::SettingsForm, SettingsTab::Settings),
+            ]
+        );
+        assert_eq!(state.focus, Focus::Tree);
     }
 }
