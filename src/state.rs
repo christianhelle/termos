@@ -972,8 +972,11 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('n') if state.mode == Mode::Query => return leave_query_editor(state),
         KeyCode::Char('n') if state.mode == Mode::Settings => {}
         KeyCode::Char('n') => open_query_editor(state),
-        KeyCode::Char('S') if state.mode == Mode::Settings => return leave_settings(state),
-        KeyCode::Char('S') => return open_settings(state),
+        // Ctrl-S saves, and s in the query output switches its tab
+        KeyCode::Char('s') if plain_s(state, key) && state.mode == Mode::Settings => {
+            return leave_settings(state);
+        }
+        KeyCode::Char('s') if plain_s(state, key) => return open_settings(state),
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
@@ -1059,6 +1062,11 @@ fn open_query_editor(state: &mut AppState) {
         &state.last_sql
     };
     state.editor.set_text(sql);
+}
+
+/// Whether `s` opens or leaves the settings: without Ctrl, and outside the query output.
+fn plain_s(state: &AppState, key: KeyEvent) -> bool {
+    !key.modifiers.contains(KeyModifiers::CONTROL) && state.focus != Focus::Output
 }
 
 /// Shows the settings of the picked container in place of the other panes,
@@ -4077,11 +4085,11 @@ mod tests {
     }
 
     #[test]
-    fn shift_s_opens_the_settings_of_the_picked_container() {
+    fn s_opens_the_settings_of_the_picked_container() {
         let mut state = with_orders_expanded();
         open_carts(&mut state);
 
-        let effects = press(&mut state, KeyCode::Char('S'));
+        let effects = press(&mut state, KeyCode::Char('s'));
 
         assert_eq!(effects, vec![Effect::LoadSettings(carts())]);
         assert_eq!(state.mode, Mode::Settings);
@@ -4090,10 +4098,10 @@ mod tests {
     }
 
     #[test]
-    fn shift_s_without_a_container_asks_for_one() {
+    fn s_without_a_container_asks_for_one() {
         let mut state = with_accounts(&["orders"]);
 
-        let effects = press(&mut state, KeyCode::Char('S'));
+        let effects = press(&mut state, KeyCode::Char('s'));
 
         assert!(effects.is_empty());
         assert_eq!(state.mode, Mode::Browse);
@@ -4103,7 +4111,7 @@ mod tests {
     fn with_carts_settings() -> AppState {
         let mut state = with_orders_expanded();
         open_carts(&mut state);
-        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('s'));
         state
     }
 
@@ -4314,9 +4322,9 @@ mod tests {
         assert!(state.settings.is_none());
 
         press(&mut state, KeyCode::Char('n'));
-        press(&mut state, KeyCode::Tab);
-        press(&mut state, KeyCode::Char('S'));
-        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::BackTab);
+        press(&mut state, KeyCode::Char('s'));
+        press(&mut state, KeyCode::Char('s'));
         assert_eq!(state.mode, Mode::Query);
         assert_eq!(state.focus, Focus::Editor);
     }
@@ -4333,7 +4341,7 @@ mod tests {
         assert_eq!(state.mode, Mode::Settings);
         assert_eq!(shown_settings(&state).ttl, TimeToLive::NoDefault);
 
-        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('s'));
         press(&mut state, KeyCode::Char('y'));
 
         assert!(!state.confirm_discard);
@@ -4413,5 +4421,26 @@ mod tests {
         press(&mut state, KeyCode::Char('/'));
 
         assert_eq!(state.focus, Focus::SettingsForm);
+    }
+
+    #[test]
+    fn s_in_the_query_output_switches_its_tab_rather_than_opening_the_settings() {
+        let mut state = with_query_editor();
+        press(&mut state, KeyCode::Tab);
+
+        press(&mut state, KeyCode::Char('s'));
+
+        assert_eq!(state.mode, Mode::Query);
+        assert_eq!(state.output_tab, OutputTab::Stats);
+    }
+
+    #[test]
+    fn ctrl_s_while_browsing_opens_no_settings() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+
+        ctrl_s(&mut state);
+
+        assert_eq!(state.mode, Mode::Browse);
     }
 }

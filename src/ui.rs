@@ -1282,7 +1282,7 @@ mod tests {
 
     fn with_settings(properties: serde_json::Value) -> AppState {
         let mut state = with_results();
-        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('s'));
         let target = state.target.clone().unwrap();
         send(
             &mut state,
@@ -1377,7 +1377,7 @@ mod tests {
         ));
         press(&mut state, KeyCode::Esc);
 
-        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('s'));
         press(&mut state, KeyCode::Char('?'));
         let screen = screen_with_height(&state, 40);
 
@@ -1408,7 +1408,7 @@ mod tests {
     #[test]
     fn the_settings_say_while_they_load_and_why_they_failed() {
         let mut state = with_results();
-        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('s'));
         assert!(shows(&screen(&state), "loading settings…"));
 
         let target = state.target.clone().unwrap();
