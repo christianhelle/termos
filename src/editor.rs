@@ -69,6 +69,23 @@ impl Editor {
         }
     }
 
+    /// Puts the cursor on a line and column, as near as the text allows.
+    pub fn move_to(&mut self, row: usize, column: usize) {
+        self.row = row.min(self.lines.len() - 1);
+        self.column = column.min(self.len());
+    }
+
+    /// The first line to show, when this many lines show at once:
+    /// scrolled only as far as it takes to show the cursor.
+    pub fn scroll(&self, height: usize) -> usize {
+        self.row.saturating_sub(height.max(1) - 1)
+    }
+
+    /// How many characters the widest line number takes, at least two.
+    pub fn number_width(&self) -> usize {
+        self.lines.len().to_string().len().max(2)
+    }
+
     /// Deletes the character under the cursor, or joins the line below at the end of a line.
     pub fn delete(&mut self) {
         if self.column < self.len() {
@@ -128,8 +145,7 @@ impl Editor {
 
     /// Puts the cursor on a line, keeping its column within the line.
     fn move_to_row(&mut self, row: usize) {
-        self.row = row.min(self.lines.len() - 1);
-        self.column = self.column.min(self.len());
+        self.move_to(row, self.column);
     }
 
     /// The number of characters in the cursor's line.

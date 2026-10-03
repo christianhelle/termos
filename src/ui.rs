@@ -322,8 +322,7 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
         None => "Query".to_string(),
     };
     let lines = state.editor.lines();
-    // Room for the widest line number, at least two digits, and a space after it
-    let gutter = lines.len().to_string().len().max(2);
+    let gutter = state.editor.number_width();
     let numbered: Vec<Line> = lines
         .iter()
         .enumerate()
@@ -337,10 +336,10 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
             Line::from(spans)
         })
         .collect();
-    let height = usize::from(area.height.saturating_sub(2)).max(1);
     let (row, column) = state.editor.cursor();
-    // Scroll only as far as it takes to show the cursor's line
-    let scroll = row.saturating_sub(height - 1);
+    let scroll = state
+        .editor
+        .scroll(usize::from(area.height.saturating_sub(2)));
     let editor = Paragraph::new(numbered)
         .block(pane(title, state, Focus::Editor))
         .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0));

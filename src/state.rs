@@ -682,6 +682,13 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
             }
         }
         Focus::Search => state.search.move_to(usize::from(at.x)),
+        Focus::Editor => {
+            let editor = &mut state.editor;
+            let row = editor.scroll(usize::from(state.editor_height)) + line;
+            // Less the line numbers and the space after them
+            let column = usize::from(at.x).saturating_sub(editor.number_width() + 1);
+            editor.move_to(row, column);
+        }
         Focus::Document => {
             let point = doc_point(state, at);
             state.doc_selection = Some(Selection {
@@ -689,7 +696,7 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
                 head: point,
             });
         }
-        Focus::Results | Focus::Editor | Focus::Output => {}
+        Focus::Results | Focus::Output => {}
     }
     Vec::new()
 }
@@ -730,7 +737,10 @@ fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
         Focus::Document => (0..WHEEL_LINES)
             .flat_map(|_| on_document_key(state, key))
             .collect(),
-        Focus::Search | Focus::Editor | Focus::Output => Vec::new(),
+        Focus::Output => (0..WHEEL_LINES)
+            .flat_map(|_| on_output_key(state, key))
+            .collect(),
+        Focus::Search | Focus::Editor => Vec::new(),
     }
 }
 
@@ -3169,5 +3179,30 @@ mod tests {
         click(&mut state, Focus::Document, 2, 2);
         assert!(!state.show_help);
         assert_eq!(state.focus, Focus::Results);
+    }
+
+    #[test]
+    fn clicking_the_query_editor_puts_the_cursor_there() {
+        let mut state = with_output();
+        state.editor_height = 5;
+        state.editor.set_text("SELECT *\nFROM c\nWHERE c.n > 1");
+
+        // Past the line numbers, which take two digits and a space
+        click(&mut state, Focus::Editor, 5, 1);
+        assert_eq!(state.focus, Focus::Editor);
+        assert_eq!(state.editor.cursor(), (1, 2));
+        click(&mut state, Focus::Editor, 1, 9);
+        assert_eq!(state.editor.cursor(), (2, 0));
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_query_output() {
+        let mut state = with_output();
+        state.focus = Focus::Editor;
+
+        wheel(&mut state, Focus::Output, MouseAction::ScrollDown);
+
+        assert_eq!(state.output_scroll, 3);
+        assert_eq!(state.focus, Focus::Editor);
     }
 }
