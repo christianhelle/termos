@@ -1681,6 +1681,21 @@ fn deleted_many(state: &mut AppState, results: Vec<(String, Result<(), String>)>
 
 /// Counts documents in words, such as "1 document" or "3 documents".
 /// How many documents a query found, what reading them cost, when known, and how long it took.
+/// Whether settings that finished loading or saving are for the settings shown.
+fn shows_settings_of(state: &AppState, target: &Target) -> bool {
+    state.mode == Mode::Settings && state.target.as_ref() == Some(target)
+}
+
+fn settings_loaded(state: &mut AppState, target: &Target, result: Result<Value, String>) {
+    if !shows_settings_of(state, target) {
+        return;
+    }
+    state.settings = Some(match result {
+        Ok(properties) => Load::Loaded(ContainerSettings::from_properties(&properties)),
+        Err(error) => Load::Failed(error),
+    });
+}
+
 fn found(count: usize, stats: &QueryStats, elapsed: Duration) -> String {
     let cost = if stats.round_trips > 0 {
         format!(" · {:.2} RU", stats.request_charge)
@@ -1717,7 +1732,8 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::Saved(Err(error)) => {
             state.status = Status::Error(format!("could not save: {error}"));
         }
-        Msg::SettingsLoaded { .. } | Msg::SettingsSaved { .. } => {}
+        Msg::SettingsLoaded { target, result } => settings_loaded(state, &target, result),
+        Msg::SettingsSaved { .. } => {}
     }
     Vec::new()
 }
@@ -1725,6 +1741,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::TimeToLive;
     use crate::testing::{account, container};
     use serde_json::{Value, json};
     use std::time::Duration;
@@ -3865,5 +3882,54 @@ mod tests {
         assert!(effects.is_empty());
         assert_eq!(state.mode, Mode::Browse);
         assert_eq!(state.status, Status::Error("pick a container first".into()));
+    }
+
+    fn with_carts_settings() -> AppState {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        press(&mut state, KeyCode::Char('S'));
+        state
+    }
+
+    fn settings_loaded(state: &mut AppState, target: Target, result: Result<Value, String>) {
+        update(state, Event::Msg(Msg::SettingsLoaded { target, result }));
+    }
+
+    fn shown_settings(state: &AppState) -> &ContainerSettings {
+        match &state.settings {
+            Some(Load::Loaded(settings)) => settings,
+            other => panic!("no settings shown: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shows_the_loaded_settings() {
+        let mut state = with_carts_settings();
+
+        settings_loaded(&mut state, carts(), Ok(json!({"id": "carts", "defaultTtl": -1})));
+
+        assert_eq!(shown_settings(&state).ttl, TimeToLive::NoDefault);
+    }
+
+    #[test]
+    fn shows_why_the_settings_failed_to_load() {
+        let mut state = with_carts_settings();
+
+        settings_loaded(&mut state, carts(), Err("forbidden".into()));
+
+        assert!(matches!(&state.settings, Some(Load::Failed(error)) if error == "forbidden"));
+    }
+
+    #[test]
+    fn ignores_settings_of_another_container() {
+        let mut state = with_carts_settings();
+        let other = Target {
+            container: "orders".into(),
+            ..carts()
+        };
+
+        settings_loaded(&mut state, other, Ok(json!({"id": "orders"})));
+
+        assert!(matches!(state.settings, Some(Load::Loading)));
     }
 }
