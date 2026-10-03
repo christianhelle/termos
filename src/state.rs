@@ -965,6 +965,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('q') => state.quit = true,
         KeyCode::Char('/') if state.mode == Mode::Query => state.focus = Focus::Editor,
+        KeyCode::Char('/') if state.mode == Mode::Settings => {}
         KeyCode::Char('/') => state.focus = Focus::Search,
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
@@ -4403,5 +4404,14 @@ mod tests {
         click(&mut state, Focus::SettingsForm, 3, 3);
 
         assert_eq!(state.focus, Focus::ComputedProperties);
+    }
+
+    #[test]
+    fn slash_keeps_the_focus_in_the_settings() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+
+        press(&mut state, KeyCode::Char('/'));
+
+        assert_eq!(state.focus, Focus::SettingsForm);
     }
 }
