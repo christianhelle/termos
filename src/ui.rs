@@ -14,7 +14,9 @@ use crate::json::{highlight_json, highlight_json_array};
 use crate::query::DEFAULT_QUERY;
 use crate::settings::{ContainerSettings, Field, Geospatial, SettingsTab, TimeToLive};
 use crate::sql::highlight_sql;
-use crate::state::{AppState, Focus, Load, Mode, OutputTab, SavePrompt, Saving, Selection, Status};
+use crate::state::{
+    AppState, Focus, Load, Mode, OutputTab, SavePrompt, Saving, Selection, Status, settings_focus,
+};
 
 /// Room for the query the search bar completes, and a space after it.
 const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
