@@ -11,6 +11,13 @@ pub fn highlight_json(value: &Value) -> Vec<Line<'static>> {
     writer.finish()
 }
 
+/// Pretty-prints documents as one JSON array, like [`highlight_json`] would print them in one.
+pub fn highlight_json_array(items: &[Value]) -> Vec<Line<'static>> {
+    let mut writer = Writer::default();
+    writer.array(items, 0);
+    writer.finish()
+}
+
 /// Collects spans into lines as the document is walked.
 #[derive(Default)]
 struct Writer {
@@ -39,6 +46,23 @@ impl Writer {
         self.lines
     }
 
+    fn array(&mut self, items: &[Value], indent: usize) {
+        if items.is_empty() {
+            self.push("[]");
+            return;
+        }
+        self.push("[");
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                self.push(",");
+            }
+            self.newline(indent + 1);
+            self.value(item, indent + 1);
+        }
+        self.newline(indent);
+        self.push("]");
+    }
+
     fn value(&mut self, value: &Value, indent: usize) {
         match value {
             Value::Object(map) if !map.is_empty() => {
@@ -55,22 +79,11 @@ impl Writer {
                 self.newline(indent);
                 self.push("}");
             }
-            Value::Array(items) if !items.is_empty() => {
-                self.push("[");
-                for (index, item) in items.iter().enumerate() {
-                    if index > 0 {
-                        self.push(",");
-                    }
-                    self.newline(indent + 1);
-                    self.value(item, indent + 1);
-                }
-                self.newline(indent);
-                self.push("]");
-            }
+            Value::Array(items) => self.array(items, indent),
             Value::String(_) => self.styled(value.to_string(), Color::Green),
             Value::Number(_) => self.styled(value.to_string(), Color::Yellow),
             Value::Bool(_) | Value::Null => self.styled(value.to_string(), Color::Magenta),
-            Value::Object(_) | Value::Array(_) => self.push(value.to_string()),
+            Value::Object(_) => self.push("{}"),
         }
     }
 }
@@ -102,6 +115,17 @@ mod tests {
             text(&highlight_json(&doc)),
             serde_json::to_string_pretty(&doc).unwrap()
         );
+    }
+
+    #[test]
+    fn lays_out_documents_as_one_array() {
+        let docs = [json!({ "id": "o-1" }), json!(3)];
+
+        assert_eq!(
+            text(&highlight_json_array(&docs)),
+            serde_json::to_string_pretty(&json!(docs)).unwrap()
+        );
+        assert_eq!(text(&highlight_json_array(&[])), "[]");
     }
 
     fn colour_of(lines: &[Line], content: &str) -> Option<Color> {
