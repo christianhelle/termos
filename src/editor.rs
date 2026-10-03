@@ -44,8 +44,27 @@ impl Editor {
         self.lines.insert(self.row, rest);
     }
 
+    /// Deletes the character before the cursor, or joins the line to the one above at its start.
+    pub fn backspace(&mut self) {
+        if self.column > 0 {
+            self.column -= 1;
+            let at = self.byte_index(self.column);
+            self.lines[self.row].remove(at);
+        } else if self.row > 0 {
+            let line = self.lines.remove(self.row);
+            self.row -= 1;
+            self.column = self.len();
+            self.lines[self.row].push_str(&line);
+        }
+    }
+
     pub fn left(&mut self) {
         self.column = self.column.saturating_sub(1);
+    }
+
+    /// The number of characters in the cursor's line.
+    fn len(&self) -> usize {
+        self.lines[self.row].chars().count()
     }
 
     /// The byte offset of a character in the cursor's line, or the line's end.
@@ -84,5 +103,30 @@ mod tests {
 
         assert_eq!(editor.text(), "SELECT * \nFROM c");
         assert_eq!(editor.cursor(), (1, 0));
+    }
+
+    #[test]
+    fn backspace_deletes_before_the_cursor_and_joins_lines_at_the_start() {
+        let mut editor = typed("FROM");
+        editor.newline();
+        "cc".chars().for_each(|c| editor.insert(c));
+
+        editor.backspace();
+        assert_eq!(editor.text(), "FROM\nc");
+        editor.left();
+        editor.backspace();
+
+        assert_eq!(editor.text(), "FROMc");
+        assert_eq!(editor.cursor(), (0, 4));
+    }
+
+    #[test]
+    fn backspace_at_the_very_start_does_nothing() {
+        let mut editor = Editor::default();
+
+        editor.backspace();
+
+        assert_eq!(editor.text(), "");
+        assert_eq!(editor.cursor(), (0, 0));
     }
 }
