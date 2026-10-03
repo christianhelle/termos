@@ -1017,7 +1017,7 @@ fn toggle(state: &mut AppState) -> Vec<Effect> {
         Some(Node::Account(a)) => state.account_mut(a).is_some_and(|node| node.expanded),
         Some(Node::Database(a, d)) => state.database_mut(a, d).is_some_and(|node| node.expanded),
         Some(Node::Container(..)) => {
-            state.focus = Focus::Results;
+            state.focus = state.mode.panes()[1];
             return Vec::new();
         }
         _ => false,
@@ -2057,6 +2057,16 @@ mod tests {
         );
         assert_eq!(state.results, cart_docs());
         assert_eq!(state.mode, Mode::Query);
+    }
+
+    #[test]
+    fn enter_on_a_container_in_query_mode_moves_to_the_editor() {
+        let mut state = with_query_editor();
+        state.focus = Focus::Tree;
+
+        press(&mut state, KeyCode::Enter);
+
+        assert_eq!(state.focus, Focus::Editor);
     }
 
     fn with_cart_results() -> AppState {
