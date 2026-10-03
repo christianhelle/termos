@@ -841,6 +841,11 @@ fn on_mouse(state: &mut AppState, mouse: Mouse) -> Vec<Effect> {
         }
         return Vec::new();
     }
+    if mouse.action == MouseAction::Click && mouse.pane.settings_tab().is_some() {
+        // The settings pane is the tab it shows
+        state.focus = settings_focus(state.settings_tab);
+        return Vec::new();
+    }
     match mouse.action {
         MouseAction::Click => on_click(state, mouse.pane, mouse.at),
         // Some terminals send no moves, so the release ends a drag too
@@ -1078,6 +1083,15 @@ fn settings_mut(state: &mut AppState) -> Option<&mut ContainerSettings> {
     }
 }
 
+/// The pane that shows a settings tab.
+fn settings_focus(tab: SettingsTab) -> Focus {
+    match tab {
+        SettingsTab::Settings => Focus::SettingsForm,
+        SettingsTab::IndexingPolicy => Focus::IndexingPolicy,
+        SettingsTab::ComputedProperties => Focus::ComputedProperties,
+    }
+}
+
 /// Saves the edited settings, or shows on its tab why they cannot be saved.
 fn save_settings(state: &mut AppState) -> Vec<Effect> {
     let Some(target) = state.target.clone() else {
@@ -1093,11 +1107,7 @@ fn save_settings(state: &mut AppState) -> Vec<Effect> {
         }
         Err(error) => {
             state.settings_tab = error.tab;
-            state.focus = match error.tab {
-                SettingsTab::Settings => Focus::SettingsForm,
-                SettingsTab::IndexingPolicy => Focus::IndexingPolicy,
-                SettingsTab::ComputedProperties => Focus::ComputedProperties,
-            };
+            state.focus = settings_focus(error.tab);
             state.error = Some(error.message);
             Vec::new()
         }
@@ -4382,5 +4392,16 @@ mod tests {
                 "save (Ctrl-S) or discard (Esc) the changes to the settings first".into()
             )
         );
+    }
+
+    #[test]
+    fn clicking_the_settings_focuses_the_tab_they_show() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::BackTab);
+        state.settings_tab = SettingsTab::ComputedProperties;
+
+        click(&mut state, Focus::SettingsForm, 3, 3);
+
+        assert_eq!(state.focus, Focus::ComputedProperties);
     }
 }
