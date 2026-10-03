@@ -280,6 +280,15 @@ pub enum Mode {
     Query,
 }
 
+/// What the query editor's output shows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputTab {
+    /// The documents the query found.
+    Results,
+    /// What the query cost.
+    Stats,
+}
+
 impl Mode {
     /// The panes Tab cycles through; the search bar is only reached with `/`.
     fn panes(self) -> [Focus; 3] {
@@ -331,6 +340,7 @@ pub struct AppState {
     pub output_scroll: u16,
     /// How many lines of the query output show at once.
     pub output_height: u16,
+    pub output_tab: OutputTab,
     /// What is typed in the search bar.
     pub search: TextInput,
     /// Index of the selected tree row.
@@ -386,6 +396,7 @@ impl AppState {
             editor_height: 0,
             output_scroll: 0,
             output_height: 0,
+            output_tab: OutputTab::Results,
             search: TextInput::default(),
             tree_selected: 0,
             target: None,
@@ -823,6 +834,13 @@ fn leave_query_editor(state: &mut AppState) {
 fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     if is_run_key(key) || key.code == KeyCode::Char('r') {
         return run_editor_query(state);
+    }
+    if key.code == KeyCode::Char('s') {
+        state.output_tab = match state.output_tab {
+            OutputTab::Results => OutputTab::Stats,
+            OutputTab::Stats => OutputTab::Results,
+        };
+        return Vec::new();
     }
     if key.code == KeyCode::Char('y') {
         let json = serde_json::to_string_pretty(&state.results).unwrap_or_default();
@@ -3352,5 +3370,16 @@ mod tests {
                 ("new".to_string(), 1.0),
             ]
         );
+    }
+
+    #[test]
+    fn s_in_the_output_switches_between_the_results_and_the_stats() {
+        let mut state = with_output();
+        assert_eq!(state.output_tab, OutputTab::Results);
+
+        press(&mut state, KeyCode::Char('s'));
+        assert_eq!(state.output_tab, OutputTab::Stats);
+        press(&mut state, KeyCode::Char('s'));
+        assert_eq!(state.output_tab, OutputTab::Results);
     }
 }
