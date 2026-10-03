@@ -118,6 +118,11 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             Effect::DeleteMany { target, items } => Msg::DeletedMany {
                 results: self.delete_many(&target, items).await,
             },
+            Effect::Save { path, contents } => Msg::Saved(
+                std::fs::write(&path, contents)
+                    .map(|()| path)
+                    .map_err(|error| error.to_string()),
+            ),
             Effect::Copy(text) => {
                 Msg::Copied(self.clipboard.borrow_mut().copy(text).map_err(describe))
             }
@@ -462,6 +467,40 @@ mod tests {
         );
         assert_eq!(second.stats.round_trips, 1);
         assert_eq!(second.stats.request_charge, 2.5);
+    }
+
+    #[tokio::test]
+    async fn saves_text_to_a_file_and_says_where() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("carts.sql").display().to_string();
+
+        let msg = runner()
+            .run(Effect::Save {
+                path: path.clone(),
+                contents: "SELECT * FROM c\n".into(),
+            })
+            .await;
+
+        let Msg::Saved(Ok(saved)) = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(saved, path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "SELECT * FROM c\n");
+    }
+
+    #[tokio::test]
+    async fn reports_a_file_it_could_not_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing").join("carts.sql");
+
+        let msg = runner()
+            .run(Effect::Save {
+                path: path.display().to_string(),
+                contents: String::new(),
+            })
+            .await;
+
+        assert!(matches!(msg, Msg::Saved(Err(_))), "{msg:?}");
     }
 
     #[tokio::test]

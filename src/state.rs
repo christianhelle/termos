@@ -31,6 +31,11 @@ pub enum Effect {
     },
     /// Puts text on the system clipboard.
     Copy(String),
+    /// Writes text to a file.
+    Save {
+        path: String,
+        contents: String,
+    },
     /// Deletes a document, found by its id and partition key value.
     Delete {
         target: Target,
@@ -71,6 +76,8 @@ pub enum Msg {
         result: Result<QueryResult, String>,
     },
     Copied(Result<(), String>),
+    /// The path of a saved file, or why it could not be saved.
+    Saved(Result<String, String>),
     /// The outcome of deleting the document with this id.
     Deleted {
         id: String,
@@ -271,6 +278,12 @@ pub enum Focus {
     Output,
 }
 
+/// A dialog asking where to save the query.
+#[derive(Debug)]
+pub struct SavePrompt {
+    pub path: TextInput,
+}
+
 /// Which panes show next to the tree.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -377,6 +390,8 @@ pub struct AppState {
     pub loading_more: bool,
     /// What reading the latest query's results cost so far.
     pub stats: QueryStats,
+    /// The dialog asking where to save, while it is open.
+    pub prompt: Option<SavePrompt>,
 }
 
 impl AppState {
@@ -415,6 +430,7 @@ impl AppState {
             more: false,
             loading_more: false,
             stats: QueryStats::default(),
+            prompt: None,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -642,6 +658,9 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             return delete_selected(state);
         }
         return Vec::new();
+    }
+    if state.prompt.is_some() && !ctrl_c {
+        return on_prompt_key(state, key);
     }
     if state.show_help && !ctrl_c {
         // Any other key closes the help, and only that
@@ -1056,6 +1075,10 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     if is_run_key(key) {
         return run_editor_query(state);
     }
+    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        ask_where_to_save(state);
+        return Vec::new();
+    }
     let page = usize::from(state.editor_height).max(1);
     let editor = &mut state.editor;
     match key.code {
@@ -1072,6 +1095,43 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::PageUp => editor.page_up(page),
         KeyCode::PageDown => editor.page_down(page),
         KeyCode::Esc => state.focus = Focus::Output,
+        _ => {}
+    }
+    Vec::new()
+}
+
+/// Opens the dialog asking where to save the query, suggesting a file named after the container.
+fn ask_where_to_save(state: &mut AppState) {
+    let name = state
+        .target
+        .as_ref()
+        .map_or("query", |target| target.container.as_str());
+    let mut path = TextInput::default();
+    format!("{name}.sql").chars().for_each(|c| path.insert(c));
+    state.prompt = Some(SavePrompt { path });
+}
+
+/// Edits the path in the save dialog, then saves with Enter or cancels with Esc.
+fn on_prompt_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let Some(prompt) = &mut state.prompt else {
+        return Vec::new();
+    };
+    let path = &mut prompt.path;
+    match key.code {
+        KeyCode::Char(c) => path.insert(c),
+        KeyCode::Backspace => path.backspace(),
+        KeyCode::Delete => path.delete(),
+        KeyCode::Left => path.left(),
+        KeyCode::Right => path.right(),
+        KeyCode::Home => path.home(),
+        KeyCode::End => path.end(),
+        KeyCode::Esc => state.prompt = None,
+        KeyCode::Enter => {
+            let path = path.text().to_string();
+            state.prompt = None;
+            let contents = format!("{}\n", state.editor.text());
+            return vec![Effect::Save { path, contents }];
+        }
         _ => {}
     }
     Vec::new()
@@ -1459,6 +1519,10 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::Copied(Ok(())) => state.status = Status::Info("Copied to the clipboard".into()),
         Msg::Copied(Err(error)) => {
             state.status = Status::Error(format!("could not copy: {error}"));
+        }
+        Msg::Saved(Ok(path)) => state.status = Status::Info(format!("Saved {path}")),
+        Msg::Saved(Err(error)) => {
+            state.status = Status::Error(format!("could not save: {error}"));
         }
     }
     Vec::new()
@@ -3381,5 +3445,60 @@ mod tests {
         assert_eq!(state.output_tab, OutputTab::Stats);
         press(&mut state, KeyCode::Char('s'));
         assert_eq!(state.output_tab, OutputTab::Results);
+    }
+
+    fn ctrl_s(state: &mut AppState) -> Vec<Effect> {
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        update(state, Event::Key(key))
+    }
+
+    #[test]
+    fn ctrl_s_asks_where_to_save_the_query_then_saves_it() {
+        let mut state = with_query_editor();
+        state.editor.set_text("SELECT VALUE c.id\nFROM c");
+
+        ctrl_s(&mut state);
+        assert_eq!(
+            state.prompt.as_ref().map(|p| p.path.text()),
+            Some("carts.sql")
+        );
+        press(&mut state, KeyCode::Backspace);
+        press(&mut state, KeyCode::Backspace);
+        press(&mut state, KeyCode::Backspace);
+        type_text(&mut state, "txt");
+        let effects = press(&mut state, KeyCode::Enter);
+
+        assert_eq!(
+            effects,
+            vec![Effect::Save {
+                path: "carts.txt".into(),
+                contents: "SELECT VALUE c.id\nFROM c\n".into()
+            }]
+        );
+        assert!(state.prompt.is_none());
+        assert_eq!(state.editor.text(), "SELECT VALUE c.id\nFROM c");
+    }
+
+    #[test]
+    fn escape_in_the_save_prompt_saves_nothing() {
+        let mut state = with_query_editor();
+        ctrl_s(&mut state);
+
+        let effects = press(&mut state, KeyCode::Esc);
+
+        assert!(effects.is_empty());
+        assert!(state.prompt.is_none());
+        assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn says_where_a_file_was_saved_or_why_not() {
+        let mut state = with_query_editor();
+
+        update(&mut state, Event::Msg(Msg::Saved(Ok("carts.sql".into()))));
+        assert_eq!(state.status, Status::Info("Saved carts.sql".into()));
+
+        update(&mut state, Event::Msg(Msg::Saved(Err("denied".into()))));
+        assert_eq!(state.status, Status::Error("could not save: denied".into()));
     }
 }
