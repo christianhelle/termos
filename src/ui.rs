@@ -13,7 +13,7 @@ use ratatui::widgets::{
 use crate::json::{highlight_json, highlight_json_array};
 use crate::query::DEFAULT_QUERY;
 use crate::sql::highlight_sql;
-use crate::state::{AppState, Focus, Mode, OutputTab, Selection, Status};
+use crate::state::{AppState, Focus, Mode, OutputTab, SavePrompt, Saving, Selection, Status};
 
 /// Room for the query the search bar completes, and a space after it.
 const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
@@ -214,6 +214,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     }
     if state.confirm_delete {
         draw_confirm_delete(frame, state);
+    }
+    if let Some(prompt) = &state.prompt {
+        draw_save_prompt(frame, prompt);
     }
 }
 
@@ -628,6 +631,40 @@ fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
         ),
         area,
     );
+}
+
+/// A dialog asking where to save, with the cursor in the path.
+fn draw_save_prompt(frame: &mut Frame, prompt: &SavePrompt) {
+    let title = match prompt.saving {
+        Saving::Query => "Save query",
+        Saving::Results => "Save results",
+    };
+    let lines = vec![
+        Line::raw(prompt.path.text()),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("Enter", Style::new().fg(Color::Cyan)),
+            Span::raw(" save   "),
+            Span::styled("Esc", Style::new().fg(Color::Cyan)),
+            Span::raw(" cancel"),
+        ]),
+    ];
+    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX) + 2;
+    let area = frame
+        .area()
+        .centered(Constraint::Length(60), Constraint::Length(height));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .title(title)
+                .border_style(Style::new().fg(Color::Cyan)),
+        ),
+        area,
+    );
+    let cursor = u16::try_from(prompt.path.cursor()).unwrap_or(u16::MAX);
+    let x = (area.x + 1 + cursor).min(area.right().saturating_sub(2));
+    frame.set_cursor_position((x, area.y + 1));
 }
 
 #[cfg(test)]
@@ -1178,6 +1215,37 @@ mod tests {
                 screen.join("\n")
             );
         }
+    }
+
+    #[test]
+    fn draws_a_dialog_asking_where_to_save_with_the_cursor_in_the_path() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+        press(&mut state, KeyCode::Esc);
+        press(&mut state, KeyCode::Char('w'));
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+        let screen = screen(&state);
+
+        for text in ["Save results", "carts.json", "Enter", "Esc"] {
+            assert!(
+                shows(&screen, text),
+                "{text} missing from\n{}",
+                screen.join("\n")
+            );
+        }
+        let cursor = terminal.get_cursor_position().unwrap();
+        let row = screen
+            .iter()
+            .position(|l| l.contains("carts.json"))
+            .unwrap();
+        let start = screen[row].find("carts.json").unwrap();
+        let column = screen[row][..start].chars().count() + "carts.json".len();
+        assert_eq!(
+            (usize::from(cursor.x), usize::from(cursor.y)),
+            (column, row)
+        );
     }
 
     #[test]
