@@ -145,6 +145,34 @@ pub fn document_height(size: Size, zoomed: Option<Focus>) -> u16 {
     document.height.saturating_sub(2)
 }
 
+/// How many lines the query editor shows on a terminal of this size,
+/// or none when another pane is zoomed.
+pub fn editor_height(size: Size, zoomed: Option<Focus>) -> u16 {
+    let editor = panes(
+        Rect::from((Position::ORIGIN, size)),
+        Mode::Query,
+        false,
+        zoomed,
+    )
+    .editor;
+    // Less the top and bottom borders
+    editor.height.saturating_sub(2)
+}
+
+/// How many lines of the query output show on a terminal of this size,
+/// or none when another pane is zoomed.
+pub fn output_height(size: Size, zoomed: Option<Focus>) -> u16 {
+    let output = panes(
+        Rect::from((Position::ORIGIN, size)),
+        Mode::Query,
+        false,
+        zoomed,
+    )
+    .output;
+    // Less the top and bottom borders
+    output.height.saturating_sub(2)
+}
+
 /// How many documents the results table shows on a terminal of this size,
 /// or none when another pane is zoomed.
 pub fn results_height(size: Size, zoomed: Option<Focus>) -> u16 {
@@ -680,6 +708,26 @@ mod tests {
         assert_eq!(document_height(size, Some(Focus::Document)), 17);
         // and the header
         assert_eq!(results_height(size, Some(Focus::Results)), 16);
+    }
+
+    #[test]
+    fn the_query_editor_and_output_split_the_rows_beside_the_tree() {
+        let size = Size::new(100, 20);
+
+        // 20 rows less the status line: 7 for the editor and 12 for the output, less borders
+        assert_eq!(editor_height(size, None), 5);
+        assert_eq!(output_height(size, None), 10);
+        assert_eq!(output_height(size, Some(Focus::Output)), 17);
+        assert_eq!(editor_height(size, Some(Focus::Output)), 0);
+    }
+
+    #[test]
+    fn finds_the_query_editor_and_output_in_query_mode() {
+        let size = Size::new(100, 20);
+        let at = |x, y| pane_at(size, Position::new(x, y), Mode::Query, false, None);
+
+        assert_eq!(at(30, 2), Some((Focus::Editor, Some(Position::new(4, 1)))));
+        assert_eq!(at(30, 10), Some((Focus::Output, Some(Position::new(4, 2)))));
     }
 
     #[test]
