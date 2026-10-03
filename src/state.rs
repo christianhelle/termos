@@ -1100,7 +1100,7 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let page = usize::from(state.editor_height).max(1);
     let editor = &mut state.editor;
     match key.code {
-        KeyCode::Char(c) => editor.insert(c),
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => editor.insert(c),
         KeyCode::Enter => editor.newline(),
         KeyCode::Backspace => editor.backspace(),
         KeyCode::Delete => editor.delete(),
@@ -3562,5 +3562,15 @@ mod tests {
             state.prompt.as_ref().map(|p| p.path.text()),
             Some("carts.sql")
         );
+    }
+
+    #[test]
+    fn unbound_ctrl_keys_type_nothing_in_the_query_editor() {
+        let mut state = with_query_editor();
+
+        press_ctrl(&mut state, 'a');
+        press_ctrl(&mut state, 'u');
+
+        assert_eq!(state.editor.text(), "SELECT * FROM c");
     }
 }
