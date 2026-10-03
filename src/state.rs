@@ -901,6 +901,9 @@ fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    if is_run_key(key) {
+        return run_editor_query(state);
+    }
     let page = usize::from(state.editor_height).max(1);
     let editor = &mut state.editor;
     match key.code {
@@ -919,6 +922,23 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         _ => {}
     }
     Vec::new()
+}
+
+/// Whether the key runs the query editor's query: F5, Ctrl-R, or Shift-Enter
+/// in terminals that tell it apart from Enter.
+fn is_run_key(key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::F(5) => true,
+        KeyCode::Char('r') => key.modifiers.contains(KeyModifiers::CONTROL),
+        KeyCode::Enter => key.modifiers.contains(KeyModifiers::SHIFT),
+        _ => false,
+    }
+}
+
+/// Runs the query in the editor as it is written.
+fn run_editor_query(state: &mut AppState) -> Vec<Effect> {
+    let sql = state.editor.text().trim().to_string();
+    run_query(state, sql)
 }
 
 fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -1892,6 +1912,33 @@ mod tests {
         assert_eq!(state.editor.text(), "SELECT * FROM cWHERE c.q = 1");
         assert!(!state.quit);
         assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn f5_ctrl_r_and_shift_enter_run_the_query_as_written() {
+        let run_keys = [
+            KeyEvent::from(KeyCode::F(5)),
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+        ];
+        for key in run_keys {
+            let mut state = with_query_editor();
+            state.editor.set_text("  SELECT VALUE c.id\nFROM c\n");
+
+            let effects = update(&mut state, Event::Key(key));
+
+            assert_eq!(
+                effects,
+                vec![Effect::Query {
+                    id: 2,
+                    target: carts(),
+                    sql: "SELECT VALUE c.id\nFROM c".into()
+                }],
+                "{key:?}"
+            );
+            assert_eq!(state.editor.text(), "  SELECT VALUE c.id\nFROM c\n");
+            assert_eq!(state.focus, Focus::Editor);
+        }
     }
 
     fn with_cart_results() -> AppState {
