@@ -765,6 +765,9 @@ fn leave_query_editor(state: &mut AppState) {
 }
 
 fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    if is_run_key(key) || key.code == KeyCode::Char('r') {
+        return run_editor_query(state);
+    }
     let last = usize::from(state.max_output_scroll());
     let page = usize::from(state.output_height).max(1);
     let scroll = usize::from(state.output_scroll);
@@ -2152,6 +2155,25 @@ mod tests {
         query_done(&mut state, 2, Ok(cart_docs()));
 
         assert_eq!(state.output_scroll, 0);
+    }
+
+    #[test]
+    fn f5_and_r_in_the_output_run_the_editor_query_again() {
+        for code in [KeyCode::F(5), KeyCode::Char('r')] {
+            let mut state = with_output();
+            state.editor.set_text("SELECT VALUE c.id FROM c");
+
+            let effects = press(&mut state, code);
+
+            assert_eq!(
+                effects,
+                vec![Effect::Query {
+                    id: 2,
+                    target: carts(),
+                    sql: "SELECT VALUE c.id FROM c".into()
+                }]
+            );
+        }
     }
 
     fn with_cart_results() -> AppState {
