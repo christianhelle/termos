@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Position;
 use serde_json::Value;
 
+use crate::editor::Editor;
 use crate::input::TextInput;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
@@ -220,6 +221,17 @@ pub enum Focus {
     Search,
     Results,
     Document,
+    /// The query editor, in query mode.
+    Editor,
+}
+
+/// Which panes show next to the tree.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mode {
+    /// The search bar, the results and the selected document.
+    Browse,
+    /// The query editor and the documents its query found.
+    Query,
 }
 
 impl Focus {
@@ -255,6 +267,9 @@ pub struct AppState {
     /// Whether the focused pane takes the whole screen.
     pub zoomed: bool,
     pub focus: Focus,
+    pub mode: Mode,
+    /// The query written in query mode.
+    pub editor: Editor,
     /// What is typed in the search bar.
     pub search: TextInput,
     /// Index of the selected tree row.
@@ -303,6 +318,8 @@ impl AppState {
             tree_hidden: false,
             zoomed: false,
             focus: Focus::Tree,
+            mode: Mode::Browse,
+            editor: Editor::default(),
             search: TextInput::default(),
             tree_selected: 0,
             target: None,
@@ -637,7 +654,7 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
                 head: point,
             });
         }
-        Focus::Results => {}
+        Focus::Results | Focus::Editor => {}
     }
     Vec::new()
 }
@@ -678,7 +695,7 @@ fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
         Focus::Document => (0..WHEEL_LINES)
             .flat_map(|_| on_document_key(state, key))
             .collect(),
-        Focus::Search => Vec::new(),
+        Focus::Search | Focus::Editor => Vec::new(),
     }
 }
 
@@ -689,16 +706,29 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('/') => state.focus = Focus::Search,
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
+        KeyCode::Char('n') => open_query_editor(state),
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
                 Focus::Results => on_results_key(state, key),
                 Focus::Document => on_document_key(state, key),
-                Focus::Search => Vec::new(),
+                Focus::Search | Focus::Editor => Vec::new(),
             };
         }
     }
     Vec::new()
+}
+
+/// Shows the query editor, holding the latest query, in place of the results and document.
+fn open_query_editor(state: &mut AppState) {
+    state.mode = Mode::Query;
+    state.focus = Focus::Editor;
+    let sql = if state.last_sql.is_empty() {
+        DEFAULT_QUERY
+    } else {
+        &state.last_sql
+    };
+    state.editor.set_text(sql);
 }
 
 /// Where a key that jumps by pages or to an end moves a position, from 0 to `last`.
@@ -1776,6 +1806,22 @@ mod tests {
 
         assert!(effects.is_empty());
         assert_eq!(state.status, Status::Error("pick a container first".into()));
+    }
+
+    #[test]
+    fn n_opens_the_query_editor_with_the_last_query() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        press(&mut state, KeyCode::Char('/'));
+        type_text(&mut state, "c.qty > 1");
+        press(&mut state, KeyCode::Enter);
+
+        let effects = press(&mut state, KeyCode::Char('n'));
+
+        assert!(effects.is_empty());
+        assert_eq!(state.mode, Mode::Query);
+        assert_eq!(state.focus, Focus::Editor);
+        assert_eq!(state.editor.text(), "SELECT * FROM c WHERE c.qty > 1");
     }
 
     fn with_cart_results() -> AppState {
