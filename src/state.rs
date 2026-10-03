@@ -13,7 +13,7 @@ use crate::input::TextInput;
 use crate::json::highlight_json_array;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
-use crate::settings::{ContainerSettings, SettingsTab};
+use crate::settings::{ContainerSettings, Field, SettingsTab};
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -953,9 +953,9 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
                 Focus::Results => on_results_key(state, key),
                 Focus::Document => on_document_key(state, key),
                 Focus::Output => on_output_key(state, key),
+                Focus::SettingsForm => on_settings_form_key(state, key),
                 Focus::Search
                 | Focus::Editor
-                | Focus::SettingsForm
                 | Focus::IndexingPolicy
                 | Focus::ComputedProperties => Vec::new(),
             };
@@ -1047,6 +1047,37 @@ fn open_settings(state: &mut AppState) -> Vec<Effect> {
     state.settings_tab = SettingsTab::Settings;
     state.settings = Some(Load::Loading);
     vec![Effect::LoadSettings(target)]
+}
+
+/// The loaded settings, to edit.
+fn settings_mut(state: &mut AppState) -> Option<&mut ContainerSettings> {
+    match &mut state.settings {
+        Some(Load::Loaded(settings)) => Some(settings),
+        _ => None,
+    }
+}
+
+/// Moves through the settings form and changes its choices, or edits the seconds.
+fn on_settings_form_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let Some(settings) = settings_mut(state) else {
+        return Vec::new();
+    };
+    let seconds = &mut settings.seconds;
+    match (settings.field, key.code) {
+        (_, KeyCode::Down | KeyCode::Char('j')) => settings.next_field(),
+        (_, KeyCode::Up | KeyCode::Char('k')) => settings.previous_field(),
+        (Field::Seconds, KeyCode::Char(c)) if c.is_ascii_digit() => seconds.insert(c),
+        (Field::Seconds, KeyCode::Backspace) => seconds.backspace(),
+        (Field::Seconds, KeyCode::Delete) => seconds.delete(),
+        (Field::Seconds, KeyCode::Left) => seconds.left(),
+        (Field::Seconds, KeyCode::Right) => seconds.right(),
+        (Field::Seconds, KeyCode::Home) => seconds.home(),
+        (Field::Seconds, KeyCode::End) => seconds.end(),
+        (_, KeyCode::Right | KeyCode::Char('l' | ' ')) => settings.next_choice(),
+        (_, KeyCode::Left | KeyCode::Char('h')) => settings.previous_choice(),
+        _ => {}
+    }
+    Vec::new()
 }
 
 /// Where a key that jumps by pages or to an end moves a position, from 0 to `last`.
@@ -1779,7 +1810,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{SettingsTab, TimeToLive};
+    use crate::settings::{Field, Geospatial, SettingsTab, TimeToLive};
     use crate::testing::{account, container};
     use serde_json::{Value, json};
     use std::time::Duration;
@@ -3997,5 +4028,35 @@ mod tests {
             ]
         );
         assert_eq!(state.focus, Focus::Tree);
+    }
+
+    fn with_loaded_carts_settings(properties: Value) -> AppState {
+        let mut state = with_carts_settings();
+        settings_loaded(&mut state, carts(), Ok(properties));
+        state
+    }
+
+    #[test]
+    fn form_keys_change_the_time_to_live_seconds_and_geospatial_type() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+
+        press(&mut state, KeyCode::Right);
+        press(&mut state, KeyCode::Char('l'));
+        assert_eq!(shown_settings(&state).ttl, TimeToLive::Seconds);
+        press(&mut state, KeyCode::Down);
+        type_text(&mut state, "905");
+        press(&mut state, KeyCode::Backspace);
+        assert_eq!(shown_settings(&state).seconds.text(), "90");
+        press(&mut state, KeyCode::Char('j'));
+        press(&mut state, KeyCode::Char(' '));
+        assert_eq!(shown_settings(&state).geospatial, Geospatial::Geometry);
+        press(&mut state, KeyCode::Up);
+        press(&mut state, KeyCode::Char('k'));
+        press(&mut state, KeyCode::Char('h'));
+        press(&mut state, KeyCode::Left);
+
+        let settings = shown_settings(&state);
+        assert_eq!(settings.field, Field::Ttl);
+        assert_eq!(settings.ttl, TimeToLive::Off);
     }
 }
