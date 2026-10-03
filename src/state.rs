@@ -278,10 +278,20 @@ pub enum Focus {
     Output,
 }
 
-/// A dialog asking where to save the query.
+/// A dialog asking where to save the query or its results.
 #[derive(Debug)]
 pub struct SavePrompt {
+    pub saving: Saving,
     pub path: TextInput,
+}
+
+/// What a save dialog saves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Saving {
+    /// The query in the query editor.
+    Query,
+    /// The documents the query found, as a JSON array.
+    Results,
 }
 
 /// Which panes show next to the tree.
@@ -854,6 +864,14 @@ fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     if is_run_key(key) || key.code == KeyCode::Char('r') {
         return run_editor_query(state);
     }
+    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        ask_where_to_save(state, Saving::Query);
+        return Vec::new();
+    }
+    if key.code == KeyCode::Char('w') {
+        ask_where_to_save(state, Saving::Results);
+        return Vec::new();
+    }
     if key.code == KeyCode::Char('s') {
         state.output_tab = match state.output_tab {
             OutputTab::Results => OutputTab::Stats,
@@ -1076,7 +1094,7 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         return run_editor_query(state);
     }
     if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        ask_where_to_save(state);
+        ask_where_to_save(state, Saving::Query);
         return Vec::new();
     }
     let page = usize::from(state.editor_height).max(1);
@@ -1100,15 +1118,21 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Opens the dialog asking where to save the query, suggesting a file named after the container.
-fn ask_where_to_save(state: &mut AppState) {
+/// Opens the dialog asking where to save, suggesting a file named after the container.
+fn ask_where_to_save(state: &mut AppState, saving: Saving) {
     let name = state
         .target
         .as_ref()
         .map_or("query", |target| target.container.as_str());
+    let extension = match saving {
+        Saving::Query => "sql",
+        Saving::Results => "json",
+    };
     let mut path = TextInput::default();
-    format!("{name}.sql").chars().for_each(|c| path.insert(c));
-    state.prompt = Some(SavePrompt { path });
+    format!("{name}.{extension}")
+        .chars()
+        .for_each(|c| path.insert(c));
+    state.prompt = Some(SavePrompt { saving, path });
 }
 
 /// Edits the path in the save dialog, then saves with Enter or cancels with Esc.
@@ -1128,8 +1152,13 @@ fn on_prompt_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Esc => state.prompt = None,
         KeyCode::Enter => {
             let path = path.text().to_string();
+            let saving = prompt.saving;
             state.prompt = None;
-            let contents = format!("{}\n", state.editor.text());
+            let text = match saving {
+                Saving::Query => state.editor.text(),
+                Saving::Results => serde_json::to_string_pretty(&state.results).unwrap_or_default(),
+            };
+            let contents = format!("{text}\n");
             return vec![Effect::Save { path, contents }];
         }
         _ => {}
@@ -3500,5 +3529,38 @@ mod tests {
 
         update(&mut state, Event::Msg(Msg::Saved(Err("denied".into()))));
         assert_eq!(state.status, Status::Error("could not save: denied".into()));
+    }
+
+    #[test]
+    fn w_in_the_output_asks_where_to_save_the_results_then_saves_them() {
+        let mut state = with_output();
+
+        press(&mut state, KeyCode::Char('w'));
+        assert_eq!(
+            state.prompt.as_ref().map(|p| p.path.text()),
+            Some("carts.json")
+        );
+        let effects = press(&mut state, KeyCode::Enter);
+
+        let json = serde_json::to_string_pretty(&cart_docs()).unwrap();
+        assert_eq!(
+            effects,
+            vec![Effect::Save {
+                path: "carts.json".into(),
+                contents: format!("{json}\n")
+            }]
+        );
+    }
+
+    #[test]
+    fn ctrl_s_in_the_output_saves_the_query_too() {
+        let mut state = with_output();
+
+        ctrl_s(&mut state);
+
+        assert_eq!(
+            state.prompt.as_ref().map(|p| p.path.text()),
+            Some("carts.sql")
+        );
     }
 }
