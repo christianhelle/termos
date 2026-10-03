@@ -223,6 +223,8 @@ pub enum Focus {
     Document,
     /// The query editor, in query mode.
     Editor,
+    /// The documents the query editor's query found, in query mode.
+    Output,
 }
 
 /// Which panes show next to the tree.
@@ -234,21 +236,30 @@ pub enum Mode {
     Query,
 }
 
-impl Focus {
+impl Mode {
     /// The panes Tab cycles through; the search bar is only reached with `/`.
-    const ORDER: [Focus; 3] = [Focus::Tree, Focus::Results, Focus::Document];
+    fn panes(self) -> [Focus; 3] {
+        match self {
+            Mode::Browse => [Focus::Tree, Focus::Results, Focus::Document],
+            Mode::Query => [Focus::Tree, Focus::Editor, Focus::Output],
+        }
+    }
+}
 
-    fn next(self) -> Focus {
-        match Self::ORDER.iter().position(|f| *f == self) {
-            Some(index) => Self::ORDER[(index + 1) % Self::ORDER.len()],
-            None => Focus::Results,
+impl Focus {
+    fn next(self, mode: Mode) -> Focus {
+        let order = mode.panes();
+        match order.iter().position(|f| *f == self) {
+            Some(index) => order[(index + 1) % order.len()],
+            None => order[1],
         }
     }
 
-    fn previous(self) -> Focus {
-        match Self::ORDER.iter().position(|f| *f == self) {
-            Some(index) => Self::ORDER[(index + Self::ORDER.len() - 1) % Self::ORDER.len()],
-            None => Focus::Tree,
+    fn previous(self, mode: Mode) -> Focus {
+        let order = mode.panes();
+        match order.iter().position(|f| *f == self) {
+            Some(index) => order[(index + order.len() - 1) % order.len()],
+            None => order[0],
         }
     }
 }
@@ -580,10 +591,10 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 /// Moves the focus one pane along, past the tree while it is hidden.
-fn move_focus(state: &mut AppState, step: fn(Focus) -> Focus) {
-    state.focus = step(state.focus);
+fn move_focus(state: &mut AppState, step: fn(Focus, Mode) -> Focus) {
+    state.focus = step(state.focus, state.mode);
     if state.tree_hidden && state.focus == Focus::Tree {
-        state.focus = step(state.focus);
+        state.focus = step(state.focus, state.mode);
     }
 }
 
@@ -591,7 +602,10 @@ fn move_focus(state: &mut AppState, step: fn(Focus) -> Focus) {
 fn toggle_tree(state: &mut AppState) {
     state.tree_hidden = !state.tree_hidden;
     if state.tree_hidden && state.focus == Focus::Tree {
-        state.focus = Focus::Search;
+        state.focus = match state.mode {
+            Mode::Browse => Focus::Search,
+            Mode::Query => Focus::Editor,
+        };
     }
 }
 
@@ -658,7 +672,7 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
                 head: point,
             });
         }
-        Focus::Results | Focus::Editor => {}
+        Focus::Results | Focus::Editor | Focus::Output => {}
     }
     Vec::new()
 }
@@ -699,7 +713,7 @@ fn on_wheel(state: &mut AppState, pane: Focus, code: KeyCode) -> Vec<Effect> {
         Focus::Document => (0..WHEEL_LINES)
             .flat_map(|_| on_document_key(state, key))
             .collect(),
-        Focus::Search | Focus::Editor => Vec::new(),
+        Focus::Search | Focus::Editor | Focus::Output => Vec::new(),
     }
 }
 
@@ -710,15 +724,32 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('/') => state.focus = Focus::Search,
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
+        KeyCode::Char('n') if state.mode == Mode::Query => leave_query_editor(state),
         KeyCode::Char('n') => open_query_editor(state),
         _ => {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
                 Focus::Results => on_results_key(state, key),
                 Focus::Document => on_document_key(state, key),
+                Focus::Output => on_output_key(state, key),
                 Focus::Search | Focus::Editor => Vec::new(),
             };
         }
+    }
+    Vec::new()
+}
+
+/// Shows the search bar, results and document again, keeping the query in the editor.
+fn leave_query_editor(state: &mut AppState) {
+    state.mode = Mode::Browse;
+    if matches!(state.focus, Focus::Editor | Focus::Output) {
+        state.focus = Focus::Results;
+    }
+}
+
+fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    if key.code == KeyCode::Esc {
+        leave_query_editor(state);
     }
     Vec::new()
 }
@@ -919,6 +950,7 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::End => editor.end(),
         KeyCode::PageUp => editor.page_up(page),
         KeyCode::PageDown => editor.page_down(page),
+        KeyCode::Esc => state.focus = Focus::Output,
         _ => {}
     }
     Vec::new()
@@ -1939,6 +1971,55 @@ mod tests {
             assert_eq!(state.editor.text(), "  SELECT VALUE c.id\nFROM c\n");
             assert_eq!(state.focus, Focus::Editor);
         }
+    }
+
+    #[test]
+    fn tab_and_shift_tab_cycle_through_the_tree_editor_and_output_in_query_mode() {
+        let mut state = with_query_editor();
+
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.focus, Focus::Output);
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.focus, Focus::Tree);
+        press(&mut state, KeyCode::Tab);
+        assert_eq!(state.focus, Focus::Editor);
+        press(&mut state, KeyCode::BackTab);
+        assert_eq!(state.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn escape_leaves_the_editor_for_the_output_then_the_query_mode() {
+        let mut state = with_query_editor();
+
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.focus, Focus::Output);
+        assert_eq!(state.mode, Mode::Query);
+        press(&mut state, KeyCode::Esc);
+
+        assert_eq!(state.mode, Mode::Browse);
+        assert_eq!(state.focus, Focus::Results);
+    }
+
+    #[test]
+    fn n_in_the_output_leaves_the_query_mode_keeping_the_query() {
+        let mut state = with_query_editor();
+        state.editor.set_text("SELECT VALUE c.id FROM c");
+        press(&mut state, KeyCode::Esc);
+
+        press(&mut state, KeyCode::Char('n'));
+
+        assert_eq!(state.mode, Mode::Browse);
+        assert_eq!(state.editor.text(), "SELECT VALUE c.id FROM c");
+    }
+
+    #[test]
+    fn hiding_the_focused_tree_in_query_mode_focuses_the_editor() {
+        let mut state = with_query_editor();
+        state.focus = Focus::Tree;
+
+        ctrl_b(&mut state);
+
+        assert_eq!(state.focus, Focus::Editor);
     }
 
     fn with_cart_results() -> AppState {
