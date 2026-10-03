@@ -25,6 +25,15 @@ pub enum Geospatial {
     Geometry,
 }
 
+/// A setting on the settings tab that keys can change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Field {
+    Ttl,
+    /// The seconds after which documents expire, only while they are asked for.
+    Seconds,
+    Geospatial,
+}
+
 /// The tabs of settings mode, each showing some of the settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SettingsTab {
@@ -50,6 +59,8 @@ pub struct ContainerSettings {
     /// The seconds after which documents expire, as typed.
     pub seconds: TextInput,
     pub geospatial: Geospatial,
+    /// The setting keys change on the settings tab.
+    pub field: Field,
     /// The indexing policy, as JSON.
     pub indexing: Editor,
     /// The computed properties, as a JSON array.
@@ -81,7 +92,61 @@ impl ContainerSettings {
             ttl,
             seconds,
             geospatial,
+            field: Field::Ttl,
         }
+    }
+
+    /// Moves to the next setting on the settings tab, if there is one.
+    pub fn next_field(&mut self) {
+        self.field = match self.field {
+            Field::Ttl if self.ttl == TimeToLive::Seconds => Field::Seconds,
+            Field::Ttl | Field::Seconds | Field::Geospatial => Field::Geospatial,
+        };
+    }
+
+    /// Moves to the setting before on the settings tab, if there is one.
+    pub fn previous_field(&mut self) {
+        self.field = match self.field {
+            Field::Geospatial if self.ttl == TimeToLive::Seconds => Field::Seconds,
+            Field::Ttl | Field::Seconds | Field::Geospatial => Field::Ttl,
+        };
+    }
+
+    /// Picks the next option of the setting, back to the first after the last.
+    pub fn next_choice(&mut self) {
+        match self.field {
+            Field::Ttl => {
+                self.ttl = match self.ttl {
+                    TimeToLive::Off => TimeToLive::NoDefault,
+                    TimeToLive::NoDefault => TimeToLive::Seconds,
+                    TimeToLive::Seconds => TimeToLive::Off,
+                }
+            }
+            Field::Geospatial => self.toggle_geospatial(),
+            Field::Seconds => {}
+        }
+    }
+
+    /// Picks the option before of the setting, round to the last from the first.
+    pub fn previous_choice(&mut self) {
+        match self.field {
+            Field::Ttl => {
+                self.ttl = match self.ttl {
+                    TimeToLive::Off => TimeToLive::Seconds,
+                    TimeToLive::NoDefault => TimeToLive::Off,
+                    TimeToLive::Seconds => TimeToLive::NoDefault,
+                }
+            }
+            Field::Geospatial => self.toggle_geospatial(),
+            Field::Seconds => {}
+        }
+    }
+
+    fn toggle_geospatial(&mut self) {
+        self.geospatial = match self.geospatial {
+            Geospatial::Geography => Geospatial::Geometry,
+            Geospatial::Geometry => Geospatial::Geography,
+        };
     }
 
     /// The properties to replace the container's with, holding the edited settings.
@@ -487,5 +552,48 @@ mod tests {
             changed(&settings),
             [SettingsTab::IndexingPolicy, SettingsTab::ComputedProperties]
         );
+    }
+
+    #[test]
+    fn moves_through_the_fields_reaching_the_seconds_only_while_they_count() {
+        let mut settings = ContainerSettings::from_properties(&json!({}));
+        assert_eq!(settings.field, Field::Ttl);
+
+        settings.next_field();
+        assert_eq!(settings.field, Field::Geospatial);
+        settings.next_field();
+        assert_eq!(settings.field, Field::Geospatial);
+        settings.previous_field();
+        assert_eq!(settings.field, Field::Ttl);
+
+        settings.ttl = TimeToLive::Seconds;
+        settings.next_field();
+        assert_eq!(settings.field, Field::Seconds);
+        settings.next_field();
+        settings.previous_field();
+        assert_eq!(settings.field, Field::Seconds);
+        settings.previous_field();
+        settings.previous_field();
+        assert_eq!(settings.field, Field::Ttl);
+    }
+
+    #[test]
+    fn changes_the_choice_of_the_field_round_its_options() {
+        let mut settings = ContainerSettings::from_properties(&json!({}));
+
+        settings.next_choice();
+        assert_eq!(settings.ttl, TimeToLive::NoDefault);
+        settings.next_choice();
+        assert_eq!(settings.ttl, TimeToLive::Seconds);
+        settings.next_choice();
+        assert_eq!(settings.ttl, TimeToLive::Off);
+        settings.previous_choice();
+        assert_eq!(settings.ttl, TimeToLive::Seconds);
+
+        settings.field = Field::Geospatial;
+        settings.next_choice();
+        assert_eq!(settings.geospatial, Geospatial::Geometry);
+        settings.previous_choice();
+        assert_eq!(settings.geospatial, Geospatial::Geography);
     }
 }
