@@ -27,6 +27,8 @@ pub enum Geospatial {
 /// A container's settings, with the edits made to them.
 #[derive(Debug)]
 pub struct ContainerSettings {
+    /// The properties as the service last reported them.
+    original: Value,
     pub ttl: TimeToLive,
     /// The seconds after which documents expire, as typed.
     pub seconds: TextInput,
@@ -50,10 +52,26 @@ impl ContainerSettings {
             _ => Geospatial::Geography,
         };
         ContainerSettings {
+            original: properties.clone(),
             ttl,
             seconds,
             geospatial,
         }
+    }
+
+    /// The partition key paths, and whether there is more than one level of them.
+    pub fn partition_key(&self) -> (String, &'static str) {
+        let key = &self.original["partitionKey"];
+        let paths: Vec<&str> = key["paths"]
+            .as_array()
+            .map(|paths| paths.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let note = if paths.len() > 1 || key["kind"] == "MultiHash" {
+            "Hierarchically partitioned container."
+        } else {
+            "Non-hierarchically partitioned container."
+        };
+        (paths.join(", "), note)
     }
 }
 
@@ -83,5 +101,24 @@ mod tests {
 
         assert_eq!(unset.geospatial, Geospatial::Geography);
         assert_eq!(geometry.geospatial, Geospatial::Geometry);
+    }
+
+    #[test]
+    fn describes_the_partition_key_and_whether_it_is_hierarchical() {
+        let single = ContainerSettings::from_properties(&json!({
+            "partitionKey": {"paths": ["/driverId"], "kind": "Hash"}
+        }));
+        let hierarchical = ContainerSettings::from_properties(&json!({
+            "partitionKey": {"paths": ["/tenantId", "/userId"], "kind": "MultiHash"}
+        }));
+
+        assert_eq!(
+            single.partition_key(),
+            ("/driverId".to_string(), "Non-hierarchically partitioned container.")
+        );
+        assert_eq!(
+            hierarchical.partition_key(),
+            ("/tenantId, /userId".to_string(), "Hierarchically partitioned container.")
+        );
     }
 }
