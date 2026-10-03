@@ -10,7 +10,8 @@ use ratatui::widgets::{
     ScrollbarState, Table, TableState, Wrap,
 };
 
-use crate::json::{highlight_json, highlight_json_array};
+use crate::editor::Editor;
+use crate::json::{highlight_json, highlight_json_array, highlight_json_line};
 use crate::query::DEFAULT_QUERY;
 use crate::settings::{ContainerSettings, Field, Geospatial, SettingsTab, TimeToLive};
 use crate::sql::highlight_sql;
@@ -366,8 +367,23 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
         Some(target) => format!("Query: {}/{}", target.database, target.container),
         None => "Query".to_string(),
     };
-    let lines = state.editor.lines();
-    let gutter = state.editor.number_width();
+    let block = pane(title, state, Focus::Editor);
+    let focused = state.focus == Focus::Editor;
+    draw_code(frame, &state.editor, highlight_sql, block, focused, area);
+}
+
+/// Draws text being edited with numbered, coloured lines, scrolled to show the
+/// cursor, which shows while the pane has the focus.
+fn draw_code(
+    frame: &mut Frame,
+    editor: &Editor,
+    highlight: fn(&str) -> Line<'static>,
+    block: Block,
+    focused: bool,
+    area: Rect,
+) {
+    let lines = editor.lines();
+    let gutter = editor.number_width();
     let numbered: Vec<Line> = lines
         .iter()
         .enumerate()
@@ -377,20 +393,18 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
                 Style::new().fg(Color::DarkGray),
             );
             let mut spans = vec![number];
-            spans.extend(highlight_sql(line).spans);
+            spans.extend(highlight(line).spans);
             Line::from(spans)
         })
         .collect();
-    let (row, column) = state.editor.cursor();
-    let scroll = state
-        .editor
-        .scroll(usize::from(area.height.saturating_sub(2)));
-    let editor = Paragraph::new(numbered)
-        .block(pane(title, state, Focus::Editor))
+    let (row, column) = editor.cursor();
+    let scroll = editor.scroll(usize::from(area.height.saturating_sub(2)));
+    let paragraph = Paragraph::new(numbered)
+        .block(block)
         .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0));
-    frame.render_widget(editor, area);
+    frame.render_widget(paragraph, area);
     draw_scrollbar(frame, area.inner(Margin::new(0, 1)), lines.len(), scroll);
-    if state.focus == Focus::Editor {
+    if focused {
         let x = area.x + 1 + u16::try_from(gutter + 1 + column).unwrap_or(u16::MAX);
         let y = area.y + 1 + u16::try_from(row - scroll).unwrap_or(u16::MAX);
         frame.set_cursor_position((x.min(area.right().saturating_sub(2)), y));
@@ -448,7 +462,14 @@ fn draw_settings(frame: &mut Frame, state: &AppState, area: Rect) {
     };
     match state.settings_tab {
         SettingsTab::Settings => draw_settings_form(frame, state, settings, block, area),
-        SettingsTab::IndexingPolicy | SettingsTab::ComputedProperties => {}
+        SettingsTab::IndexingPolicy | SettingsTab::ComputedProperties => {
+            let editor = match state.settings_tab {
+                SettingsTab::IndexingPolicy => &settings.indexing,
+                _ => &settings.computed,
+            };
+            let focused = state.focus == focus;
+            draw_code(frame, editor, highlight_json_line, block, focused, area);
+        }
     }
 }
 
@@ -1249,6 +1270,31 @@ mod tests {
         ] {
             assert!(shows(&screen, shown), "{shown}\n{}", screen.join("\n"));
         }
+    }
+
+    #[test]
+    fn the_json_settings_tabs_number_their_lines() {
+        let mut state = with_settings(json!({
+            "indexingPolicy": {"automatic": true},
+            "computedProperties": [{"name": "cp"}]
+        }));
+
+        press(&mut state, KeyCode::Tab);
+        let indexing = screen(&state);
+        press(&mut state, KeyCode::Tab);
+        let computed = screen(&state);
+
+        assert!(shows(&indexing, " 1 {"), "{}", indexing.join("\n"));
+        assert!(
+            shows(&indexing, r#" 2   "automatic": true"#),
+            "{}",
+            indexing.join("\n")
+        );
+        assert!(
+            shows(&computed, r#" 3     "name": "cp""#),
+            "{}",
+            computed.join("\n")
+        );
     }
 
     #[test]
