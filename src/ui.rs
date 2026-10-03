@@ -526,10 +526,10 @@ fn pane<'a>(title: impl Into<Line<'a>>, state: &AppState, focus: Focus) -> Block
 }
 
 fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
-    let hint = if state.zoomed_pane().is_some() {
-        "z unzoom · Tab next pane · / search · ? help · q quit"
-    } else {
-        "Tab next pane · / search · ? help · q quit"
+    let hint = match (state.mode, state.zoomed_pane().is_some()) {
+        (Mode::Browse, true) => "z unzoom · Tab next pane · / search · n query · ? help · q quit",
+        (Mode::Browse, false) => "Tab next pane · / search · n query · ? help · q quit",
+        (Mode::Query, _) => "F5 run · Esc back · Tab next pane · ? help",
     };
     let width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
     let [message, keys] =
@@ -1064,6 +1064,21 @@ mod tests {
             assert!(found, "{row:?} missing from\n{}", screen.join("\n"));
         }
         assert!(!shows(&screen, r#""id": "c-1""#), "{}", screen.join("\n"));
+    }
+
+    #[test]
+    fn the_status_line_hints_at_the_query_editor_and_how_to_run_it() {
+        let mut state = with_results();
+        assert!(
+            shows(&screen(&state), "n query"),
+            "{}",
+            screen(&state).join("\n")
+        );
+
+        press(&mut state, KeyCode::Char('n'));
+
+        let screen = screen(&state);
+        assert!(shows(&screen, "F5 run · Esc back"), "{}", screen.join("\n"));
     }
 
     #[test]
