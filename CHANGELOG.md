@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Show the request charge, round trips and query metrics in a stats tab, switched to with `s`.
 - Copy the query results with `y`, save them to a JSON file with `w`, and save the query with Ctrl-S.
 - Show the request charge of each query on the status line.
-- Show why a query failed in a dialog, with the service's own message, and explain queries such as aggregates that the Azure Cosmos DB SDK for Rust cannot run across partitions yet.
+- Show why a query failed in a dialog, with the service's own message and the line and column it points at, and explain queries such as aggregates that the Azure Cosmos DB SDK for Rust cannot run across partitions yet, or parameters termos cannot set.
 
 ## [0.1.5](https://github.com/christianhelle/termos/compare/0.1.3...0.1.5) - 2026-10-02
 
