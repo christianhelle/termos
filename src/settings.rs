@@ -15,12 +15,22 @@ pub enum TimeToLive {
     Seconds,
 }
 
+/// How the container reads spatial data.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Geospatial {
+    /// Round-earth coordinates, as longitude and latitude.
+    Geography,
+    /// Flat coordinates.
+    Geometry,
+}
+
 /// A container's settings, with the edits made to them.
 #[derive(Debug)]
 pub struct ContainerSettings {
     pub ttl: TimeToLive,
     /// The seconds after which documents expire, as typed.
     pub seconds: TextInput,
+    pub geospatial: Geospatial,
 }
 
 impl ContainerSettings {
@@ -35,7 +45,15 @@ impl ContainerSettings {
                 TimeToLive::Seconds
             }
         };
-        ContainerSettings { ttl, seconds }
+        let geospatial = match properties.pointer("/geospatialConfig/type") {
+            Some(Value::String(kind)) if kind == "Geometry" => Geospatial::Geometry,
+            _ => Geospatial::Geography,
+        };
+        ContainerSettings {
+            ttl,
+            seconds,
+            geospatial,
+        }
     }
 }
 
@@ -55,5 +73,15 @@ mod tests {
         assert_eq!(seconds.ttl, TimeToLive::Seconds);
         assert_eq!(seconds.seconds.text(), "3600");
         assert_eq!(off.seconds.text(), "");
+    }
+
+    #[test]
+    fn reads_the_geospatial_type_which_is_geography_unless_set() {
+        let unset = ContainerSettings::from_properties(&json!({}));
+        let geometry =
+            ContainerSettings::from_properties(&json!({"geospatialConfig": {"type": "Geometry"}}));
+
+        assert_eq!(unset.geospatial, Geospatial::Geography);
+        assert_eq!(geometry.geospatial, Geospatial::Geometry);
     }
 }
