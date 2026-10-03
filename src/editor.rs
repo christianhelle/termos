@@ -58,6 +58,17 @@ impl Editor {
         }
     }
 
+    /// Deletes the character under the cursor, or joins the line below at the end of a line.
+    pub fn delete(&mut self) {
+        if self.column < self.len() {
+            let at = self.byte_index(self.column);
+            self.lines[self.row].remove(at);
+        } else if self.row + 1 < self.lines.len() {
+            let line = self.lines.remove(self.row + 1);
+            self.lines[self.row].push_str(&line);
+        }
+    }
+
     /// Moves back a character, to the end of the line above from the start of a line.
     pub fn left(&mut self) {
         if self.column > 0 {
@@ -199,5 +210,31 @@ mod tests {
         editor.up();
         editor.up();
         assert_eq!(editor.cursor(), (0, 1));
+    }
+
+    #[test]
+    fn delete_removes_under_the_cursor_and_joins_the_next_line_at_the_end() {
+        let mut editor = typed("FROMx");
+        editor.newline();
+        editor.insert('c');
+        editor.left();
+        editor.left();
+        editor.left();
+
+        editor.delete();
+        assert_eq!(editor.text(), "FROM\nc");
+        editor.delete();
+
+        assert_eq!(editor.text(), "FROMc");
+        assert_eq!(editor.cursor(), (0, 4));
+    }
+
+    #[test]
+    fn delete_at_the_very_end_does_nothing() {
+        let mut editor = typed("c");
+
+        editor.delete();
+
+        assert_eq!(editor.text(), "c");
     }
 }
