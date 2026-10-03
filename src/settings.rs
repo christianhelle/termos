@@ -113,6 +113,17 @@ impl ContainerSettings {
                 object.insert("defaultTtl".into(), Value::from(seconds));
             }
         }
+        if let Some(policy) = edited(&self.indexing, &self.original, "indexingPolicy")
+            .map_err(|error| invalid(SettingsTab::IndexingPolicy, "The indexing policy", error))?
+        {
+            if !policy.is_object() {
+                return Err(SettingsError {
+                    tab: SettingsTab::IndexingPolicy,
+                    message: "The indexing policy must be a JSON object.".into(),
+                });
+            }
+            object.insert("indexingPolicy".into(), policy);
+        }
         let kind = match self.geospatial {
             Geospatial::Geography => "Geography",
             Geospatial::Geometry => "Geometry",
@@ -140,6 +151,21 @@ impl ContainerSettings {
             "Non-hierarchically partitioned container."
         };
         (paths.join(", "), note)
+    }
+}
+
+/// The JSON in an editor, or `None` when it holds the property's value as it was.
+fn edited(editor: &Editor, original: &Value, name: &str) -> serde_json::Result<Option<Value>> {
+    let value: Value = serde_json::from_str(&editor.text())?;
+    let was = original.get(name).unwrap_or(&Value::Null);
+    Ok((value != *was).then_some(value))
+}
+
+/// Says that the JSON of a tab does not parse, and where.
+fn invalid(tab: SettingsTab, what: &str, error: serde_json::Error) -> SettingsError {
+    SettingsError {
+        tab,
+        message: format!("{what} is not valid JSON: {error}"),
     }
 }
 
@@ -275,6 +301,56 @@ mod tests {
         assert_eq!(
             settings.to_properties().unwrap()["geospatialConfig"],
             json!({"type": "Geometry"})
+        );
+    }
+
+    fn retype(editor: &mut Editor, text: &str) {
+        editor.set_text(text);
+    }
+
+    #[test]
+    fn writes_back_the_edited_indexing_policy() {
+        let mut settings = ContainerSettings::from_properties(&json!({
+            "indexingPolicy": {"automatic": true}
+        }));
+
+        retype(&mut settings.indexing, r#"{"automatic": false}"#);
+
+        assert_eq!(
+            settings.to_properties().unwrap()["indexingPolicy"],
+            json!({"automatic": false})
+        );
+    }
+
+    #[test]
+    fn says_where_the_indexing_policy_is_not_valid_json() {
+        let mut settings = ContainerSettings::from_properties(&json!({"indexingPolicy": {}}));
+
+        retype(&mut settings.indexing, "{\n  \"automatic\": tru}");
+
+        assert_eq!(
+            settings.to_properties(),
+            Err(SettingsError {
+                tab: SettingsTab::IndexingPolicy,
+                message:
+                    "The indexing policy is not valid JSON: expected ident at line 2 column 19"
+                        .into()
+            })
+        );
+    }
+
+    #[test]
+    fn requires_the_indexing_policy_to_be_an_object() {
+        let mut settings = ContainerSettings::from_properties(&json!({"indexingPolicy": {}}));
+
+        retype(&mut settings.indexing, "[]");
+
+        assert_eq!(
+            settings.to_properties(),
+            Err(SettingsError {
+                tab: SettingsTab::IndexingPolicy,
+                message: "The indexing policy must be a JSON object.".into()
+            })
         );
     }
 }
