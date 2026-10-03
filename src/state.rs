@@ -1030,7 +1030,8 @@ fn toggle(state: &mut AppState) -> Vec<Effect> {
     }
 }
 
-/// Makes a container the one queries run against, and lists its documents.
+/// Makes a container the one queries run against, and lists its documents
+/// unless the query editor is open.
 fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Effect> {
     let Some(account) = state.account_mut(a).map(|node| node.account.clone()) else {
         return Vec::new();
@@ -1047,6 +1048,10 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
         container: container.name.clone(),
     };
     state.target = Some(target);
+    if state.mode == Mode::Query {
+        // The query editor's query runs on it when it is run next
+        return Vec::new();
+    }
     state.results.clear();
     state.marked.clear();
     state.result_selected = 0;
@@ -2036,6 +2041,22 @@ mod tests {
         press(&mut state, KeyCode::Char('n'));
 
         assert_eq!(state.editor.text(), "SELECT VALUE c.id FROM c");
+    }
+
+    #[test]
+    fn selecting_a_container_in_query_mode_queries_it_next_without_running() {
+        let mut state = with_query_editor();
+        state.focus = Focus::Tree;
+
+        let effects = press(&mut state, KeyCode::Down);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.target.as_ref().map(|t| t.container.as_str()),
+            Some("orders")
+        );
+        assert_eq!(state.results, cart_docs());
+        assert_eq!(state.mode, Mode::Query);
     }
 
     fn with_cart_results() -> AppState {
