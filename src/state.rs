@@ -283,6 +283,8 @@ pub struct AppState {
     pub editor: Editor,
     /// How many lines the query editor shows at once.
     pub editor_height: u16,
+    /// How many lines the query output is scrolled down.
+    pub output_scroll: u16,
     /// What is typed in the search bar.
     pub search: TextInput,
     /// Index of the selected tree row.
@@ -334,6 +336,7 @@ impl AppState {
             mode: Mode::Browse,
             editor: Editor::default(),
             editor_height: 0,
+            output_scroll: 0,
             search: TextInput::default(),
             tree_selected: 0,
             target: None,

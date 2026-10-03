@@ -10,7 +10,7 @@ use ratatui::widgets::{
     ScrollbarState, Table, TableState,
 };
 
-use crate::json::highlight_json;
+use crate::json::{highlight_json, highlight_json_array};
 use crate::query::DEFAULT_QUERY;
 use crate::sql::highlight_sql;
 use crate::state::{AppState, Focus, Mode, Selection, Status};
@@ -325,8 +325,39 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
     }
 }
 
+/// The output title, with the range of documents shown and whether more can load.
+fn output_title(state: &AppState) -> String {
+    let mut range = match state.results.len() {
+        0 => "0".to_string(),
+        count => format!("1 - {count}"),
+    };
+    if state.loading_more {
+        range.push_str(", loading…");
+    } else if state.more {
+        range.push_str(", more ↓");
+    }
+    format!("Results ({range})")
+}
+
 fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
-    frame.render_widget(pane("Results", state, Focus::Output), area);
+    let lines = highlight_json_array(&state.results);
+    let total = lines.len();
+    let height = area.height.saturating_sub(2);
+    let last = u16::try_from(total)
+        .unwrap_or(u16::MAX)
+        .saturating_sub(height);
+    // The pane may have grown since the output was scrolled
+    let scroll = state.output_scroll.min(last);
+    let output = Paragraph::new(lines)
+        .block(pane(output_title(state), state, Focus::Output))
+        .scroll((scroll, 0));
+    frame.render_widget(output, area);
+    draw_scrollbar(
+        frame,
+        area.inner(Margin::new(0, 1)),
+        total,
+        usize::from(scroll),
+    );
 }
 
 fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -836,6 +867,35 @@ mod tests {
             .position(|l| l.contains("30 -- line 30"))
             .unwrap();
         assert_eq!(usize::from(cursor.y), row);
+    }
+
+    #[test]
+    fn the_output_shows_the_results_as_one_json_array_with_their_range() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+
+        let screen = screen_with_height(&state, 30);
+
+        assert!(shows(&screen, "Results (1 - 2)"), "{}", screen.join("\n"));
+        for line in [
+            "[",
+            r#"    "id": "c-1","#,
+            "  },",
+            r#"    "tenantId": "fabrikam""#,
+            "]",
+        ] {
+            assert!(
+                shows(&screen, line),
+                "{line} missing from\n{}",
+                screen.join("\n")
+            );
+        }
+
+        state.more = true;
+        assert!(shows(
+            &screen_with_height(&state, 30),
+            "Results (1 - 2, more ↓)"
+        ));
     }
 
     #[test]
