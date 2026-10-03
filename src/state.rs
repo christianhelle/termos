@@ -270,6 +270,8 @@ pub struct AppState {
     pub mode: Mode,
     /// The query written in query mode.
     pub editor: Editor,
+    /// How many lines the query editor shows at once.
+    pub editor_height: u16,
     /// What is typed in the search bar.
     pub search: TextInput,
     /// Index of the selected tree row.
@@ -320,6 +322,7 @@ impl AppState {
             focus: Focus::Tree,
             mode: Mode::Browse,
             editor: Editor::default(),
+            editor_height: 0,
             search: TextInput::default(),
             tree_selected: 0,
             target: None,
@@ -568,6 +571,7 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         _ => {
             return match state.focus {
                 Focus::Search => on_search_key(state, key),
+                Focus::Editor => on_editor_key(state, key),
                 _ => on_pane_key(state, key),
             };
         }
@@ -891,6 +895,27 @@ fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             state.focus = Focus::Results;
             return run_query(state, build_query(state.search.text()));
         }
+        _ => {}
+    }
+    Vec::new()
+}
+
+fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let page = usize::from(state.editor_height).max(1);
+    let editor = &mut state.editor;
+    match key.code {
+        KeyCode::Char(c) => editor.insert(c),
+        KeyCode::Enter => editor.newline(),
+        KeyCode::Backspace => editor.backspace(),
+        KeyCode::Delete => editor.delete(),
+        KeyCode::Left => editor.left(),
+        KeyCode::Right => editor.right(),
+        KeyCode::Up => editor.up(),
+        KeyCode::Down => editor.down(),
+        KeyCode::Home => editor.home(),
+        KeyCode::End => editor.end(),
+        KeyCode::PageUp => editor.page_up(page),
+        KeyCode::PageDown => editor.page_down(page),
         _ => {}
     }
     Vec::new()
@@ -1836,6 +1861,37 @@ mod tests {
 
         assert_eq!(state.mode, Mode::Browse);
         assert_eq!(state.status, Status::Error("pick a container first".into()));
+    }
+
+    /// Carts open in the query editor, holding `SELECT * FROM c`.
+    fn with_query_editor() -> AppState {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        query_done(&mut state, 1, Ok(cart_docs()));
+        press(&mut state, KeyCode::Char('n'));
+        state
+    }
+
+    #[test]
+    fn keys_in_the_query_editor_edit_the_query() {
+        let mut state = with_query_editor();
+
+        press(&mut state, KeyCode::Enter);
+        type_text(&mut state, "WHERE c.q = 1x");
+        press(&mut state, KeyCode::Backspace);
+        press(&mut state, KeyCode::Up);
+        press(&mut state, KeyCode::End);
+        press(&mut state, KeyCode::Delete);
+        press(&mut state, KeyCode::Home);
+        press(&mut state, KeyCode::Right);
+        press(&mut state, KeyCode::Left);
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::PageUp);
+        press(&mut state, KeyCode::PageDown);
+
+        assert_eq!(state.editor.text(), "SELECT * FROM cWHERE c.q = 1");
+        assert!(!state.quit);
+        assert_eq!(state.focus, Focus::Editor);
     }
 
     fn with_cart_results() -> AppState {
