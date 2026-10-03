@@ -763,7 +763,7 @@ const HELP: [(&str, &str); 21] = [
     ("Drag, y", "Pick text in the document, copy it"),
     ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
-    ("n  S", "Write a query, or edit the container's settings"),
+    ("n  s", "Write a query, or edit the container's settings"),
     (
         "Space, Ctrl-A",
         "Mark a result, mark all results (Esc clears)",
@@ -813,7 +813,7 @@ const SETTINGS_HELP: [(&str, &str); 10] = [
     ("← →  h l  Space", "Pick another choice"),
     ("0-9", "Type the seconds documents live"),
     ("Ctrl-S", "Save the settings"),
-    ("Esc  S", "Leave the settings, asking to discard changes"),
+    ("Esc  s", "Leave the settings, asking to discard changes"),
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, outside the JSON tabs"),
     ("?, Ctrl-C", "Show this help, quit"),
