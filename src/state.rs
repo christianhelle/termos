@@ -721,6 +721,10 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 
 /// Shows the query editor, holding the latest query, in place of the results and document.
 fn open_query_editor(state: &mut AppState) {
+    if state.target.is_none() {
+        state.status = Status::Error("pick a container first".into());
+        return;
+    }
     state.mode = Mode::Query;
     state.focus = Focus::Editor;
     let sql = if state.last_sql.is_empty() {
@@ -1822,6 +1826,16 @@ mod tests {
         assert_eq!(state.mode, Mode::Query);
         assert_eq!(state.focus, Focus::Editor);
         assert_eq!(state.editor.text(), "SELECT * FROM c WHERE c.qty > 1");
+    }
+
+    #[test]
+    fn n_without_a_container_asks_for_one() {
+        let mut state = with_accounts(&["orders"]);
+
+        press(&mut state, KeyCode::Char('n'));
+
+        assert_eq!(state.mode, Mode::Browse);
+        assert_eq!(state.status, Status::Error("pick a container first".into()));
     }
 
     fn with_cart_results() -> AppState {
