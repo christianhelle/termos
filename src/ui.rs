@@ -763,7 +763,7 @@ const HELP: [(&str, &str); 21] = [
     ("Drag, y", "Pick text in the document, copy it"),
     ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
-    ("n", "Write a query in the query editor"),
+    ("n  S", "Write a query, or edit the container's settings"),
     (
         "Space, Ctrl-A",
         "Mark a result, mark all results (Esc clears)",
@@ -803,10 +803,28 @@ const QUERY_HELP: [(&str, &str); 19] = [
     ("", "Press any key to close"),
 ];
 
+/// What each key does in settings mode, shown with `?` there.
+const SETTINGS_HELP: [(&str, &str); 10] = [
+    ("Tab / Shift-Tab", "Next tab / previous tab"),
+    (
+        "↑ ↓  j k",
+        "Move between the settings, or the lines of JSON",
+    ),
+    ("← →  h l  Space", "Pick another choice"),
+    ("0-9", "Type the seconds documents live"),
+    ("Ctrl-S", "Save the settings"),
+    ("Esc  S", "Leave the settings, asking to discard changes"),
+    ("Ctrl-B", "Hide or show the accounts"),
+    ("z", "Zoom the pane, outside the JSON tabs"),
+    ("?, Ctrl-C", "Show this help, quit"),
+    ("", "Press any key to close"),
+];
+
 fn draw_help(frame: &mut Frame, state: &AppState) {
     let help: &[(&str, &str)] = match state.mode {
         Mode::Browse => &HELP,
-        Mode::Query | Mode::Settings => &QUERY_HELP,
+        Mode::Query => &QUERY_HELP,
+        Mode::Settings => &SETTINGS_HELP,
     };
     let lines: Vec<Line> = help
         .iter()
@@ -828,7 +846,7 @@ fn draw_help(frame: &mut Frame, state: &AppState) {
     );
 }
 
-/// A dialog asking whether to delete the selected document.
+/// A dialog asking whether to discard the changes to the settings.
 fn draw_confirm_discard(frame: &mut Frame, state: &AppState) {
     let container = state
         .target
@@ -860,6 +878,7 @@ fn draw_confirm_discard(frame: &mut Frame, state: &AppState) {
     );
 }
 
+/// A dialog asking whether to delete the selected document.
 fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
     let (title, question) = match state.marked.len() {
         0 => {
@@ -1349,6 +1368,29 @@ mod tests {
     }
 
     #[test]
+    fn the_help_lists_the_settings_keys_in_settings_mode() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('?'));
+        assert!(shows(
+            &screen_with_height(&state, 40),
+            "edit the container's settings"
+        ));
+        press(&mut state, KeyCode::Esc);
+
+        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('?'));
+        let screen = screen_with_height(&state, 40);
+
+        for text in [
+            "Save the settings",
+            "Leave the settings",
+            "Next tab / previous tab",
+        ] {
+            assert!(shows(&screen, text), "{text}\n{}", screen.join("\n"));
+        }
+    }
+
+    #[test]
     fn the_settings_tabs_mark_the_ones_with_changes() {
         let mut state = with_settings(json!({"id": "carts"}));
         press(&mut state, KeyCode::Right);
@@ -1771,7 +1813,7 @@ mod tests {
 
         assert!(shows(
             &screen_with_height(&state, 24),
-            "Write a query in the query editor"
+            "Write a query, or edit"
         ));
     }
 
