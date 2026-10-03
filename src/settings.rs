@@ -25,6 +25,22 @@ pub enum Geospatial {
     Geometry,
 }
 
+/// The tabs of settings mode, each showing some of the settings.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SettingsTab {
+    /// Time to live, the geospatial type and the partition key.
+    Settings,
+    IndexingPolicy,
+    ComputedProperties,
+}
+
+/// Why edited settings cannot be saved, and on which tab.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsError {
+    pub tab: SettingsTab,
+    pub message: String,
+}
+
 /// A container's settings, with the edits made to them.
 #[derive(Debug)]
 pub struct ContainerSettings {
@@ -66,6 +82,38 @@ impl ContainerSettings {
             seconds,
             geospatial,
         }
+    }
+
+    /// The properties to replace the container's with, holding the edited settings.
+    pub fn to_properties(&self) -> Result<Value, SettingsError> {
+        let mut properties = self.original.clone();
+        let object = properties
+            .as_object_mut()
+            .expect("container properties are an object");
+        match self.ttl {
+            TimeToLive::Off => {
+                object.remove("defaultTtl");
+            }
+            TimeToLive::NoDefault => {
+                object.insert("defaultTtl".into(), Value::from(-1));
+            }
+            TimeToLive::Seconds => {
+                let seconds = self
+                    .seconds
+                    .text()
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or_else(|| SettingsError {
+                        tab: SettingsTab::Settings,
+                        message:
+                            "Time to live must be a whole number of seconds from 1 to 2147483647."
+                                .into(),
+                    })?;
+                object.insert("defaultTtl".into(), Value::from(seconds));
+            }
+        }
+        Ok(properties)
     }
 
     /// The partition key paths, and whether there is more than one level of them.
@@ -131,11 +179,17 @@ mod tests {
 
         assert_eq!(
             single.partition_key(),
-            ("/driverId".to_string(), "Non-hierarchically partitioned container.")
+            (
+                "/driverId".to_string(),
+                "Non-hierarchically partitioned container."
+            )
         );
         assert_eq!(
             hierarchical.partition_key(),
-            ("/tenantId, /userId".to_string(), "Hierarchically partitioned container.")
+            (
+                "/tenantId, /userId".to_string(),
+                "Hierarchically partitioned container."
+            )
         );
     }
 
@@ -161,5 +215,43 @@ mod tests {
         let settings = ContainerSettings::from_properties(&json!({}));
 
         assert_eq!(settings.computed.text(), "[]");
+    }
+
+    fn type_seconds(settings: &mut ContainerSettings, text: &str) {
+        settings.seconds = TextInput::default();
+        text.chars().for_each(|c| settings.seconds.insert(c));
+    }
+
+    #[test]
+    fn writes_back_whether_and_when_documents_expire() {
+        let mut settings =
+            ContainerSettings::from_properties(&json!({"id": "drivers", "defaultTtl": 3600}));
+
+        settings.ttl = TimeToLive::Off;
+        assert_eq!(settings.to_properties().unwrap(), json!({"id": "drivers"}));
+        settings.ttl = TimeToLive::NoDefault;
+        assert_eq!(settings.to_properties().unwrap()["defaultTtl"], -1);
+        settings.ttl = TimeToLive::Seconds;
+        type_seconds(&mut settings, "60");
+        assert_eq!(settings.to_properties().unwrap()["defaultTtl"], 60);
+    }
+
+    #[test]
+    fn rejects_seconds_that_are_not_a_positive_whole_number() {
+        let mut settings = ContainerSettings::from_properties(&json!({"defaultTtl": 3600}));
+
+        for typed in ["", "0", "1.5", "2147483648"] {
+            type_seconds(&mut settings, typed);
+
+            assert_eq!(
+                settings.to_properties(),
+                Err(SettingsError {
+                    tab: SettingsTab::Settings,
+                    message: "Time to live must be a whole number of seconds from 1 to 2147483647."
+                        .into()
+                }),
+                "{typed:?}"
+            );
+        }
     }
 }
