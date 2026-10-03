@@ -24,6 +24,17 @@ impl Editor {
         self.lines.join("\n")
     }
 
+    /// Replaces the text, putting the cursor at its end.
+    pub fn set_text(&mut self, text: &str) {
+        self.lines = text.split('\n').map(String::from).collect();
+        self.row = self.lines.len() - 1;
+        self.column = self.len();
+    }
+
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
+
     /// Where the cursor is, as the line and the characters from its start.
     pub fn cursor(&self) -> (usize, usize) {
         (self.row, self.column)
@@ -279,5 +290,15 @@ mod tests {
         assert_eq!(editor.cursor(), (4, 0));
         editor.page_down(10);
         assert_eq!(editor.cursor(), (9, 0));
+    }
+
+    #[test]
+    fn set_text_replaces_the_lines_and_puts_the_cursor_at_the_end() {
+        let mut editor = typed("old");
+
+        editor.set_text("SELECT *\nFROM c");
+
+        assert_eq!(editor.lines(), ["SELECT *", "FROM c"]);
+        assert_eq!(editor.cursor(), (1, 6));
     }
 }
