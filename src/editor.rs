@@ -58,8 +58,38 @@ impl Editor {
         }
     }
 
+    /// Moves back a character, to the end of the line above from the start of a line.
     pub fn left(&mut self) {
-        self.column = self.column.saturating_sub(1);
+        if self.column > 0 {
+            self.column -= 1;
+        } else if self.row > 0 {
+            self.row -= 1;
+            self.column = self.len();
+        }
+    }
+
+    /// Moves on a character, to the start of the line below from the end of a line.
+    pub fn right(&mut self) {
+        if self.column < self.len() {
+            self.column += 1;
+        } else if self.row + 1 < self.lines.len() {
+            self.row += 1;
+            self.column = 0;
+        }
+    }
+
+    pub fn up(&mut self) {
+        self.move_to_row(self.row.saturating_sub(1));
+    }
+
+    pub fn down(&mut self) {
+        self.move_to_row(self.row + 1);
+    }
+
+    /// Puts the cursor on a line, keeping its column within the line.
+    fn move_to_row(&mut self, row: usize) {
+        self.row = row.min(self.lines.len() - 1);
+        self.column = self.column.min(self.len());
     }
 
     /// The number of characters in the cursor's line.
@@ -128,5 +158,46 @@ mod tests {
 
         assert_eq!(editor.text(), "");
         assert_eq!(editor.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn left_and_right_move_across_line_ends() {
+        let mut editor = typed("ab");
+        editor.newline();
+        editor.insert('c');
+        editor.left();
+
+        editor.left();
+        assert_eq!(editor.cursor(), (0, 2));
+        editor.right();
+        assert_eq!(editor.cursor(), (1, 0));
+        editor.right();
+        editor.right();
+        assert_eq!(editor.cursor(), (1, 1));
+    }
+
+    #[test]
+    fn up_and_down_keep_the_column_within_the_line() {
+        let mut editor = typed("SELECT *");
+        editor.newline();
+        "FROM c".chars().for_each(|c| editor.insert(c));
+        editor.newline();
+        editor.insert('x');
+        editor.up();
+        editor.up();
+        editor.right();
+        editor.right();
+        editor.right();
+
+        editor.down();
+        assert_eq!(editor.cursor(), (1, 4));
+        editor.down();
+        assert_eq!(editor.cursor(), (2, 1));
+        editor.down();
+        assert_eq!(editor.cursor(), (2, 1));
+        editor.up();
+        editor.up();
+        editor.up();
+        assert_eq!(editor.cursor(), (0, 1));
     }
 }
