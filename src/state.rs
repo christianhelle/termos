@@ -964,6 +964,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
         KeyCode::Char('n') if state.mode == Mode::Query => return leave_query_editor(state),
+        KeyCode::Char('n') if state.mode == Mode::Settings => {}
         KeyCode::Char('n') => open_query_editor(state),
         KeyCode::Char('S') if state.mode == Mode::Settings => return leave_settings(state),
         KeyCode::Char('S') => return open_settings(state),
@@ -4306,5 +4307,15 @@ mod tests {
         assert!(!state.confirm_discard);
         assert_eq!(state.mode, Mode::Browse);
         assert!(state.settings.is_none());
+    }
+
+    #[test]
+    fn n_leaves_the_settings_alone() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+
+        press(&mut state, KeyCode::Char('n'));
+
+        assert_eq!(state.mode, Mode::Settings);
+        assert!(shown_settings(&state).field == Field::Ttl);
     }
 }
