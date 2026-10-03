@@ -754,7 +754,8 @@ fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Shows the query editor, holding the latest query, in place of the results and document.
+/// Shows the query editor in place of the results and document, starting it with
+/// the latest query when nothing is written in it yet.
 fn open_query_editor(state: &mut AppState) {
     if state.target.is_none() {
         state.status = Status::Error("pick a container first".into());
@@ -762,6 +763,9 @@ fn open_query_editor(state: &mut AppState) {
     }
     state.mode = Mode::Query;
     state.focus = Focus::Editor;
+    if !state.editor.text().trim().is_empty() {
+        return;
+    }
     let sql = if state.last_sql.is_empty() {
         DEFAULT_QUERY
     } else {
@@ -2020,6 +2024,18 @@ mod tests {
         ctrl_b(&mut state);
 
         assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn reopening_the_query_editor_keeps_the_query_written_in_it() {
+        let mut state = with_query_editor();
+        state.editor.set_text("SELECT VALUE c.id FROM c");
+        press(&mut state, KeyCode::Esc);
+        press(&mut state, KeyCode::Esc);
+
+        press(&mut state, KeyCode::Char('n'));
+
+        assert_eq!(state.editor.text(), "SELECT VALUE c.id FROM c");
     }
 
     fn with_cart_results() -> AppState {
