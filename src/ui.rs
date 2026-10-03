@@ -255,6 +255,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     if state.confirm_delete {
         draw_confirm_delete(frame, state);
     }
+    if state.confirm_discard {
+        draw_confirm_discard(frame, state);
+    }
     if let Some(prompt) = &state.prompt {
         draw_save_prompt(frame, prompt);
     }
@@ -826,6 +829,37 @@ fn draw_help(frame: &mut Frame, state: &AppState) {
 }
 
 /// A dialog asking whether to delete the selected document.
+fn draw_confirm_discard(frame: &mut Frame, state: &AppState) {
+    let container = state
+        .target
+        .as_ref()
+        .map(|target| format!(" of {}/{}", target.database, target.container))
+        .unwrap_or_default();
+    let lines = vec![
+        Line::raw(format!("Discard the changes to the settings{container}?")),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("y / Enter", Style::new().fg(Color::Red)),
+            Span::raw(" discard   "),
+            Span::styled("Esc", Style::new().fg(Color::Cyan)),
+            Span::raw(" or any other key keep editing"),
+        ]),
+    ];
+    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX) + 2;
+    let area = frame
+        .area()
+        .centered(Constraint::Length(60), Constraint::Length(height));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::bordered()
+                .title("Discard changes")
+                .border_style(Style::new().fg(Color::Red)),
+        ),
+        area,
+    );
+}
+
 fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
     let (title, question) = match state.marked.len() {
         0 => {
@@ -1295,6 +1329,23 @@ mod tests {
             "{}",
             computed.join("\n")
         );
+    }
+
+    #[test]
+    fn asks_to_discard_changed_settings_in_a_dialog() {
+        let mut state = with_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+
+        press(&mut state, KeyCode::Esc);
+        let screen = screen(&state);
+
+        for text in [
+            "Discard changes",
+            "Discard the changes to the settings of shop/carts?",
+            "y / Enter discard",
+        ] {
+            assert!(shows(&screen, text), "{text}\n{}", screen.join("\n"));
+        }
     }
 
     #[test]
