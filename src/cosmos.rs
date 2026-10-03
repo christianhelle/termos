@@ -186,6 +186,29 @@ fn service_errors(message: &str) -> Option<Vec<ServiceError>> {
     }))
 }
 
+/// What the SDK reports when it plans a query with a parameter that has no value.
+const NO_RANGES: &str = "query plan produced no partition ranges";
+
+/// Explains a query that could not be planned because of a parameter termos sets no
+/// value for, or `None` for any other error or a query without parameters.
+fn unset_parameter(message: &str, sql: &str) -> Option<String> {
+    if !message.contains(NO_RANGES) {
+        return None;
+    }
+    let (_, after) = sql.split_once('@')?;
+    let end = after
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(after.len());
+    let name = &after[..end];
+    if name.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "This query uses the parameter @{name}, which termos cannot set a value for. \
+         Write the value into the query instead."
+    ))
+}
+
 /// The line and column, counted from 1, of a character of the query.
 fn line_and_column(sql: &str, start: usize) -> (usize, usize) {
     let before: String = sql.chars().take(start).collect();
@@ -224,7 +247,9 @@ pub(crate) fn classify(error: CosmosError) -> anyhow::Error {
 
 /// Like [`classify`], also saying where in the query each error is.
 fn classify_query(error: CosmosError, sql: &str) -> anyhow::Error {
-    explain(error, |message| query_message(message, sql))
+    explain(error, |message| {
+        unset_parameter(message, sql).or_else(|| query_message(message, sql))
+    })
 }
 
 /// Puts an error in words, with the service's own messages when `messages` finds them.
@@ -394,6 +419,28 @@ mod tests {
                 "Syntax error, incorrect syntax near 'FORM'. (line 2, column 1)\n\
                  Identifier 'x' could not be resolved. (line 1, column 3)"
             )
+        );
+    }
+
+    #[test]
+    fn explains_parameters_termos_cannot_set() {
+        let message = "500/20302 (ClientQueryPlanProducedEmptyRanges): query plan produced no partition ranges to query";
+
+        assert_eq!(
+            unset_parameter(
+                message,
+                "SELECT * FROM c\nWHERE c.a = @status_1 OR c.b = @x"
+            )
+            .as_deref(),
+            Some(
+                "This query uses the parameter @status_1, which termos cannot set a value for. \
+                 Write the value into the query instead."
+            )
+        );
+        assert_eq!(unset_parameter(message, "SELECT * FROM c"), None);
+        assert_eq!(
+            unset_parameter("400: Bad", "SELECT * FROM c WHERE c.a = @x"),
+            None
         );
     }
 }
