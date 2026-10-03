@@ -12,6 +12,7 @@ use ratatui::widgets::{
 
 use crate::json::highlight_json;
 use crate::query::DEFAULT_QUERY;
+use crate::sql::highlight_sql;
 use crate::state::{AppState, Focus, Mode, Selection, Status};
 
 /// Room for the query the search bar completes, and a space after it.
@@ -292,14 +293,36 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
         Some(target) => format!("Query: {}/{}", target.database, target.container),
         None => "Query".to_string(),
     };
-    let lines: Vec<Line> = state
-        .editor
-        .lines()
+    let lines = state.editor.lines();
+    // Room for the widest line number, at least two digits, and a space after it
+    let gutter = lines.len().to_string().len().max(2);
+    let numbered: Vec<Line> = lines
         .iter()
-        .map(|l| Line::raw(l.as_str()))
+        .enumerate()
+        .map(|(index, line)| {
+            let number = Span::styled(
+                format!("{:>gutter$} ", index + 1),
+                Style::new().fg(Color::DarkGray),
+            );
+            let mut spans = vec![number];
+            spans.extend(highlight_sql(line).spans);
+            Line::from(spans)
+        })
         .collect();
-    let editor = Paragraph::new(lines).block(pane(title, state, Focus::Editor));
+    let height = usize::from(area.height.saturating_sub(2)).max(1);
+    let (row, column) = state.editor.cursor();
+    // Scroll only as far as it takes to show the cursor's line
+    let scroll = row.saturating_sub(height - 1);
+    let editor = Paragraph::new(numbered)
+        .block(pane(title, state, Focus::Editor))
+        .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0));
     frame.render_widget(editor, area);
+    draw_scrollbar(frame, area.inner(Margin::new(0, 1)), lines.len(), scroll);
+    if state.focus == Focus::Editor {
+        let x = area.x + 1 + u16::try_from(gutter + 1 + column).unwrap_or(u16::MAX);
+        let y = area.y + 1 + u16::try_from(row - scroll).unwrap_or(u16::MAX);
+        frame.set_cursor_position((x.min(area.right().saturating_sub(2)), y));
+    }
 }
 
 fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -773,6 +796,46 @@ mod tests {
         for title in ["Accounts", "Query: shop/carts", "Results"] {
             assert!(shows(&screen, title), "{}", screen.join("\n"));
         }
+    }
+
+    #[test]
+    fn the_editor_numbers_its_lines_and_colours_the_sql() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+        state.editor.set_text("SELECT c.id\nFROM c");
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+        let screen = screen(&state);
+
+        assert!(shows(&screen, " 1 SELECT c.id"), "{}", screen.join("\n"));
+        assert!(shows(&screen, " 2 FROM c"), "{}", screen.join("\n"));
+        let buffer = terminal.backend().buffer();
+        let row = screen.iter().position(|l| l.contains(" 1 SELECT")).unwrap();
+        let x = screen[row].chars().position(|c| c == 'S').unwrap();
+        let cell = &buffer[(u16::try_from(x).unwrap(), u16::try_from(row).unwrap())];
+        assert_eq!(cell.fg, Color::Blue);
+    }
+
+    #[test]
+    fn the_editor_scrolls_to_keep_the_cursor_in_view_and_shows_it() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+        let text: Vec<String> = (1..=30).map(|n| format!("-- line {n}")).collect();
+        state.editor.set_text(&text.join("\n"));
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+        let screen = screen(&state);
+
+        assert!(shows(&screen, "30 -- line 30"), "{}", screen.join("\n"));
+        assert!(!shows(&screen, " 1 -- line 1"), "{}", screen.join("\n"));
+        let cursor = terminal.get_cursor_position().unwrap();
+        let row = screen
+            .iter()
+            .position(|l| l.contains("30 -- line 30"))
+            .unwrap();
+        assert_eq!(usize::from(cursor.y), row);
     }
 
     #[test]
