@@ -54,6 +54,9 @@ pub struct Page {
     pub docs: Vec<Value>,
     /// The request units the round trip used.
     pub request_charge: f64,
+    /// How the service ran the query for this page, as `name=value` pairs
+    /// separated by semicolons, when it reports it.
+    pub query_metrics: Option<String>,
 }
 
 /// Document operations on a single container.

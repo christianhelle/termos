@@ -45,6 +45,9 @@ impl OpenQuery {
                     let page = page?;
                     self.stats.request_charge += page.request_charge;
                     self.stats.round_trips += 1;
+                    if let Some(metrics) = &page.query_metrics {
+                        self.stats.add_query_metrics(metrics);
+                    }
                     self.unread.extend(page.docs);
                 }
                 None => return Ok(false),
@@ -434,6 +437,7 @@ mod tests {
             let mut container = runner.connector.data.container.borrow_mut();
             container.page_size = 30;
             container.page_charge = 2.5;
+            container.page_metrics = Some("retrievedDocumentCount=30".into());
         }
 
         let Msg::QueryDone {
@@ -452,6 +456,10 @@ mod tests {
         // Four pages hold the first hundred, and the fifth the last ten
         assert_eq!(first.stats.round_trips, 4);
         assert_eq!(first.stats.request_charge, 10.0);
+        assert_eq!(
+            first.stats.query_metrics,
+            vec![("retrievedDocumentCount".to_string(), 120.0)]
+        );
         assert_eq!(second.stats.round_trips, 1);
         assert_eq!(second.stats.request_charge, 2.5);
     }

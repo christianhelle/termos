@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use azure_core::credentials::{Secret, TokenCredential};
 use azure_core::http::StatusCode;
+use azure_data_cosmos::options::QueryOptions;
 use azure_data_cosmos::{
     AccountEndpoint, AccountReference, ContainerClient, CosmosClient, CosmosError, FeedScope,
     PartitionKey, Query, RoutingStrategy,
@@ -154,17 +155,21 @@ impl DataStore for CosmosStore {
     }
 
     async fn documents(&self, sql: &str) -> anyhow::Result<Documents> {
+        let mut options = QueryOptions::default();
+        options.populate_query_metrics = Some(true);
         let items = self
             .client
-            .query_items::<Value>(Query::from(sql), FeedScope::full_container(), None)
+            .query_items::<Value>(Query::from(sql), FeedScope::full_container(), Some(options))
             .await
             .map_err(classify)?;
         let pages = items.into_pages().map(|page| {
             let page = page.map_err(classify)?;
             let request_charge = page.headers().request_charge().map_or(0.0, |c| c.value());
+            let query_metrics = page.query_metrics().map(String::from);
             Ok(Page {
                 docs: page.into_items(),
                 request_charge,
+                query_metrics,
             })
         });
         Ok(pages.boxed_local())

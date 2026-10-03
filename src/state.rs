@@ -101,6 +101,39 @@ pub struct QueryStats {
     pub request_charge: f64,
     /// How many pages were read from the service.
     pub round_trips: usize,
+    /// The query metrics the service reported, by name, added up over the pages.
+    pub query_metrics: Vec<(String, f64)>,
+}
+
+impl QueryStats {
+    /// Adds what more reads cost to these.
+    pub fn add(&mut self, more: QueryStats) {
+        self.request_charge += more.request_charge;
+        self.round_trips += more.round_trips;
+        for (name, value) in more.query_metrics {
+            self.add_metric(name, value);
+        }
+    }
+
+    /// Adds the metrics the service reports for a page, as `name=value` pairs
+    /// separated by semicolons. Values that are not numbers are left out.
+    pub fn add_query_metrics(&mut self, metrics: &str) {
+        for pair in metrics.split(';') {
+            let Some((name, value)) = pair.split_once('=') else {
+                continue;
+            };
+            if let Ok(value) = value.trim().parse::<f64>() {
+                self.add_metric(name.trim().to_string(), value);
+            }
+        }
+    }
+
+    fn add_metric(&mut self, name: String, value: f64) {
+        match self.query_metrics.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, total)) => *total += value,
+            None => self.query_metrics.push((name, value)),
+        }
+    }
 }
 
 /// Something that happened, for [`update`] to act on.
@@ -1267,8 +1300,7 @@ fn more_loaded(state: &mut AppState, id: u64, result: Result<QueryResult, String
             }
             state.results.extend(result.docs);
             state.more = result.more;
-            state.stats.request_charge += result.stats.request_charge;
-            state.stats.round_trips += result.stats.round_trips;
+            state.stats.add(result.stats);
             state.status = Status::Info(found(state.results.len(), &state.stats, result.elapsed));
         }
         Err(error) => {
@@ -3261,6 +3293,7 @@ mod tests {
         let stats = QueryStats {
             request_charge: 3.5,
             round_trips: 2,
+            ..QueryStats::default()
         };
         update(
             &mut state,
@@ -3286,12 +3319,38 @@ mod tests {
             state.stats,
             QueryStats {
                 request_charge: 7.0,
-                round_trips: 4
+                round_trips: 4,
+                ..QueryStats::default()
             }
         );
         assert_eq!(
             state.status,
             Status::Info("4 documents · 7.00 RU in 0.25s".into())
+        );
+    }
+
+    #[test]
+    fn query_stats_add_up_charges_round_trips_and_metrics_by_name() {
+        let mut total = QueryStats::default();
+        total.add_query_metrics("retrievedDocumentCount=30;totalExecutionTimeInMs=1.50");
+        let mut more = QueryStats {
+            request_charge: 2.5,
+            round_trips: 1,
+            ..QueryStats::default()
+        };
+        more.add_query_metrics("retrievedDocumentCount=10;totalExecutionTimeInMs=0.25;new=1;bad=x");
+
+        total.add(more);
+
+        assert_eq!(total.request_charge, 2.5);
+        assert_eq!(total.round_trips, 1);
+        assert_eq!(
+            total.query_metrics,
+            vec![
+                ("retrievedDocumentCount".to_string(), 40.0),
+                ("totalExecutionTimeInMs".to_string(), 1.75),
+                ("new".to_string(), 1.0),
+            ]
         );
     }
 }
