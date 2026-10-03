@@ -431,6 +431,9 @@ pub struct AppState {
     pub prompt: Option<SavePrompt>,
     /// What the query editor's latest query found.
     pub output: QueryOutput,
+    /// Whether another container was picked in query mode, so the browse results
+    /// are listed again when it is left.
+    pub browse_stale: bool,
     /// Why the latest query failed, shown in a dialog until the next key.
     pub error: Option<String>,
 }
@@ -474,6 +477,7 @@ impl AppState {
             stats: QueryStats::default(),
             prompt: None,
             output: QueryOutput::default(),
+            browse_stale: false,
             error: None,
         };
         (state, vec![Effect::LoadAccounts])
@@ -877,7 +881,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('/') => state.focus = Focus::Search,
         KeyCode::Char('?') => state.show_help = true,
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
-        KeyCode::Char('n') if state.mode == Mode::Query => leave_query_editor(state),
+        KeyCode::Char('n') if state.mode == Mode::Query => return leave_query_editor(state),
         KeyCode::Char('n') => open_query_editor(state),
         _ => {
             return match state.focus {
@@ -892,12 +896,17 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Shows the search bar, results and document again, keeping the query in the editor.
-fn leave_query_editor(state: &mut AppState) {
+/// Shows the search bar, results and document again, keeping the query in the editor,
+/// and lists the documents of a container picked meanwhile.
+fn leave_query_editor(state: &mut AppState) -> Vec<Effect> {
     state.mode = Mode::Browse;
     if matches!(state.focus, Focus::Editor | Focus::Output) {
         state.focus = Focus::Results;
     }
+    if std::mem::take(&mut state.browse_stale) {
+        return run_query(state, DEFAULT_QUERY.to_string(), Origin::Browse);
+    }
+    Vec::new()
 }
 
 fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -930,10 +939,7 @@ fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Down | KeyCode::Char('j') if scroll >= last => return load_more_output(state),
         KeyCode::Down | KeyCode::Char('j') => scroll + 1,
         KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
-        KeyCode::Esc => {
-            leave_query_editor(state);
-            scroll
-        }
+        KeyCode::Esc => return leave_query_editor(state),
         _ => scroll,
     });
     state.output_scroll = u16::try_from(target).unwrap_or(u16::MAX);
@@ -1307,13 +1313,15 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
         container: container.name.clone(),
     };
     state.target = Some(target);
-    if state.mode == Mode::Query {
-        // The query editor's query runs on it when it is run next
-        return Vec::new();
-    }
     state.results.clear();
     state.marked.clear();
     state.result_selected = 0;
+    if state.mode == Mode::Query {
+        // The query editor's query runs on it when it is run next,
+        // and its documents are listed when the query editor is left
+        state.browse_stale = true;
+        return Vec::new();
+    }
     run_query(state, DEFAULT_QUERY.to_string(), Origin::Browse)
 }
 
@@ -2403,8 +2411,41 @@ mod tests {
             state.target.as_ref().map(|t| t.container.as_str()),
             Some("orders")
         );
-        assert_eq!(state.results, cart_docs());
+        assert!(state.results.is_empty());
         assert_eq!(state.mode, Mode::Query);
+    }
+
+    #[test]
+    fn leaving_the_query_editor_lists_the_container_switched_to_meanwhile() {
+        let mut state = with_output();
+        state.focus = Focus::Tree;
+        press(&mut state, KeyCode::Down);
+        state.focus = Focus::Output;
+
+        let effects = press(&mut state, KeyCode::Esc);
+
+        let [
+            Effect::Query {
+                target,
+                sql,
+                origin,
+                ..
+            },
+        ] = &effects[..]
+        else {
+            panic!("unexpected {effects:?}");
+        };
+        assert_eq!(target.container, "orders");
+        assert_eq!(sql, "SELECT * FROM c");
+        assert_eq!(*origin, Origin::Browse);
+    }
+
+    #[test]
+    fn leaving_the_query_editor_on_the_same_container_queries_nothing() {
+        let mut state = with_output();
+
+        assert!(press(&mut state, KeyCode::Char('n')).is_empty());
+        assert_eq!(state.results, cart_docs());
     }
 
     #[test]
