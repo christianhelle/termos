@@ -37,9 +37,11 @@ use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event as TermEvent, EventStream, KeyEventKind,
-    MouseButton, MouseEvent, MouseEventKind,
+    KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
+use crossterm::terminal::supports_keyboard_enhancement;
 use futures::StreamExt;
 use ratatui::DefaultTerminal;
 use ratatui::layout::{Position, Size};
@@ -160,12 +162,22 @@ async fn show<M: Management + 'static>(
     cached: Option<Vec<Account>>,
 ) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
+    // Terminals that support it tell Shift-Enter apart from Enter, to run the query
+    let enhanced = supports_keyboard_enhancement().unwrap_or(false)
+        && execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )
+        .is_ok();
     let result = match execute!(stdout(), EnableMouseCapture) {
         Ok(()) => event_loop(&mut terminal, Rc::new(runner), cached).await,
         Err(error) => Err(error.into()),
     };
     // Restore the terminal even when the mouse could not be released
     let released = execute!(stdout(), DisableMouseCapture);
+    if enhanced {
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+    }
     ratatui::restore();
     result.and(released.map_err(Into::into))
 }
