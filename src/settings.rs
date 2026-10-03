@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 
+use crate::editor::Editor;
 use crate::input::TextInput;
 
 /// Whether documents expire, and when.
@@ -33,6 +34,10 @@ pub struct ContainerSettings {
     /// The seconds after which documents expire, as typed.
     pub seconds: TextInput,
     pub geospatial: Geospatial,
+    /// The indexing policy, as JSON.
+    pub indexing: Editor,
+    /// The computed properties, as a JSON array.
+    pub computed: Editor,
 }
 
 impl ContainerSettings {
@@ -51,7 +56,11 @@ impl ContainerSettings {
             Some(Value::String(kind)) if kind == "Geometry" => Geospatial::Geometry,
             _ => Geospatial::Geography,
         };
+        let empty = Value::Array(Vec::new());
+        let computed = properties.get("computedProperties").unwrap_or(&empty);
         ContainerSettings {
+            indexing: json_editor(&properties["indexingPolicy"]),
+            computed: json_editor(computed),
             original: properties.clone(),
             ttl,
             seconds,
@@ -73,6 +82,14 @@ impl ContainerSettings {
         };
         (paths.join(", "), note)
     }
+}
+
+/// An editor holding a value as pretty-printed JSON, with the cursor at its start.
+fn json_editor(value: &Value) -> Editor {
+    let mut editor = Editor::default();
+    editor.set_text(&serde_json::to_string_pretty(value).unwrap_or_default());
+    editor.move_to(0, 0);
+    editor
 }
 
 #[cfg(test)]
@@ -120,5 +137,29 @@ mod tests {
             hierarchical.partition_key(),
             ("/tenantId, /userId".to_string(), "Hierarchically partitioned container.")
         );
+    }
+
+    #[test]
+    fn puts_the_indexing_policy_and_computed_properties_in_editors_as_json() {
+        let settings = ContainerSettings::from_properties(&json!({
+            "indexingPolicy": {"automatic": true, "includedPaths": [{"path": "/*"}]},
+            "computedProperties": [{"name": "cp_lower", "query": "SELECT VALUE LOWER(c.name) FROM c"}]
+        }));
+
+        assert_eq!(
+            settings.indexing.text(),
+            "{\n  \"automatic\": true,\n  \"includedPaths\": [\n    {\n      \"path\": \"/*\"\n    }\n  ]\n}"
+        );
+        assert_eq!(
+            settings.computed.text(),
+            "[\n  {\n    \"name\": \"cp_lower\",\n    \"query\": \"SELECT VALUE LOWER(c.name) FROM c\"\n  }\n]"
+        );
+    }
+
+    #[test]
+    fn starts_without_computed_properties_as_an_empty_list() {
+        let settings = ContainerSettings::from_properties(&json!({}));
+
+        assert_eq!(settings.computed.text(), "[]");
     }
 }
