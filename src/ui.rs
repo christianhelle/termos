@@ -13,7 +13,7 @@ use ratatui::widgets::{
 use crate::json::{highlight_json, highlight_json_array};
 use crate::query::DEFAULT_QUERY;
 use crate::sql::highlight_sql;
-use crate::state::{AppState, Focus, Mode, Selection, Status};
+use crate::state::{AppState, Focus, Mode, OutputTab, Selection, Status};
 
 /// Room for the query the search bar completes, and a space after it.
 const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
@@ -352,8 +352,19 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
     }
 }
 
-/// The output title, with the range of documents shown and whether more can load.
-fn output_title(state: &AppState) -> String {
+/// The output title: its tabs, with the shown one picked out, and the range of
+/// documents shown and whether more can load.
+fn output_title(state: &AppState) -> Line<'static> {
+    let tab = |name: &'static str, tab: OutputTab| {
+        if state.output_tab == tab {
+            Span::styled(
+                name,
+                Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            )
+        } else {
+            Span::styled(name, Style::new().add_modifier(Modifier::DIM))
+        }
+    };
     let mut range = match state.results.len() {
         0 => "0".to_string(),
         count => format!("1 - {count}"),
@@ -363,10 +374,20 @@ fn output_title(state: &AppState) -> String {
     } else if state.more {
         range.push_str(", more ↓");
     }
-    format!("Results ({range})")
+    Line::from(vec![
+        tab("Results", OutputTab::Results),
+        Span::raw(" │ "),
+        tab("Stats", OutputTab::Stats),
+        Span::raw(format!(" ({range})")),
+    ])
 }
 
 fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
+    let block = pane(output_title(state), state, Focus::Output);
+    if state.output_tab == OutputTab::Stats {
+        frame.render_widget(stats_table(state).block(block), area);
+        return;
+    }
     let lines = highlight_json_array(&state.results);
     let total = lines.len();
     let height = area.height.saturating_sub(2);
@@ -375,9 +396,7 @@ fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
         .saturating_sub(height);
     // The pane may have grown since the output was scrolled
     let scroll = state.output_scroll.min(last);
-    let output = Paragraph::new(lines)
-        .block(pane(output_title(state), state, Focus::Output))
-        .scroll((scroll, 0));
+    let output = Paragraph::new(lines).block(block).scroll((scroll, 0));
     frame.render_widget(output, area);
     draw_scrollbar(
         frame,
@@ -385,6 +404,35 @@ fn draw_output(frame: &mut Frame, state: &AppState, area: Rect) {
         total,
         usize::from(scroll),
     );
+}
+
+/// What the query cost, then each metric the service reported for it.
+fn stats_table(state: &AppState) -> Table<'static> {
+    let stats = &state.stats;
+    let mut rows = vec![
+        Row::new([
+            "Request charge".to_string(),
+            format!("{:.2} RU", stats.request_charge),
+        ]),
+        Row::new(["Documents".to_string(), state.results.len().to_string()]),
+        Row::new(["Round trips".to_string(), stats.round_trips.to_string()]),
+    ];
+    rows.extend(
+        stats
+            .query_metrics
+            .iter()
+            .map(|(name, value)| Row::new([name.clone(), metric(*value)])),
+    );
+    Table::new(rows, [Constraint::Length(32), Constraint::Fill(1)])
+}
+
+/// A metric value, without decimals when it is a whole number.
+fn metric(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.2}")
+    }
 }
 
 fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -924,7 +972,11 @@ mod tests {
 
         let screen = screen_with_height(&state, 30);
 
-        assert!(shows(&screen, "Results (1 - 2)"), "{}", screen.join("\n"));
+        assert!(
+            shows(&screen, "Results │ Stats (1 - 2)"),
+            "{}",
+            screen.join("\n")
+        );
         for line in [
             "[",
             r#"    "id": "c-1","#,
@@ -942,8 +994,39 @@ mod tests {
         state.more = true;
         assert!(shows(
             &screen_with_height(&state, 30),
-            "Results (1 - 2, more ↓)"
+            "Stats (1 - 2, more ↓)"
         ));
+    }
+
+    #[test]
+    fn the_stats_tab_lists_what_the_query_cost_and_its_metrics() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+        state.stats.request_charge = 3.5;
+        state.stats.round_trips = 2;
+        state
+            .stats
+            .add_query_metrics("retrievedDocumentCount=40;totalExecutionTimeInMs=1.75");
+        state.output_tab = crate::state::OutputTab::Stats;
+
+        let screen = screen_with_height(&state, 30);
+
+        for row in [
+            ["Request charge", "3.50 RU"],
+            ["Documents", "2"],
+            ["Round trips", "2"],
+            ["retrievedDocumentCount", "40"],
+            ["totalExecutionTimeInMs", "1.75"],
+        ] {
+            let found = screen.iter().any(|line| {
+                line.contains(row[0])
+                    && line
+                        .split_whitespace()
+                        .any(|w| w == row[1].split(' ').next().unwrap())
+            });
+            assert!(found, "{row:?} missing from\n{}", screen.join("\n"));
+        }
+        assert!(!shows(&screen, r#""id": "c-1""#), "{}", screen.join("\n"));
     }
 
     #[test]
