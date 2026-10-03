@@ -113,16 +113,26 @@ impl ContainerSettings {
                 object.insert("defaultTtl".into(), Value::from(seconds));
             }
         }
-        if let Some(policy) = edited(&self.indexing, &self.original, "indexingPolicy")
-            .map_err(|error| invalid(SettingsTab::IndexingPolicy, "The indexing policy", error))?
-        {
-            if !policy.is_object() {
-                return Err(SettingsError {
-                    tab: SettingsTab::IndexingPolicy,
-                    message: "The indexing policy must be a JSON object.".into(),
-                });
+        let empty = Value::Array(Vec::new());
+        let json_tabs = [
+            (
+                &self.indexing,
+                "indexingPolicy",
+                &Value::Null,
+                INDEXING_POLICY,
+            ),
+            (
+                &self.computed,
+                "computedProperties",
+                &empty,
+                COMPUTED_PROPERTIES,
+            ),
+        ];
+        for (editor, name, unset, tab) in json_tabs {
+            let was = self.original.get(name).unwrap_or(unset);
+            if let Some(value) = tab.parse(editor, was)? {
+                object.insert(name.into(), value);
             }
-            object.insert("indexingPolicy".into(), policy);
         }
         let kind = match self.geospatial {
             Geospatial::Geography => "Geography",
@@ -154,18 +164,48 @@ impl ContainerSettings {
     }
 }
 
-/// The JSON in an editor, or `None` when it holds the property's value as it was.
-fn edited(editor: &Editor, original: &Value, name: &str) -> serde_json::Result<Option<Value>> {
-    let value: Value = serde_json::from_str(&editor.text())?;
-    let was = original.get(name).unwrap_or(&Value::Null);
-    Ok((value != *was).then_some(value))
+/// A tab whose setting is written as JSON of one shape.
+struct JsonTab {
+    tab: SettingsTab,
+    /// What the setting is called, and the verb that goes with it.
+    subject: (&'static str, &'static str),
+    /// The shape the JSON must have, and how to tell.
+    shape: (&'static str, fn(&Value) -> bool),
 }
 
-/// Says that the JSON of a tab does not parse, and where.
-fn invalid(tab: SettingsTab, what: &str, error: serde_json::Error) -> SettingsError {
-    SettingsError {
-        tab,
-        message: format!("{what} is not valid JSON: {error}"),
+const INDEXING_POLICY: JsonTab = JsonTab {
+    tab: SettingsTab::IndexingPolicy,
+    subject: ("The indexing policy", "is"),
+    shape: ("a JSON object", Value::is_object),
+};
+
+const COMPUTED_PROPERTIES: JsonTab = JsonTab {
+    tab: SettingsTab::ComputedProperties,
+    subject: ("The computed properties", "are"),
+    shape: ("a JSON array", Value::is_array),
+};
+
+impl JsonTab {
+    /// The JSON in the editor, or `None` when it holds the value as it was.
+    fn parse(&self, editor: &Editor, was: &Value) -> Result<Option<Value>, SettingsError> {
+        let (subject, verb) = self.subject;
+        let (shape, has_shape) = self.shape;
+        let value: Value = serde_json::from_str(&editor.text())
+            .map_err(|error| self.error(format!("{subject} {verb} not valid JSON: {error}")))?;
+        if value == *was {
+            return Ok(None);
+        }
+        if !has_shape(&value) {
+            return Err(self.error(format!("{subject} must be {shape}.")));
+        }
+        Ok(Some(value))
+    }
+
+    fn error(&self, message: String) -> SettingsError {
+        SettingsError {
+            tab: self.tab,
+            message,
+        }
     }
 }
 
@@ -350,6 +390,46 @@ mod tests {
             Err(SettingsError {
                 tab: SettingsTab::IndexingPolicy,
                 message: "The indexing policy must be a JSON object.".into()
+            })
+        );
+    }
+
+    #[test]
+    fn writes_back_the_edited_computed_properties() {
+        let mut settings = ContainerSettings::from_properties(&json!({"id": "drivers"}));
+        assert_eq!(settings.to_properties().unwrap(), json!({"id": "drivers"}));
+
+        retype(
+            &mut settings.computed,
+            r#"[{"name": "cp", "query": "SELECT VALUE 1 FROM c"}]"#,
+        );
+
+        assert_eq!(
+            settings.to_properties().unwrap()["computedProperties"],
+            json!([{"name": "cp", "query": "SELECT VALUE 1 FROM c"}])
+        );
+    }
+
+    #[test]
+    fn requires_the_computed_properties_to_be_a_json_array() {
+        let mut settings = ContainerSettings::from_properties(&json!({}));
+
+        retype(&mut settings.computed, "[");
+        assert_eq!(
+            settings.to_properties(),
+            Err(SettingsError {
+                tab: SettingsTab::ComputedProperties,
+                message: "The computed properties are not valid JSON: \
+                          EOF while parsing a list at line 1 column 1"
+                    .into()
+            })
+        );
+        retype(&mut settings.computed, "{}");
+        assert_eq!(
+            settings.to_properties(),
+            Err(SettingsError {
+                tab: SettingsTab::ComputedProperties,
+                message: "The computed properties must be a JSON array.".into()
             })
         );
     }
