@@ -1130,18 +1130,24 @@ fn on_settings_form_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 /// Goes back to the mode settings mode was opened from, after asking to discard
 /// any changes.
 fn leave_settings(state: &mut AppState) -> Vec<Effect> {
+    if settings_changed(state) {
+        state.confirm_discard = true;
+        return Vec::new();
+    }
+    close_settings(state)
+}
+
+/// Whether any of the settings shown were edited since they were loaded or saved.
+fn settings_changed(state: &AppState) -> bool {
     let tabs = [
         SettingsTab::Settings,
         SettingsTab::IndexingPolicy,
         SettingsTab::ComputedProperties,
     ];
-    let changed = settings_mut(state)
-        .is_some_and(|settings| tabs.into_iter().any(|tab| settings.modified(tab)));
-    if changed {
-        state.confirm_discard = true;
-        return Vec::new();
+    match &state.settings {
+        Some(Load::Loaded(settings)) => tabs.into_iter().any(|tab| settings.modified(tab)),
+        _ => false,
     }
-    close_settings(state)
 }
 
 /// Goes back to the mode settings mode was opened from, dropping the settings.
@@ -1150,6 +1156,9 @@ fn close_settings(state: &mut AppState) -> Vec<Effect> {
     state.mode = state.settings_from;
     if state.focus != Focus::Tree {
         state.focus = state.mode.panes()[1];
+    }
+    if state.mode == Mode::Browse && std::mem::take(&mut state.browse_stale) {
+        return run_query(state, DEFAULT_QUERY.to_string(), Origin::Browse);
     }
     Vec::new()
 }
@@ -1521,7 +1530,13 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
         database: database.name.clone(),
         container: container.name.clone(),
     };
-    state.target = Some(target);
+    if state.mode == Mode::Settings && settings_changed(state) {
+        state.status = Status::Error(
+            "save (Ctrl-S) or discard (Esc) the changes to the settings first".into(),
+        );
+        return Vec::new();
+    }
+    state.target = Some(target.clone());
     state.results.clear();
     state.marked.clear();
     state.result_selected = 0;
@@ -1530,6 +1545,12 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
         // and its documents are listed when the query editor is left
         state.browse_stale = true;
         return Vec::new();
+    }
+    if state.mode == Mode::Settings {
+        // Its documents are listed when the settings are left
+        state.browse_stale = true;
+        state.settings = Some(Load::Loading);
+        return vec![Effect::LoadSettings(target)];
     }
     run_query(state, DEFAULT_QUERY.to_string(), Origin::Browse)
 }
@@ -4317,5 +4338,49 @@ mod tests {
 
         assert_eq!(state.mode, Mode::Settings);
         assert!(shown_settings(&state).field == Field::Ttl);
+    }
+
+    fn shop_orders() -> Target {
+        Target {
+            container: "orders".into(),
+            ..carts()
+        }
+    }
+
+    #[test]
+    fn picking_another_container_shows_its_settings_and_lists_it_when_they_are_left() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::BackTab);
+
+        let effects = press(&mut state, KeyCode::Down);
+
+        assert_eq!(effects, vec![Effect::LoadSettings(shop_orders())]);
+        assert_eq!(state.target, Some(shop_orders()));
+        assert!(matches!(state.settings, Some(Load::Loading)));
+
+        let effects = press(&mut state, KeyCode::Esc);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Query { target, origin: Origin::Browse, .. }] if *target == shop_orders()
+        ));
+    }
+
+    #[test]
+    fn changed_settings_keep_their_container_picked() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+        press(&mut state, KeyCode::BackTab);
+
+        let effects = press(&mut state, KeyCode::Down);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.target, Some(carts()));
+        assert_eq!(shown_settings(&state).ttl, TimeToLive::NoDefault);
+        assert_eq!(
+            state.status,
+            Status::Error(
+                "save (Ctrl-S) or discard (Esc) the changes to the settings first".into()
+            )
+        );
     }
 }
