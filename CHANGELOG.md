@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Copy the query results with `y`, save them to a JSON file with `w`, and save the query with Ctrl-S.
 - Show the request charge of each query on the status line.
 - Show why a query failed in a dialog, with the service's own message and the line and column it points at, and explain queries such as aggregates that the Azure Cosmos DB SDK for Rust cannot run across partitions yet, or parameters termos cannot set.
+- Edit a container's settings with `S`: time to live, geography or geometry for spatial data, the indexing policy and computed properties as JSON, and save them with Ctrl-S.
 
 ## [0.1.5] - 2026-10-02
 
