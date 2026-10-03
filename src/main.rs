@@ -13,6 +13,8 @@ mod json;
 mod management;
 mod partition;
 mod query;
+#[allow(dead_code)] // Used by the query editor as it comes together
+mod sql;
 mod state;
 mod store;
 #[cfg(test)]
