@@ -12,13 +12,13 @@ use crate::store::{DataPlane, DataStore, Documents};
 use futures::StreamExt;
 use serde_json::Value;
 
-use crate::state::{Effect, Msg, QueryResult, QueryStats, Target};
+use crate::state::{Effect, Msg, Origin, QueryResult, QueryStats, Target};
 
 /// Does background work against the control and data planes.
 pub struct Runner<M, D: DataPlane> {
     pub connector: Connector<M, D>,
-    /// The latest query, kept open while it has documents left to show.
-    open_query: RefCell<Option<OpenQuery>>,
+    /// The latest query of each origin, kept open while it has documents left to show.
+    open_queries: RefCell<Vec<OpenQuery>>,
     /// Where listed accounts are saved for the next run.
     account_cache: Option<AccountCache>,
     clipboard: RefCell<Clipboard>,
@@ -27,6 +27,7 @@ pub struct Runner<M, D: DataPlane> {
 /// A query with documents left to read.
 struct OpenQuery {
     id: u64,
+    origin: Origin,
     pk_path: String,
     pages: Documents,
     /// Documents read with a page but not handed out yet.
@@ -61,7 +62,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
     pub fn new(connector: Connector<M, D>) -> Self {
         Runner {
             connector,
-            open_query: RefCell::default(),
+            open_queries: RefCell::default(),
             account_cache: None,
             clipboard: RefCell::default(),
         }
@@ -96,9 +97,17 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
                     result: result.map_err(describe),
                 }
             }
-            Effect::Query { id, target, sql } => Msg::QueryDone {
+            Effect::Query {
                 id,
-                result: self.query(id, &target, &sql).await.map_err(describe),
+                target,
+                sql,
+                origin,
+            } => Msg::QueryDone {
+                id,
+                result: self
+                    .query(id, origin, &target, &sql)
+                    .await
+                    .map_err(describe),
             },
             Effect::LoadMore { id } => Msg::MoreLoaded {
                 id,
@@ -130,14 +139,25 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
     }
 
     /// Runs a query and reads its first page, keeping it open for more.
-    async fn query(&self, id: u64, target: &Target, sql: &str) -> anyhow::Result<QueryResult> {
+    async fn query(
+        &self,
+        id: u64,
+        origin: Origin,
+        target: &Target,
+        sql: &str,
+    ) -> anyhow::Result<QueryResult> {
         let started = Instant::now();
+        // The query it replaces has nothing more to show
+        self.open_queries
+            .borrow_mut()
+            .retain(|open| open.origin != origin);
         let store = self
             .connector
             .connect_to(&target.account, &target.database, &target.container)
             .await?;
         let open = OpenQuery {
             id,
+            origin,
             pk_path: store.partition_key_path().to_string(),
             pages: store.documents(sql).await?,
             unread: VecDeque::new(),
@@ -181,13 +201,17 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         results
     }
 
-    /// Reads the next page of the latest query.
+    /// Reads the next page of an open query.
     async fn load_more(&self, id: u64) -> anyhow::Result<QueryResult> {
         let started = Instant::now();
-        let open = self.open_query.borrow_mut().take();
+        let open = {
+            let mut open_queries = self.open_queries.borrow_mut();
+            let index = open_queries.iter().position(|open| open.id == id);
+            index.map(|index| open_queries.remove(index))
+        };
         match open {
-            Some(open) if open.id == id => self.read_page(open, started).await,
-            _ => anyhow::bail!("the query has no more documents to load"),
+            Some(open) => self.read_page(open, started).await,
+            None => anyhow::bail!("the query has no more documents to load"),
         }
     }
 
@@ -205,7 +229,7 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
         let pk_path = open.pk_path.clone();
         let stats = std::mem::take(&mut open.stats);
         if more {
-            *self.open_query.borrow_mut() = Some(open);
+            self.open_queries.borrow_mut().push(open);
         }
         Ok(QueryResult {
             docs,
@@ -297,6 +321,7 @@ mod tests {
                 id: 7,
                 target: carts(),
                 sql: sql.clone(),
+                origin: Origin::Browse,
             })
             .await;
 
@@ -324,6 +349,7 @@ mod tests {
                 id: 1,
                 target: carts(),
                 sql: "SELECT * FROM c".into(),
+                origin: Origin::Browse,
             })
             .await;
 
@@ -350,6 +376,7 @@ mod tests {
             id,
             target: carts(),
             sql: "SELECT * FROM c".into(),
+            origin: Origin::Browse,
         }
     }
 
@@ -501,6 +528,33 @@ mod tests {
             .await;
 
         assert!(matches!(msg, Msg::Saved(Err(_))), "{msg:?}");
+    }
+
+    #[tokio::test]
+    async fn the_editor_query_leaves_the_browse_query_open_for_more() {
+        let runner = with_carts(250);
+        runner.run(query_carts(1)).await;
+        runner
+            .run(Effect::Query {
+                id: 2,
+                target: carts(),
+                sql: "SELECT VALUE c.id FROM c".into(),
+                origin: Origin::Editor,
+            })
+            .await;
+
+        let browse = runner.run(Effect::LoadMore { id: 1 }).await;
+        let editor = runner.run(Effect::LoadMore { id: 2 }).await;
+
+        for (msg, first) in [(browse, "c-100"), (editor, "c-100")] {
+            let Msg::MoreLoaded {
+                result: Ok(result), ..
+            } = msg
+            else {
+                panic!("unexpected {msg:?}");
+            };
+            assert_eq!(ids(&result.docs)[0], first);
+        }
     }
 
     #[tokio::test]

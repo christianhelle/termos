@@ -19,13 +19,14 @@ use crate::query::{DEFAULT_QUERY, build_query};
 pub enum Effect {
     LoadAccounts,
     LoadContainers(Account),
-    /// Runs a query on a container. Only the latest query's results are shown.
+    /// Runs a query on a container. Only the latest query of each origin is shown.
     Query {
         id: u64,
         target: Target,
         sql: String,
+        origin: Origin,
     },
-    /// Reads the next page of the latest query.
+    /// Reads the next page of the latest query of its origin.
     LoadMore {
         id: u64,
     },
@@ -47,6 +48,15 @@ pub enum Effect {
         target: Target,
         items: Vec<(String, Option<Value>)>,
     },
+}
+
+/// Where a query was asked for, each showing its latest query's results on its own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Origin {
+    /// The search bar, or opening a container.
+    Browse,
+    /// The query editor.
+    Editor,
 }
 
 /// A container to query.
@@ -991,7 +1001,7 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             state.marked = (0..state.results.len()).collect();
         }
         KeyCode::Esc => state.marked.clear(),
-        KeyCode::Char('r') => return run_query(state, state.last_sql.clone()),
+        KeyCode::Char('r') => return run_query(state, state.last_sql.clone(), Origin::Browse),
         KeyCode::Char('d') if state.selected_document().is_some() => state.confirm_delete = true,
         _ => {}
     }
@@ -1091,7 +1101,7 @@ fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Esc => state.focus = Focus::Results,
         KeyCode::Enter => {
             state.focus = Focus::Results;
-            return run_query(state, build_query(state.search.text()));
+            return run_query(state, build_query(state.search.text()), Origin::Browse);
         }
         _ => {}
     }
@@ -1189,7 +1199,7 @@ fn is_run_key(key: KeyEvent) -> bool {
 /// Runs the query in the editor as it is written.
 fn run_editor_query(state: &mut AppState) -> Vec<Effect> {
     let sql = state.editor.text().trim().to_string();
-    run_query(state, sql)
+    run_query(state, sql, Origin::Editor)
 }
 
 fn on_tree_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -1270,11 +1280,11 @@ fn open_container(state: &mut AppState, a: usize, d: usize, c: usize) -> Vec<Eff
     state.results.clear();
     state.marked.clear();
     state.result_selected = 0;
-    run_query(state, DEFAULT_QUERY.to_string())
+    run_query(state, DEFAULT_QUERY.to_string(), Origin::Browse)
 }
 
 /// Queries the current container, if there is one.
-fn run_query(state: &mut AppState, sql: String) -> Vec<Effect> {
+fn run_query(state: &mut AppState, sql: String, origin: Origin) -> Vec<Effect> {
     let Some(target) = state.target.clone() else {
         state.status = Status::Error("pick a container first".into());
         return Vec::new();
@@ -1291,6 +1301,7 @@ fn run_query(state: &mut AppState, sql: String) -> Vec<Effect> {
         id: state.query_id,
         target,
         sql,
+        origin,
     }]
 }
 
@@ -1955,7 +1966,8 @@ mod tests {
             vec![Effect::Query {
                 id: 1,
                 target: carts(),
-                sql: "SELECT * FROM c".into()
+                sql: "SELECT * FROM c".into(),
+                origin: Origin::Browse,
             }]
         );
         assert_eq!(state.target, Some(carts()));
@@ -2099,7 +2111,8 @@ mod tests {
             vec![Effect::Query {
                 id: 2,
                 target: carts(),
-                sql: "SELECT * FROM c WHERE c.qty > 1".into()
+                sql: "SELECT * FROM c WHERE c.qty > 1".into(),
+                origin: Origin::Browse,
             }]
         );
         assert_eq!(state.focus, Focus::Results);
@@ -2219,7 +2232,8 @@ mod tests {
                 vec![Effect::Query {
                     id: 2,
                     target: carts(),
-                    sql: "SELECT VALUE c.id\nFROM c".into()
+                    sql: "SELECT VALUE c.id\nFROM c".into(),
+                    origin: Origin::Editor,
                 }],
                 "{key:?}"
             );
@@ -2376,7 +2390,8 @@ mod tests {
                 vec![Effect::Query {
                     id: 2,
                     target: carts(),
-                    sql: "SELECT VALUE c.id FROM c".into()
+                    sql: "SELECT VALUE c.id FROM c".into(),
+                    origin: Origin::Editor,
                 }]
             );
         }
