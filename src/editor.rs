@@ -97,6 +97,24 @@ impl Editor {
         self.move_to_row(self.row + 1);
     }
 
+    pub fn home(&mut self) {
+        self.column = 0;
+    }
+
+    pub fn end(&mut self) {
+        self.column = self.len();
+    }
+
+    /// Moves up this many lines, stopping at the first.
+    pub fn page_up(&mut self, lines: usize) {
+        self.move_to_row(self.row.saturating_sub(lines));
+    }
+
+    /// Moves down this many lines, stopping at the last.
+    pub fn page_down(&mut self, lines: usize) {
+        self.move_to_row(self.row + lines);
+    }
+
     /// Puts the cursor on a line, keeping its column within the line.
     fn move_to_row(&mut self, row: usize) {
         self.row = row.min(self.lines.len() - 1);
@@ -236,5 +254,30 @@ mod tests {
         editor.delete();
 
         assert_eq!(editor.text(), "c");
+    }
+
+    #[test]
+    fn home_and_end_go_to_the_ends_of_the_line() {
+        let mut editor = typed("FROM c");
+
+        editor.home();
+        assert_eq!(editor.cursor(), (0, 0));
+        editor.end();
+        assert_eq!(editor.cursor(), (0, 6));
+    }
+
+    #[test]
+    fn page_up_and_down_move_lines_at_a_time_within_the_text() {
+        let mut editor = typed("a");
+        (0..9).for_each(|_| editor.newline());
+
+        editor.page_up(4);
+        assert_eq!(editor.cursor(), (5, 0));
+        editor.page_up(10);
+        assert_eq!(editor.cursor(), (0, 0));
+        editor.page_down(4);
+        assert_eq!(editor.cursor(), (4, 0));
+        editor.page_down(10);
+        assert_eq!(editor.cursor(), (9, 0));
     }
 }
