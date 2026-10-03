@@ -416,6 +416,8 @@ pub struct AppState {
     pub show_help: bool,
     /// Whether a dialog asks to confirm deleting the selected document.
     pub confirm_delete: bool,
+    /// Whether a dialog asks to discard the changes to the settings.
+    pub confirm_discard: bool,
     /// Whether the accounts tree is hidden, leaving its room to the other panes.
     pub tree_hidden: bool,
     /// Whether the focused pane takes the whole screen.
@@ -497,6 +499,7 @@ impl AppState {
             quit: false,
             show_help: false,
             confirm_delete: false,
+            confirm_discard: false,
             tree_hidden: false,
             zoomed: false,
             focus: Focus::Tree,
@@ -761,6 +764,14 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         }
         return Vec::new();
     }
+    if state.confirm_discard && !ctrl_c {
+        // Only y or Enter discards. Any other key keeps the changes, and only that
+        state.confirm_discard = false;
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
+            return close_settings(state);
+        }
+        return Vec::new();
+    }
     if state.error.is_some() && !ctrl_c {
         // Any other key closes the error, and only that
         state.error = None;
@@ -778,6 +789,7 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Char('b') if ctrl => toggle_tree(state),
         KeyCode::Char('s') if ctrl && state.mode == Mode::Settings => return save_settings(state),
+        KeyCode::Esc if state.mode == Mode::Settings => return leave_settings(state),
         KeyCode::Tab => move_focus(state, Focus::next),
         KeyCode::BackTab => move_focus(state, Focus::previous),
         _ => {
@@ -953,6 +965,7 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::Char('z') => state.zoomed = !state.zoomed,
         KeyCode::Char('n') if state.mode == Mode::Query => return leave_query_editor(state),
         KeyCode::Char('n') => open_query_editor(state),
+        KeyCode::Char('S') if state.mode == Mode::Settings => return leave_settings(state),
         KeyCode::Char('S') => return open_settings(state),
         _ => {
             return match state.focus {
@@ -1109,6 +1122,33 @@ fn on_settings_form_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         (_, KeyCode::Right | KeyCode::Char('l' | ' ')) => settings.next_choice(),
         (_, KeyCode::Left | KeyCode::Char('h')) => settings.previous_choice(),
         _ => {}
+    }
+    Vec::new()
+}
+
+/// Goes back to the mode settings mode was opened from, after asking to discard
+/// any changes.
+fn leave_settings(state: &mut AppState) -> Vec<Effect> {
+    let tabs = [
+        SettingsTab::Settings,
+        SettingsTab::IndexingPolicy,
+        SettingsTab::ComputedProperties,
+    ];
+    let changed = settings_mut(state)
+        .is_some_and(|settings| tabs.into_iter().any(|tab| settings.modified(tab)));
+    if changed {
+        state.confirm_discard = true;
+        return Vec::new();
+    }
+    close_settings(state)
+}
+
+/// Goes back to the mode settings mode was opened from, dropping the settings.
+fn close_settings(state: &mut AppState) -> Vec<Effect> {
+    state.settings = None;
+    state.mode = state.settings_from;
+    if state.focus != Focus::Tree {
+        state.focus = state.mode.panes()[1];
     }
     Vec::new()
 }
@@ -4227,5 +4267,44 @@ mod tests {
             state.status,
             Status::Error("could not save the settings".into())
         );
+    }
+
+    #[test]
+    fn esc_leaves_unchanged_settings_for_the_mode_they_were_opened_from() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Tab);
+
+        press(&mut state, KeyCode::Esc);
+
+        assert_eq!(state.mode, Mode::Browse);
+        assert_eq!(state.focus, Focus::Results);
+        assert!(state.settings.is_none());
+
+        press(&mut state, KeyCode::Char('n'));
+        press(&mut state, KeyCode::Tab);
+        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('S'));
+        assert_eq!(state.mode, Mode::Query);
+        assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn leaving_changed_settings_asks_to_discard_the_changes_first() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+
+        press(&mut state, KeyCode::Esc);
+        assert!(state.confirm_discard);
+        press(&mut state, KeyCode::Char('n'));
+        assert!(!state.confirm_discard);
+        assert_eq!(state.mode, Mode::Settings);
+        assert_eq!(shown_settings(&state).ttl, TimeToLive::NoDefault);
+
+        press(&mut state, KeyCode::Char('S'));
+        press(&mut state, KeyCode::Char('y'));
+
+        assert!(!state.confirm_discard);
+        assert_eq!(state.mode, Mode::Browse);
+        assert!(state.settings.is_none());
     }
 }
