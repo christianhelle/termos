@@ -1084,7 +1084,7 @@ fn settings_mut(state: &mut AppState) -> Option<&mut ContainerSettings> {
 }
 
 /// The pane that shows a settings tab.
-fn settings_focus(tab: SettingsTab) -> Focus {
+pub fn settings_focus(tab: SettingsTab) -> Focus {
     match tab {
         SettingsTab::Settings => Focus::SettingsForm,
         SettingsTab::IndexingPolicy => Focus::IndexingPolicy,

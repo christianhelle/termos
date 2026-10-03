@@ -12,8 +12,9 @@ use ratatui::widgets::{
 
 use crate::json::{highlight_json, highlight_json_array};
 use crate::query::DEFAULT_QUERY;
+use crate::settings::{ContainerSettings, Field, Geospatial, SettingsTab, TimeToLive};
 use crate::sql::highlight_sql;
-use crate::state::{AppState, Focus, Mode, OutputTab, SavePrompt, Saving, Selection, Status};
+use crate::state::{AppState, Focus, Load, Mode, OutputTab, SavePrompt, Saving, Selection, Status};
 
 /// Room for the query the search bar completes, and a space after it.
 const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
@@ -242,7 +243,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
             draw_editor(frame, state, panes.editor);
             draw_output(frame, state, panes.output);
         }
-        Mode::Settings => {}
+        Mode::Settings => draw_settings(frame, state, panes.settings),
     }
     draw_status(frame, state, panes.status);
     if state.show_help {
@@ -391,6 +392,139 @@ fn draw_editor(frame: &mut Frame, state: &AppState, area: Rect) {
         let x = area.x + 1 + u16::try_from(gutter + 1 + column).unwrap_or(u16::MAX);
         let y = area.y + 1 + u16::try_from(row - scroll).unwrap_or(u16::MAX);
         frame.set_cursor_position((x.min(area.right().saturating_sub(2)), y));
+    }
+}
+
+/// The settings title: the container and the tabs, with the shown one picked out
+/// and a star on those with changes.
+fn settings_title(state: &AppState) -> Line<'static> {
+    let mut spans = Vec::new();
+    if let Some(target) = &state.target {
+        spans.push(Span::raw(format!(
+            "{}/{}: ",
+            target.database, target.container
+        )));
+    }
+    let tabs = [
+        ("Settings", SettingsTab::Settings),
+        ("Indexing Policy", SettingsTab::IndexingPolicy),
+        ("Computed Properties", SettingsTab::ComputedProperties),
+    ];
+    for (index, (name, tab)) in tabs.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" │ "));
+        }
+        let changed = match &state.settings {
+            Some(Load::Loaded(settings)) if settings.modified(tab) => "*",
+            _ => "",
+        };
+        let style = if state.settings_tab == tab {
+            Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::new().add_modifier(Modifier::DIM)
+        };
+        spans.push(Span::styled(format!("{name}{changed}"), style));
+    }
+    Line::from(spans)
+}
+
+fn draw_settings(frame: &mut Frame, state: &AppState, area: Rect) {
+    let focus = settings_focus(state.settings_tab);
+    let block = pane(settings_title(state), state, focus);
+    let settings = match &state.settings {
+        Some(Load::Loaded(settings)) => settings,
+        Some(Load::Failed(error)) => {
+            let error = Line::styled(format!("error: {error}"), Style::new().fg(Color::Red));
+            let paragraph = Paragraph::new(error).wrap(Wrap { trim: false });
+            frame.render_widget(paragraph.block(block), area);
+            return;
+        }
+        Some(Load::Loading) | None => {
+            frame.render_widget(Paragraph::new("loading settings…").block(block), area);
+            return;
+        }
+    };
+    match state.settings_tab {
+        SettingsTab::Settings => draw_settings_form(frame, state, settings, block, area),
+        SettingsTab::IndexingPolicy | SettingsTab::ComputedProperties => {}
+    }
+}
+
+/// Draws the time to live and geospatial choices, and the partition key.
+fn draw_settings_form(
+    frame: &mut Frame,
+    state: &AppState,
+    settings: &ContainerSettings,
+    block: Block,
+    area: Rect,
+) {
+    let focused = state.focus == Focus::SettingsForm;
+    let heading =
+        |text: &'static str| Line::styled(text, Style::new().add_modifier(Modifier::BOLD));
+    let radio = |label: &'static str, picked: bool, field: Field| {
+        let mark = if picked { "(•)" } else { "( )" };
+        let mut style = Style::new();
+        if picked && focused && settings.field == field {
+            style = style.add_modifier(Modifier::REVERSED);
+        }
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(format!("{mark} {label}"), style),
+        ])
+    };
+    let mut lines = vec![
+        heading("Time to Live"),
+        radio("Off", settings.ttl == TimeToLive::Off, Field::Ttl),
+        radio(
+            "On (no default)",
+            settings.ttl == TimeToLive::NoDefault,
+            Field::Ttl,
+        ),
+        radio("On", settings.ttl == TimeToLive::Seconds, Field::Ttl),
+    ];
+    let mut cursor = None;
+    if settings.ttl == TimeToLive::Seconds {
+        let editing = focused && settings.field == Field::Seconds;
+        let style = if editing {
+            Style::new().fg(Color::Cyan)
+        } else {
+            Style::new()
+        };
+        if editing {
+            // Inside the border, past the indent and the opening bracket
+            let column = u16::try_from(7 + settings.seconds.cursor()).unwrap_or(u16::MAX);
+            let row = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+            cursor = Some((area.x + 1 + column, area.y + 1 + row));
+        }
+        lines.push(Line::from(vec![
+            Span::raw("      "),
+            Span::styled(format!("[{}]", settings.seconds.text()), style),
+            Span::raw(" second(s)"),
+        ]));
+    }
+    let (paths, note) = settings.partition_key();
+    let dim = Style::new().add_modifier(Modifier::DIM);
+    lines.extend([
+        Line::raw(""),
+        heading("Geospatial Configuration"),
+        radio(
+            "Geography",
+            settings.geospatial == Geospatial::Geography,
+            Field::Geospatial,
+        ),
+        radio(
+            "Geometry",
+            settings.geospatial == Geospatial::Geometry,
+            Field::Geospatial,
+        ),
+        Line::raw(""),
+        heading("Partition key"),
+        Line::styled(format!("  {paths}"), dim),
+        Line::styled(format!("  {note}"), dim),
+    ]);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+    if let Some(position) = cursor {
+        frame.set_cursor_position(position);
     }
 }
 
@@ -1068,6 +1202,84 @@ mod tests {
             let found: Vec<&str> = line.split([' ', '│']).filter(|w| !w.is_empty()).collect();
             found.windows(words.len()).any(|window| window == words)
         })
+    }
+
+    fn with_settings(properties: serde_json::Value) -> AppState {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('S'));
+        let target = state.target.clone().unwrap();
+        send(
+            &mut state,
+            Msg::SettingsLoaded {
+                target,
+                result: Ok(properties),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn settings_mode_draws_the_settings_tab_in_place_of_the_other_panes() {
+        let state = with_settings(json!({
+            "id": "carts",
+            "defaultTtl": 3600,
+            "partitionKey": {"paths": ["/tenantId"], "kind": "Hash"}
+        }));
+
+        let screen = screen(&state);
+
+        for hidden in ["Search", "Document", "Results"] {
+            assert!(!shows(&screen, hidden), "{}", screen.join("\n"));
+        }
+        for shown in [
+            "shop/carts: Settings │ Indexing Policy │ Computed Properties",
+            "Time to Live",
+            "( ) Off",
+            "( ) On (no default)",
+            "(•) On",
+            "[3600] second(s)",
+            "Geospatial Configuration",
+            "(•) Geography",
+            "( ) Geometry",
+            "Partition key",
+            "/tenantId",
+            "Non-hierarchically partitioned container.",
+        ] {
+            assert!(shows(&screen, shown), "{shown}\n{}", screen.join("\n"));
+        }
+    }
+
+    #[test]
+    fn the_settings_tabs_mark_the_ones_with_changes() {
+        let mut state = with_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+
+        let screen = screen(&state);
+
+        assert!(!shows(&screen, "second(s)"), "{}", screen.join("\n"));
+        assert!(
+            shows(&screen, "Settings* │ Indexing Policy │"),
+            "{}",
+            screen.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_settings_say_while_they_load_and_why_they_failed() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('S'));
+        assert!(shows(&screen(&state), "loading settings…"));
+
+        let target = state.target.clone().unwrap();
+        send(
+            &mut state,
+            Msg::SettingsLoaded {
+                target,
+                result: Err("forbidden".into()),
+            },
+        );
+
+        assert!(shows(&screen(&state), "error: forbidden"));
     }
 
     #[test]
