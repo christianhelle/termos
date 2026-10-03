@@ -128,12 +128,16 @@ fn service_message(message: &str) -> Option<String> {
         Err(_) => details.to_string(),
     };
     let text = text.split("ActivityId:").next().unwrap_or(&text).trim();
-    // Query errors hold their own JSON, with a message for each error
+    // Older gateway errors put "Message: " before their JSON
+    let text = text.strip_prefix("Message: ").unwrap_or(text);
+    // Query errors hold their own JSON, with a message for each error: an object
+    // with a message from the query engine, or just the message from the gateway
     let errors = serde_json::from_str::<Value>(text).ok().and_then(|inner| {
-        let errors = inner.get("errors")?.as_array()?;
+        let errors = inner.get("errors").or_else(|| inner.get("Errors"))?;
         let messages: Vec<&str> = errors
+            .as_array()?
             .iter()
-            .filter_map(|error| error.get("message")?.as_str())
+            .filter_map(|error| error.as_str().or_else(|| error.get("message")?.as_str()))
             .collect();
         Some(messages.join("\n"))
     });
@@ -306,6 +310,16 @@ mod tests {
             Some(
                 "The order by query does not have a corresponding composite index that it can be served from."
             )
+        );
+    }
+
+    #[test]
+    fn reads_the_classic_gateway_error_list() {
+        let message = r#"400: Cosmos DB returned HTTP 400: BadRequest. Details: {"code":"BadRequest","message":"Message: {\"Errors\":[\"One of the input values is invalid.\",\"The query is too large.\"]}\r\nActivityId: 9f1c, Request URI: /apps/1/services/2, RequestStats: , SDK: Microsoft.Azure.Documents.Common/2.14.0"}"#;
+
+        assert_eq!(
+            service_message(message).as_deref(),
+            Some("One of the input values is invalid.\nThe query is too large.")
         );
     }
 }
