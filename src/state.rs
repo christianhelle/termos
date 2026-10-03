@@ -48,6 +48,8 @@ pub enum Effect {
         target: Target,
         items: Vec<(String, Option<Value>)>,
     },
+    /// Reads the properties of a container, to show its settings.
+    LoadSettings(Target),
 }
 
 /// Where a query was asked for, each showing its latest query's results on its own.
@@ -96,6 +98,11 @@ pub enum Msg {
     /// The outcome of deleting each of several documents, by id.
     DeletedMany {
         results: Vec<(String, Result<(), String>)>,
+    },
+    /// The properties of a container, for its settings.
+    SettingsLoaded {
+        target: Target,
+        result: Result<Value, String>,
     },
 }
 
@@ -1672,6 +1679,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::Saved(Err(error)) => {
             state.status = Status::Error(format!("could not save: {error}"));
         }
+        Msg::SettingsLoaded { .. } => {}
     }
     Vec::new()
 }

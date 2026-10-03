@@ -127,6 +127,13 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             Effect::DeleteMany { target, items } => Msg::DeletedMany {
                 results: self.delete_many(&target, items).await,
             },
+            Effect::LoadSettings(target) => {
+                let result = self.properties(&target).await;
+                Msg::SettingsLoaded {
+                    target,
+                    result: result.map_err(describe),
+                }
+            }
             Effect::Save { path, contents } => Msg::Saved(
                 std::fs::write(&path, contents)
                     .map(|()| path)
@@ -164,6 +171,15 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             stats: QueryStats::default(),
         };
         self.read_page(open, started).await
+    }
+
+    /// Reads the properties of a container.
+    async fn properties(&self, target: &Target) -> anyhow::Result<Value> {
+        let store = self
+            .connector
+            .connect_to(&target.account, &target.database, &target.container)
+            .await?;
+        store.properties().await
     }
 
     /// Deletes a document from a container.
@@ -655,5 +671,20 @@ mod tests {
 
         let cached = AccountCache::in_dir(dir.path(), None).load();
         assert_eq!(cached, Some(vec![account("orders")]));
+    }
+
+    #[tokio::test]
+    async fn loads_the_properties_of_a_container_for_its_settings() {
+        let runner = runner();
+        let properties = json!({ "id": "carts", "defaultTtl": -1 });
+        runner.connector.data.container.borrow_mut().properties = properties.clone();
+
+        let msg = runner.run(Effect::LoadSettings(carts())).await;
+
+        let Msg::SettingsLoaded { target, result } = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(target, carts());
+        assert_eq!(result, Ok(properties));
     }
 }
