@@ -50,6 +50,11 @@ pub enum Effect {
     },
     /// Reads the properties of a container, to show its settings.
     LoadSettings(Target),
+    /// Replaces the properties of a container, to save its settings.
+    ReplaceSettings {
+        target: Target,
+        properties: Value,
+    },
 }
 
 /// Where a query was asked for, each showing its latest query's results on its own.
@@ -101,6 +106,11 @@ pub enum Msg {
     },
     /// The properties of a container, for its settings.
     SettingsLoaded {
+        target: Target,
+        result: Result<Value, String>,
+    },
+    /// The properties of a container as saved, or why they could not be.
+    SettingsSaved {
         target: Target,
         result: Result<Value, String>,
     },
@@ -1679,7 +1689,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::Saved(Err(error)) => {
             state.status = Status::Error(format!("could not save: {error}"));
         }
-        Msg::SettingsLoaded { .. } => {}
+        Msg::SettingsLoaded { .. } | Msg::SettingsSaved { .. } => {}
     }
     Vec::new()
 }

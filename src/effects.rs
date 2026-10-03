@@ -134,6 +134,13 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
                     result: result.map_err(describe),
                 }
             }
+            Effect::ReplaceSettings { target, properties } => {
+                let result = self.replace_properties(&target, properties).await;
+                Msg::SettingsSaved {
+                    target,
+                    result: result.map_err(describe),
+                }
+            }
             Effect::Save { path, contents } => Msg::Saved(
                 std::fs::write(&path, contents)
                     .map(|()| path)
@@ -180,6 +187,19 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             .connect_to(&target.account, &target.database, &target.container)
             .await?;
         store.properties().await
+    }
+
+    /// Replaces the properties of a container, returning them as saved.
+    async fn replace_properties(
+        &self,
+        target: &Target,
+        properties: Value,
+    ) -> anyhow::Result<Value> {
+        let store = self
+            .connector
+            .connect_to(&target.account, &target.database, &target.container)
+            .await?;
+        store.replace_properties(properties).await
     }
 
     /// Deletes a document from a container.
@@ -686,5 +706,27 @@ mod tests {
         };
         assert_eq!(target, carts());
         assert_eq!(result, Ok(properties));
+    }
+
+    #[tokio::test]
+    async fn replaces_the_properties_of_a_container_to_save_its_settings() {
+        let runner = runner();
+        let properties = json!({ "id": "carts", "defaultTtl": 60 });
+
+        let msg = runner
+            .run(Effect::ReplaceSettings {
+                target: carts(),
+                properties: properties.clone(),
+            })
+            .await;
+
+        let Msg::SettingsSaved { target, result } = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(target, carts());
+        assert_eq!(result, Ok(properties.clone()));
+        let container = runner.connector.data.container.borrow();
+        assert_eq!(container.replaced, vec![properties.clone()]);
+        assert_eq!(container.properties, properties);
     }
 }

@@ -100,6 +100,8 @@ pub struct FakeContainer {
     pub page_metrics: Option<String>,
     /// The properties of the container, such as its indexing policy.
     pub properties: Value,
+    /// The properties of each replace asked for.
+    pub replaced: Vec<Value>,
 }
 
 pub struct FakeDataPlane {
@@ -187,6 +189,13 @@ impl DataStore for FakeStore {
 
     async fn properties(&self) -> anyhow::Result<Value> {
         Ok(self.container.borrow().properties.clone())
+    }
+
+    async fn replace_properties(&self, properties: Value) -> anyhow::Result<Value> {
+        let mut container = self.container.borrow_mut();
+        container.replaced.push(properties.clone());
+        container.properties = properties.clone();
+        Ok(properties)
     }
 
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {

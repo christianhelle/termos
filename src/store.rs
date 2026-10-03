@@ -71,6 +71,9 @@ pub trait DataStore {
     /// The properties the service keeps for the container, such as its indexing policy.
     async fn properties(&self) -> anyhow::Result<Value>;
 
+    /// Replaces the properties of the container, returning them as the service saved them.
+    async fn replace_properties(&self, properties: Value) -> anyhow::Result<Value>;
+
     /// Deletes the document with this id, in the partition with this key value.
     /// A missing key value stands for a document without the partition key property.
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()>;

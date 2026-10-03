@@ -333,6 +333,16 @@ impl DataStore for CosmosStore {
         properties_json(properties)
     }
 
+    async fn replace_properties(&self, properties: Value) -> anyhow::Result<Value> {
+        let properties = self
+            .client
+            .replace(container_properties(properties)?, None)
+            .await
+            .map_err(classify)?
+            .into_model()?;
+        properties_json(properties)
+    }
+
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()> {
         let key = partition_key_of(partition_key)?;
         self.client
