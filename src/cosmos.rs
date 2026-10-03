@@ -118,10 +118,33 @@ fn short_message(message: &str) -> &str {
     }
 }
 
-/// Shortens SDK errors and turns authorization failures into [`Unauthorized`]
+/// What the service says when a query needs features the SDK does not declare, such
+/// as aggregates across partitions.
+const UNSUPPORTED: &str = "which the calling client does not support:";
+
+/// Explains a query the service rejected for needing features the SDK cannot run,
+/// or `None` for any other error.
+fn unsupported_features(message: &str) -> Option<String> {
+    let (_, rest) = message.split_once(UNSUPPORTED)?;
+    let listed = rest.split("ActivityId").next().unwrap_or(rest);
+    // The features follow escaped newlines in the JSON message, after a "None" placeholder
+    let listed = listed.replace("\\n", " ").replace("\\r", " ");
+    let features: Vec<&str> = listed
+        .split_whitespace()
+        .filter(|feature| *feature != "None")
+        .collect();
+    Some(format!(
+        "This query uses {}, which the Azure Cosmos DB SDK for Rust cannot run across \
+         partitions yet, so termos cannot run it either. The Data Explorer in the Azure portal can.",
+        features.join(", ")
+    ))
+}
+
+/// Shortens SDK errors, explains queries the SDK cannot run, and turns authorization failures into [`Unauthorized`]
 /// so callers can fall back.
 pub(crate) fn classify(error: CosmosError) -> anyhow::Error {
     let message = short_message(&error.to_string()).to_string();
+    let message = unsupported_features(&message).unwrap_or(message);
     match error.status().status_code() {
         StatusCode::Unauthorized | StatusCode::Forbidden => Unauthorized(message).into(),
         _ => anyhow::anyhow!(message),
@@ -205,5 +228,27 @@ mod tests {
             "403/5301 (RbacUnauthorizedMetadataRequest): AccountProperties fetch returned HTTP 403";
 
         assert_eq!(short_message(message), message);
+    }
+
+    #[test]
+    fn explains_query_features_the_sdk_cannot_run() {
+        let message = r#"400/0 (Unknown): Cosmos DB returned HTTP 400/0: Unknown. Details: {"code":"BadRequest","message":"Query contains the following features, which the calling client does not support:\nNone Aggregate NonValueAggregate \r\nActivityId: 7ad6b275-69f9-4b36-929b-7e29b4bc873b, Windows/10.0.20348 cosmos-netstandard-sdk/3.18.0"}"#;
+
+        assert_eq!(
+            unsupported_features(message).as_deref(),
+            Some(
+                "This query uses Aggregate, NonValueAggregate, which the Azure Cosmos DB SDK for Rust \
+                 cannot run across partitions yet, so termos cannot run it either. \
+                 The Data Explorer in the Azure portal can."
+            )
+        );
+    }
+
+    #[test]
+    fn leaves_other_errors_alone() {
+        assert_eq!(
+            unsupported_features("400/0: Syntax error near 'FORM'"),
+            None
+        );
     }
 }
