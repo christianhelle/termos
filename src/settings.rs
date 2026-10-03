@@ -113,6 +113,17 @@ impl ContainerSettings {
                 object.insert("defaultTtl".into(), Value::from(seconds));
             }
         }
+        let kind = match self.geospatial {
+            Geospatial::Geography => "Geography",
+            Geospatial::Geometry => "Geometry",
+        };
+        // A container that never set it reads geography, so it is only written when set or changed
+        if object.contains_key("geospatialConfig") || self.geospatial != Geospatial::Geography {
+            object.insert(
+                "geospatialConfig".into(),
+                serde_json::json!({ "type": kind }),
+            );
+        }
         Ok(properties)
     }
 
@@ -253,5 +264,17 @@ mod tests {
                 "{typed:?}"
             );
         }
+    }
+
+    #[test]
+    fn writes_back_the_geospatial_type() {
+        let mut settings = ContainerSettings::from_properties(&json!({"id": "drivers"}));
+
+        settings.geospatial = Geospatial::Geometry;
+
+        assert_eq!(
+            settings.to_properties().unwrap()["geospatialConfig"],
+            json!({"type": "Geometry"})
+        );
     }
 }
