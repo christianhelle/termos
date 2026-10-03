@@ -113,25 +113,9 @@ impl ContainerSettings {
                 object.insert("defaultTtl".into(), Value::from(seconds));
             }
         }
-        let empty = Value::Array(Vec::new());
-        let json_tabs = [
-            (
-                &self.indexing,
-                "indexingPolicy",
-                &Value::Null,
-                INDEXING_POLICY,
-            ),
-            (
-                &self.computed,
-                "computedProperties",
-                &empty,
-                COMPUTED_PROPERTIES,
-            ),
-        ];
-        for (editor, name, unset, tab) in json_tabs {
-            let was = self.original.get(name).unwrap_or(unset);
-            if let Some(value) = tab.parse(editor, was)? {
-                object.insert(name.into(), value);
+        for (editor, tab) in self.json_tabs() {
+            if let Some(value) = tab.parse(editor, &tab.was(&self.original))? {
+                object.insert(tab.name.into(), value);
             }
         }
         let kind = match self.geospatial {
@@ -146,6 +130,28 @@ impl ContainerSettings {
             );
         }
         Ok(properties)
+    }
+
+    /// Whether the settings a tab shows were edited since they were loaded or saved.
+    pub fn modified(&self, tab: SettingsTab) -> bool {
+        if tab == SettingsTab::Settings {
+            let was = ContainerSettings::from_properties(&self.original);
+            let seconds_changed =
+                self.ttl == TimeToLive::Seconds && self.seconds.text() != was.seconds.text();
+            return self.ttl != was.ttl || seconds_changed || self.geospatial != was.geospatial;
+        }
+        self.json_tabs()
+            .into_iter()
+            .filter(|(_, json)| json.tab == tab)
+            .any(|(editor, json)| json.parse(editor, &json.was(&self.original)) != Ok(None))
+    }
+
+    /// The editors of the tabs written as JSON, with what they hold.
+    fn json_tabs(&self) -> [(&Editor, JsonTab); 2] {
+        [
+            (&self.indexing, INDEXING_POLICY),
+            (&self.computed, COMPUTED_PROPERTIES),
+        ]
     }
 
     /// The partition key paths, and whether there is more than one level of them.
@@ -167,6 +173,10 @@ impl ContainerSettings {
 /// A tab whose setting is written as JSON of one shape.
 struct JsonTab {
     tab: SettingsTab,
+    /// The property holding the setting.
+    name: &'static str,
+    /// What the setting is when the property is missing.
+    unset: fn() -> Value,
     /// What the setting is called, and the verb that goes with it.
     subject: (&'static str, &'static str),
     /// The shape the JSON must have, and how to tell.
@@ -175,17 +185,29 @@ struct JsonTab {
 
 const INDEXING_POLICY: JsonTab = JsonTab {
     tab: SettingsTab::IndexingPolicy,
+    name: "indexingPolicy",
+    unset: || Value::Null,
     subject: ("The indexing policy", "is"),
     shape: ("a JSON object", Value::is_object),
 };
 
 const COMPUTED_PROPERTIES: JsonTab = JsonTab {
     tab: SettingsTab::ComputedProperties,
+    name: "computedProperties",
+    unset: || Value::Array(Vec::new()),
     subject: ("The computed properties", "are"),
     shape: ("a JSON array", Value::is_array),
 };
 
 impl JsonTab {
+    /// The setting in the properties.
+    fn was(&self, properties: &Value) -> Value {
+        properties
+            .get(self.name)
+            .cloned()
+            .unwrap_or_else(self.unset)
+    }
+
     /// The JSON in the editor, or `None` when it holds the value as it was.
     fn parse(&self, editor: &Editor, was: &Value) -> Result<Option<Value>, SettingsError> {
         let (subject, verb) = self.subject;
@@ -431,6 +453,39 @@ mod tests {
                 tab: SettingsTab::ComputedProperties,
                 message: "The computed properties must be a JSON array.".into()
             })
+        );
+    }
+
+    #[test]
+    fn tells_which_tabs_have_changes() {
+        let properties = json!({"defaultTtl": 60, "indexingPolicy": {"automatic": true}});
+        let tabs = [
+            SettingsTab::Settings,
+            SettingsTab::IndexingPolicy,
+            SettingsTab::ComputedProperties,
+        ];
+        let changed = |settings: &ContainerSettings| -> Vec<SettingsTab> {
+            tabs.into_iter()
+                .filter(|tab| settings.modified(*tab))
+                .collect()
+        };
+        let mut settings = ContainerSettings::from_properties(&properties);
+        assert_eq!(changed(&settings), []);
+
+        type_seconds(&mut settings, "61");
+        assert_eq!(changed(&settings), [SettingsTab::Settings]);
+        type_seconds(&mut settings, "60");
+        settings.geospatial = Geospatial::Geometry;
+        assert_eq!(changed(&settings), [SettingsTab::Settings]);
+        settings.geospatial = Geospatial::Geography;
+
+        retype(&mut settings.indexing, r#"{ "automatic": true }"#);
+        assert_eq!(changed(&settings), [], "only reformatted");
+        retype(&mut settings.indexing, r#"{"automatic": tr"#);
+        retype(&mut settings.computed, "[{}]");
+        assert_eq!(
+            changed(&settings),
+            [SettingsTab::IndexingPolicy, SettingsTab::ComputedProperties]
         );
     }
 }
