@@ -118,6 +118,25 @@ fn short_message(message: &str) -> &str {
     }
 }
 
+/// The messages the service put in an error's JSON details, without the activity id
+/// that follows them, or `None` when the error has no such details.
+fn service_message(message: &str) -> Option<String> {
+    let (_, details) = message.split_once("Details: ")?;
+    let details: Value = serde_json::from_str(details).ok()?;
+    let text = details.get("message")?.as_str()?;
+    let text = text.split("ActivityId:").next().unwrap_or(text).trim();
+    // Query errors hold their own JSON, with a message for each error
+    let errors = serde_json::from_str::<Value>(text).ok().and_then(|inner| {
+        let errors = inner.get("errors")?.as_array()?;
+        let messages: Vec<&str> = errors
+            .iter()
+            .filter_map(|error| error.get("message")?.as_str())
+            .collect();
+        Some(messages.join("\n"))
+    });
+    Some(errors.unwrap_or_else(|| text.to_string()))
+}
+
 /// What the service says when a query needs features the SDK does not declare, such
 /// as aggregates across partitions.
 const UNSUPPORTED: &str = "which the calling client does not support:";
@@ -144,7 +163,9 @@ fn unsupported_features(message: &str) -> Option<String> {
 /// so callers can fall back.
 pub(crate) fn classify(error: CosmosError) -> anyhow::Error {
     let message = short_message(&error.to_string()).to_string();
-    let message = unsupported_features(&message).unwrap_or(message);
+    let message = unsupported_features(&message)
+        .or_else(|| service_message(&message))
+        .unwrap_or(message);
     match error.status().status_code() {
         StatusCode::Unauthorized | StatusCode::Forbidden => Unauthorized(message).into(),
         _ => anyhow::anyhow!(message),
@@ -250,5 +271,26 @@ mod tests {
             unsupported_features("400/0: Syntax error near 'FORM'"),
             None
         );
+    }
+
+    #[test]
+    fn digs_the_service_messages_out_of_the_details() {
+        let message = r#"400/0 (Unknown): Cosmos DB returned HTTP 400/0: Unknown. Details: {"code":"BadRequest","message":"{\"errors\":[{\"severity\":\"Error\",\"location\":{\"start\":28,\"end\":29},\"code\":\"SC1001\",\"message\":\"Syntax error, incorrect syntax near '-'.\"}]}\r\nActivityId: ff8310f2-1aef-4fac-8240-1d9b8ab7eaed, Windows/10.0.20348 cosmos-netstandard-sdk/3.18.0"}"#;
+
+        assert_eq!(
+            service_message(message).as_deref(),
+            Some("Syntax error, incorrect syntax near '-'.")
+        );
+    }
+
+    #[test]
+    fn keeps_a_plain_service_message_without_its_activity_id() {
+        let message = r#"404/0: Cosmos DB returned HTTP 404/0: NotFound. Details: {"code":"NotFound","message":"Resource Not Found.\r\nActivityId: 1f2e, Windows/10.0.20348 cosmos-netstandard-sdk/3.18.0"}"#;
+
+        assert_eq!(
+            service_message(message).as_deref(),
+            Some("Resource Not Found.")
+        );
+        assert_eq!(service_message("no details here"), None);
     }
 }
