@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::editor::Editor;
 use crate::input::TextInput;
+use crate::json::highlight_json_array;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
 
@@ -285,6 +286,8 @@ pub struct AppState {
     pub editor_height: u16,
     /// How many lines the query output is scrolled down.
     pub output_scroll: u16,
+    /// How many lines of the query output show at once.
+    pub output_height: u16,
     /// What is typed in the search bar.
     pub search: TextInput,
     /// Index of the selected tree row.
@@ -337,6 +340,7 @@ impl AppState {
             editor: Editor::default(),
             editor_height: 0,
             output_scroll: 0,
+            output_height: 0,
             search: TextInput::default(),
             tree_selected: 0,
             target: None,
@@ -434,6 +438,16 @@ impl AppState {
             pretty.lines().count()
         });
         u16::try_from(lines).unwrap_or(u16::MAX)
+    }
+
+    /// How many lines the query output takes: the results as one pretty-printed array.
+    pub fn output_lines(&self) -> u16 {
+        u16::try_from(highlight_json_array(&self.results).len()).unwrap_or(u16::MAX)
+    }
+
+    /// How far the query output scrolls: until its last line is at the bottom.
+    pub fn max_output_scroll(&self) -> u16 {
+        self.output_lines().saturating_sub(self.output_height)
     }
 
     /// The picked text of the document, or `None` when nothing is picked.
@@ -751,9 +765,20 @@ fn leave_query_editor(state: &mut AppState) {
 }
 
 fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
-    if key.code == KeyCode::Esc {
-        leave_query_editor(state);
-    }
+    let last = usize::from(state.max_output_scroll());
+    let page = usize::from(state.output_height).max(1);
+    let scroll = usize::from(state.output_scroll);
+    let target = jump(key, &mut state.pending_g, scroll, last, page).unwrap_or(match key.code {
+        KeyCode::Down | KeyCode::Char('j') if scroll >= last => return load_more(state),
+        KeyCode::Down | KeyCode::Char('j') => scroll + 1,
+        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
+        KeyCode::Esc => {
+            leave_query_editor(state);
+            scroll
+        }
+        _ => scroll,
+    });
+    state.output_scroll = u16::try_from(target).unwrap_or(u16::MAX);
     Vec::new()
 }
 
@@ -820,10 +845,8 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
             let last = state.results.len().saturating_sub(1);
-            if state.result_selected == last && state.more && !state.loading_more {
-                state.loading_more = true;
-                state.status = Status::Info("Loading more documents…".into());
-                return vec![Effect::LoadMore { id: state.query_id }];
+            if state.result_selected == last && state.more {
+                return load_more(state);
             }
             state.result_selected = (state.result_selected + 1).min(last);
         }
@@ -849,6 +872,16 @@ fn on_results_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         show_from_top(state);
     }
     Vec::new()
+}
+
+/// Reads the next page of the latest query, unless it found everything or is reading it already.
+fn load_more(state: &mut AppState) -> Vec<Effect> {
+    if !state.more || state.loading_more {
+        return Vec::new();
+    }
+    state.loading_more = true;
+    state.status = Status::Info("Loading more documents…".into());
+    vec![Effect::LoadMore { id: state.query_id }]
 }
 
 fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -1185,6 +1218,7 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
             state.more = result.more;
             state.loading_more = false;
             state.result_selected = 0;
+            state.output_scroll = 0;
             show_from_top(state);
             state.pk_path = result.pk_path;
         }
@@ -2070,6 +2104,54 @@ mod tests {
         press(&mut state, KeyCode::Enter);
 
         assert_eq!(state.focus, Focus::Editor);
+    }
+
+    /// The query editor's output focused, four lines high, holding the two carts in ten lines.
+    fn with_output() -> AppState {
+        let mut state = with_query_editor();
+        state.output_height = 4;
+        press(&mut state, KeyCode::Esc);
+        state
+    }
+
+    #[test]
+    fn the_output_scrolls_no_further_than_its_last_line_at_the_bottom() {
+        let mut state = with_output();
+
+        press(&mut state, KeyCode::Down);
+        assert_eq!(state.output_scroll, 1);
+        press(&mut state, KeyCode::Char('G'));
+        assert_eq!(state.output_scroll, 6);
+        press(&mut state, KeyCode::Char('j'));
+        assert_eq!(state.output_scroll, 6);
+        press(&mut state, KeyCode::PageUp);
+        assert_eq!(state.output_scroll, 2);
+        press(&mut state, KeyCode::Char('g'));
+        press(&mut state, KeyCode::Char('g'));
+        assert_eq!(state.output_scroll, 0);
+    }
+
+    #[test]
+    fn down_at_the_bottom_of_the_output_loads_more_once() {
+        let mut state = with_output();
+        state.more = true;
+        press(&mut state, KeyCode::End);
+
+        let effects = press(&mut state, KeyCode::Down);
+        assert_eq!(effects, vec![Effect::LoadMore { id: 1 }]);
+        assert!(press(&mut state, KeyCode::Down).is_empty());
+    }
+
+    #[test]
+    fn a_new_query_shows_its_output_from_the_top() {
+        let mut state = with_output();
+        press(&mut state, KeyCode::End);
+        state.focus = Focus::Editor;
+
+        press(&mut state, KeyCode::F(5));
+        query_done(&mut state, 2, Ok(cart_docs()));
+
+        assert_eq!(state.output_scroll, 0);
     }
 
     fn with_cart_results() -> AppState {
