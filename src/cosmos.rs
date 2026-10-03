@@ -118,9 +118,40 @@ fn short_message(message: &str) -> &str {
     }
 }
 
-/// The messages the service put in an error's JSON details, without the activity id
-/// that follows them, or `None` when the error has no such details.
+/// The messages the service put in an error's details, without the activity id
+/// that follows them, or `None` when the error has no details.
 fn service_message(message: &str) -> Option<String> {
+    let errors = service_errors(message)?;
+    let messages: Vec<String> = errors.into_iter().map(|error| error.message).collect();
+    Some(messages.join("\n"))
+}
+
+/// The messages the service put in a query error's details, each followed by
+/// where in the query it is, when the service says.
+fn query_message(message: &str, sql: &str) -> Option<String> {
+    let errors = service_errors(message)?;
+    let messages: Vec<String> = errors
+        .into_iter()
+        .map(|error| match error.start {
+            Some(start) => {
+                let (line, column) = line_and_column(sql, start);
+                format!("{} (line {line}, column {column})", error.message)
+            }
+            None => error.message,
+        })
+        .collect();
+    Some(messages.join("\n"))
+}
+
+/// An error the service reported, with the character of the query where it starts
+/// when the service says.
+struct ServiceError {
+    message: String,
+    start: Option<usize>,
+}
+
+/// The errors in an error's details, or `None` when it has no details.
+fn service_errors(message: &str) -> Option<Vec<ServiceError>> {
     let (_, details) = message.split_once("Details: ")?;
     // JSON details hold the message, while others are the message already
     let text = match serde_json::from_str::<Value>(details) {
@@ -130,18 +161,37 @@ fn service_message(message: &str) -> Option<String> {
     let text = text.split("ActivityId:").next().unwrap_or(&text).trim();
     // Older gateway errors put "Message: " before their JSON
     let text = text.strip_prefix("Message: ").unwrap_or(text);
-    // Query errors hold their own JSON, with a message for each error: an object
-    // with a message from the query engine, or just the message from the gateway
+    // Query errors hold their own JSON, with an error for each problem: an object
+    // with a message and location from the query engine, or just the message from the gateway
     let errors = serde_json::from_str::<Value>(text).ok().and_then(|inner| {
         let errors = inner.get("errors").or_else(|| inner.get("Errors"))?;
-        let messages: Vec<&str> = errors
-            .as_array()?
-            .iter()
-            .filter_map(|error| error.as_str().or_else(|| error.get("message")?.as_str()))
-            .collect();
-        Some(messages.join("\n"))
+        let errors = errors.as_array()?.iter().filter_map(|error| {
+            let message = error.as_str().or_else(|| error.get("message")?.as_str())?;
+            let start = error
+                .pointer("/location/start")
+                .and_then(Value::as_u64)
+                .and_then(|start| usize::try_from(start).ok());
+            Some(ServiceError {
+                message: message.to_string(),
+                start,
+            })
+        });
+        Some(errors.collect())
     });
-    Some(errors.unwrap_or_else(|| text.to_string()))
+    Some(errors.unwrap_or_else(|| {
+        vec![ServiceError {
+            message: text.to_string(),
+            start: None,
+        }]
+    }))
+}
+
+/// The line and column, counted from 1, of a character of the query.
+fn line_and_column(sql: &str, start: usize) -> (usize, usize) {
+    let before: String = sql.chars().take(start).collect();
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    (line, column)
 }
 
 /// What the service says when a query needs features the SDK does not declare, such
@@ -169,9 +219,19 @@ fn unsupported_features(message: &str) -> Option<String> {
 /// Shortens SDK errors, explains queries the SDK cannot run, and turns authorization failures into [`Unauthorized`]
 /// so callers can fall back.
 pub(crate) fn classify(error: CosmosError) -> anyhow::Error {
+    explain(error, service_message)
+}
+
+/// Like [`classify`], also saying where in the query each error is.
+fn classify_query(error: CosmosError, sql: &str) -> anyhow::Error {
+    explain(error, |message| query_message(message, sql))
+}
+
+/// Puts an error in words, with the service's own messages when `messages` finds them.
+fn explain(error: CosmosError, messages: impl Fn(&str) -> Option<String>) -> anyhow::Error {
     let message = short_message(&error.to_string()).to_string();
     let message = unsupported_features(&message)
-        .or_else(|| service_message(&message))
+        .or_else(|| messages(&message))
         .unwrap_or(message);
     match error.status().status_code() {
         StatusCode::Unauthorized | StatusCode::Forbidden => Unauthorized(message).into(),
@@ -212,9 +272,10 @@ impl DataStore for CosmosStore {
             .client
             .query_items::<Value>(Query::from(sql), FeedScope::full_container(), Some(options))
             .await
-            .map_err(classify)?;
-        let pages = items.into_pages().map(|page| {
-            let page = page.map_err(classify)?;
+            .map_err(|error| classify_query(error, sql))?;
+        let sql = sql.to_string();
+        let pages = items.into_pages().map(move |page| {
+            let page = page.map_err(|error| classify_query(error, &sql))?;
             let request_charge = page.headers().request_charge().map_or(0.0, |c| c.value());
             let query_metrics = page.query_metrics().map(String::from);
             Ok(Page {
@@ -320,6 +381,19 @@ mod tests {
         assert_eq!(
             service_message(message).as_deref(),
             Some("One of the input values is invalid.\nThe query is too large.")
+        );
+    }
+
+    #[test]
+    fn says_where_in_the_query_each_error_is() {
+        let message = r#"400/0 (Unknown): Cosmos DB returned HTTP 400/0: Unknown. Details: {"code":"BadRequest","message":"{\"errors\":[{\"severity\":\"Error\",\"location\":{\"start\":9,\"end\":13},\"code\":\"SC1001\",\"message\":\"Syntax error, incorrect syntax near 'FORM'.\"},{\"severity\":\"Error\",\"location\":{\"start\":2,\"end\":3},\"code\":\"SC2001\",\"message\":\"Identifier 'x' could not be resolved.\"}]}\r\nActivityId: 6a8c, Windows/10.0.20348 cosmos-netstandard-sdk/3.18.0"}"#;
+
+        assert_eq!(
+            query_message(message, "SELECT *\nFORM c").as_deref(),
+            Some(
+                "Syntax error, incorrect syntax near 'FORM'. (line 2, column 1)\n\
+                 Identifier 'x' could not be resolved. (line 1, column 3)"
+            )
         );
     }
 }
