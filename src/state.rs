@@ -484,6 +484,8 @@ pub struct AppState {
     pub settings_from: Mode,
     /// The settings tab shown, also while the tree has the focus.
     pub settings_tab: SettingsTab,
+    /// How many lines the settings tabs show at once.
+    pub settings_height: u16,
 }
 
 impl AppState {
@@ -530,6 +532,7 @@ impl AppState {
             settings: None,
             settings_from: Mode::Browse,
             settings_tab: SettingsTab::Settings,
+            settings_height: 0,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -780,6 +783,9 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             return match state.focus {
                 Focus::Search => on_search_key(state, key),
                 Focus::Editor => on_editor_key(state, key),
+                Focus::IndexingPolicy | Focus::ComputedProperties => {
+                    on_settings_editor_key(state, key)
+                }
                 _ => on_pane_key(state, key),
             };
         }
@@ -1268,8 +1274,16 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         ask_where_to_save(state, Saving::Query);
         return Vec::new();
     }
-    let page = usize::from(state.editor_height).max(1);
-    let editor = &mut state.editor;
+    if key.code == KeyCode::Esc {
+        state.focus = Focus::Output;
+    }
+    edit(&mut state.editor, key, state.editor_height);
+    Vec::new()
+}
+
+/// Edits text with a key, moving a page at a time by this many lines.
+fn edit(editor: &mut Editor, key: KeyEvent, page: u16) {
+    let page = usize::from(page).max(1);
     match key.code {
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => editor.insert(c),
         KeyCode::Enter => editor.newline(),
@@ -1283,9 +1297,22 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         KeyCode::End => editor.end(),
         KeyCode::PageUp => editor.page_up(page),
         KeyCode::PageDown => editor.page_down(page),
-        KeyCode::Esc => state.focus = Focus::Output,
         _ => {}
     }
+}
+
+/// Edits the JSON of the indexing policy or computed properties tab.
+fn on_settings_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    let page = state.settings_height;
+    let focus = state.focus;
+    let Some(settings) = settings_mut(state) else {
+        return Vec::new();
+    };
+    let editor = match focus {
+        Focus::IndexingPolicy => &mut settings.indexing,
+        _ => &mut settings.computed,
+    };
+    edit(editor, key, page);
     Vec::new()
 }
 
@@ -4058,5 +4085,24 @@ mod tests {
         let settings = shown_settings(&state);
         assert_eq!(settings.field, Field::Ttl);
         assert_eq!(settings.ttl, TimeToLive::Off);
+    }
+
+    #[test]
+    fn keys_on_the_json_tabs_edit_the_indexing_policy_and_computed_properties() {
+        let mut state = with_loaded_carts_settings(json!({"indexingPolicy": {}}));
+        press(&mut state, KeyCode::Tab);
+
+        type_text(&mut state, "q/nS");
+        press(&mut state, KeyCode::Enter);
+        press(&mut state, KeyCode::Tab);
+        press(&mut state, KeyCode::End);
+        press(&mut state, KeyCode::Backspace);
+        type_text(&mut state, "1]");
+
+        let settings = shown_settings(&state);
+        assert_eq!(settings.indexing.text(), "q/nS\n{}");
+        assert_eq!(settings.computed.text(), "[1]");
+        assert_eq!(state.mode, Mode::Settings);
+        assert!(!state.quit);
     }
 }
