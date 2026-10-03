@@ -777,6 +777,7 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Char('b') if ctrl => toggle_tree(state),
+        KeyCode::Char('s') if ctrl && state.mode == Mode::Settings => return save_settings(state),
         KeyCode::Tab => move_focus(state, Focus::next),
         KeyCode::BackTab => move_focus(state, Focus::previous),
         _ => {
@@ -1060,6 +1061,32 @@ fn settings_mut(state: &mut AppState) -> Option<&mut ContainerSettings> {
     match &mut state.settings {
         Some(Load::Loaded(settings)) => Some(settings),
         _ => None,
+    }
+}
+
+/// Saves the edited settings, or shows on its tab why they cannot be saved.
+fn save_settings(state: &mut AppState) -> Vec<Effect> {
+    let Some(target) = state.target.clone() else {
+        return Vec::new();
+    };
+    let Some(settings) = settings_mut(state) else {
+        return Vec::new();
+    };
+    match settings.to_properties() {
+        Ok(properties) => {
+            state.status = Status::Info("Saving the settings…".into());
+            vec![Effect::ReplaceSettings { target, properties }]
+        }
+        Err(error) => {
+            state.settings_tab = error.tab;
+            state.focus = match error.tab {
+                SettingsTab::Settings => Focus::SettingsForm,
+                SettingsTab::IndexingPolicy => Focus::IndexingPolicy,
+                SettingsTab::ComputedProperties => Focus::ComputedProperties,
+            };
+            state.error = Some(error.message);
+            Vec::new()
+        }
     }
 }
 
@@ -4104,5 +4131,40 @@ mod tests {
         assert_eq!(settings.computed.text(), "[1]");
         assert_eq!(state.mode, Mode::Settings);
         assert!(!state.quit);
+    }
+
+    #[test]
+    fn ctrl_s_saves_the_edited_settings() {
+        let mut state = with_loaded_carts_settings(json!({"id": "carts"}));
+        press(&mut state, KeyCode::Right);
+
+        let effects = ctrl_s(&mut state);
+
+        assert_eq!(
+            effects,
+            vec![Effect::ReplaceSettings {
+                target: carts(),
+                properties: json!({"id": "carts", "defaultTtl": -1}),
+            }]
+        );
+        assert_eq!(state.status, Status::Info("Saving the settings…".into()));
+    }
+
+    #[test]
+    fn saving_settings_that_are_not_valid_shows_why_on_their_tab() {
+        let mut state = with_loaded_carts_settings(json!({"indexingPolicy": {}}));
+        press(&mut state, KeyCode::Tab);
+        press(&mut state, KeyCode::Delete);
+        press(&mut state, KeyCode::BackTab);
+
+        let effects = ctrl_s(&mut state);
+
+        assert!(effects.is_empty());
+        assert_eq!(state.focus, Focus::IndexingPolicy);
+        assert_eq!(state.settings_tab, SettingsTab::IndexingPolicy);
+        assert_eq!(
+            state.error.as_deref(),
+            Some("The indexing policy is not valid JSON: expected value at line 1 column 1")
+        );
     }
 }
