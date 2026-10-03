@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Table, TableState,
+    ScrollbarState, Table, TableState, Wrap,
 };
 
 use crate::json::{highlight_json, highlight_json_array};
@@ -217,6 +217,9 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     }
     if let Some(prompt) = &state.prompt {
         draw_save_prompt(frame, prompt);
+    }
+    if let Some(error) = &state.error {
+        draw_error(frame, error);
     }
 }
 
@@ -658,6 +661,39 @@ fn draw_confirm_delete(frame: &mut Frame, state: &AppState) {
         Paragraph::new(lines).block(
             Block::bordered()
                 .title(title)
+                .border_style(Style::new().fg(Color::Red)),
+        ),
+        area,
+    );
+}
+
+/// A dialog with why the query failed, wrapped to fit.
+fn draw_error(frame: &mut Frame, error: &str) {
+    let width = frame.area().width.saturating_sub(4).min(90);
+    let inner = usize::from(width.saturating_sub(2)).max(1);
+    let mut lines: Vec<Line> = error
+        .lines()
+        .map(|line| Line::raw(line.trim_end()))
+        .collect();
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "Press any key to close",
+        Style::new().fg(Color::DarkGray),
+    ));
+    // Rows each line takes wrapped, with room for words that move to the next row
+    let rows: usize = lines
+        .iter()
+        .map(|line| line.width().div_ceil(inner).max(1))
+        .sum();
+    let height = u16::try_from(rows + rows / 4 + 2).unwrap_or(u16::MAX);
+    let area = frame
+        .area()
+        .centered(Constraint::Length(width), Constraint::Length(height));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::bordered()
+                .title("Query failed")
                 .border_style(Style::new().fg(Color::Red)),
         ),
         area,
@@ -1292,6 +1328,29 @@ mod tests {
             (usize::from(cursor.x), usize::from(cursor.y)),
             (column, row)
         );
+    }
+
+    #[test]
+    fn draws_why_the_query_failed_in_a_dialog_wrapping_long_lines() {
+        let mut state = with_results();
+        let words: Vec<String> = (0..40).map(|n| format!("word{n:02}")).collect();
+        state.error = Some(format!("{}\nActivityId: 7ad6", words.join(" ")));
+
+        let screen = screen_with_height(&state, 24);
+
+        for text in [
+            "Query failed",
+            "word00",
+            "word39",
+            "ActivityId: 7ad6",
+            "any key",
+        ] {
+            assert!(
+                shows(&screen, text),
+                "{text} missing from\n{}",
+                screen.join("\n")
+            );
+        }
     }
 
     #[test]
