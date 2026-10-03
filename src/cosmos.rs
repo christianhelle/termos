@@ -122,9 +122,12 @@ fn short_message(message: &str) -> &str {
 /// that follows them, or `None` when the error has no such details.
 fn service_message(message: &str) -> Option<String> {
     let (_, details) = message.split_once("Details: ")?;
-    let details: Value = serde_json::from_str(details).ok()?;
-    let text = details.get("message")?.as_str()?;
-    let text = text.split("ActivityId:").next().unwrap_or(text).trim();
+    // JSON details hold the message, while others are the message already
+    let text = match serde_json::from_str::<Value>(details) {
+        Ok(json) => json.get("message")?.as_str()?.to_string(),
+        Err(_) => details.to_string(),
+    };
+    let text = text.split("ActivityId:").next().unwrap_or(&text).trim();
     // Query errors hold their own JSON, with a message for each error
     let errors = serde_json::from_str::<Value>(text).ok().and_then(|inner| {
         let errors = inner.get("errors")?.as_array()?;
@@ -292,5 +295,17 @@ mod tests {
             Some("Resource Not Found.")
         );
         assert_eq!(service_message("no details here"), None);
+    }
+
+    #[test]
+    fn keeps_plain_text_details_without_the_sdk_preamble() {
+        let message = "400: Cosmos DB returned HTTP 400: Unknown. Details: The order by query does not have a corresponding composite index that it can be served from.";
+
+        assert_eq!(
+            service_message(message).as_deref(),
+            Some(
+                "The order by query does not have a corresponding composite index that it can be served from."
+            )
+        );
     }
 }
