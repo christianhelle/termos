@@ -210,7 +210,7 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
     }
     draw_status(frame, state, panes.status);
     if state.show_help {
-        draw_help(frame);
+        draw_help(frame, state);
     }
     if state.confirm_delete {
         draw_confirm_delete(frame, state);
@@ -544,7 +544,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 20] = [
+const HELP: [(&str, &str); 21] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, or show every pane again"),
@@ -560,6 +560,7 @@ const HELP: [(&str, &str); 20] = [
     ("Drag, y", "Pick text in the document, copy it"),
     ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
+    ("n", "Write a query in the query editor"),
     (
         "Space, Ctrl-A",
         "Mark a result, mark all results (Esc clears)",
@@ -573,8 +574,38 @@ const HELP: [(&str, &str); 20] = [
     ("", "Press any key to close"),
 ];
 
-fn draw_help(frame: &mut Frame) {
-    let lines: Vec<Line> = HELP
+/// What each key does in query mode, shown with `?` there.
+const QUERY_HELP: [(&str, &str); 19] = [
+    ("Tab / Shift-Tab", "Next pane / previous pane"),
+    ("F5  Ctrl-R", "Run the query"),
+    ("Shift-Enter", "Run the query, in terminals that report it"),
+    ("Enter", "Start a new line in the query"),
+    ("/", "Go to the query editor"),
+    ("↑ ↓  j k", "Scroll the output, or load more at the end"),
+    (
+        "PgUp PgDn Home End",
+        "Scroll the output a page, or to an end",
+    ),
+    ("g g  G", "Jump to the top or bottom of the output"),
+    ("s", "Switch the output between results and stats"),
+    ("y", "Copy the results as JSON"),
+    ("w", "Save the results to a JSON file"),
+    ("Ctrl-S", "Save the query to a file"),
+    ("r", "Run the query again from the output"),
+    ("Esc", "Leave the editor, then the query editor"),
+    ("n", "Leave the query editor from the output"),
+    ("Ctrl-B", "Hide or show the accounts"),
+    ("z", "Zoom the pane, or show every pane again"),
+    ("?, Ctrl-C", "Show this help, quit"),
+    ("", "Press any key to close"),
+];
+
+fn draw_help(frame: &mut Frame, state: &AppState) {
+    let help: &[(&str, &str)] = match state.mode {
+        Mode::Browse => &HELP,
+        Mode::Query => &QUERY_HELP,
+    };
+    let lines: Vec<Line> = help
         .iter()
         .map(|(keys, action)| {
             Line::from(vec![
@@ -1296,6 +1327,35 @@ mod tests {
         let screen = screen_with_height(&state, 24);
 
         for (_, action) in HELP {
+            assert!(
+                shows(&screen, action),
+                "{action} cut off in\n{}",
+                screen.join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn the_key_help_lists_the_query_editor_key() {
+        let mut state = browsing();
+        press(&mut state, KeyCode::Char('?'));
+
+        assert!(shows(
+            &screen_with_height(&state, 24),
+            "Write a query in the query editor"
+        ));
+    }
+
+    #[test]
+    fn the_key_help_in_query_mode_lists_the_query_keys_at_full_width() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+        press(&mut state, KeyCode::Esc);
+        press(&mut state, KeyCode::Char('?'));
+
+        let screen = screen_with_height(&state, 24);
+
+        for (_, action) in QUERY_HELP {
             assert!(
                 shows(&screen, action),
                 "{action} cut off in\n{}",
