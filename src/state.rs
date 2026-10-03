@@ -778,6 +778,10 @@ fn on_output_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     if is_run_key(key) || key.code == KeyCode::Char('r') {
         return run_editor_query(state);
     }
+    if key.code == KeyCode::Char('y') {
+        let json = serde_json::to_string_pretty(&state.results).unwrap_or_default();
+        return vec![Effect::Copy(json)];
+    }
     let last = usize::from(state.max_output_scroll());
     let page = usize::from(state.output_height).max(1);
     let scroll = usize::from(state.output_scroll);
@@ -3204,5 +3208,15 @@ mod tests {
 
         assert_eq!(state.output_scroll, 3);
         assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn y_in_the_output_copies_every_result_as_a_json_array() {
+        let mut state = with_output();
+
+        let effects = press(&mut state, KeyCode::Char('y'));
+
+        let json = serde_json::to_string_pretty(&cart_docs()).unwrap();
+        assert_eq!(effects, vec![Effect::Copy(json)]);
     }
 }
