@@ -402,6 +402,8 @@ pub struct AppState {
     pub stats: QueryStats,
     /// The dialog asking where to save, while it is open.
     pub prompt: Option<SavePrompt>,
+    /// Why the latest query failed, shown in a dialog until the next key.
+    pub error: Option<String>,
 }
 
 impl AppState {
@@ -441,6 +443,7 @@ impl AppState {
             loading_more: false,
             stats: QueryStats::default(),
             prompt: None,
+            error: None,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -667,6 +670,11 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
             return delete_selected(state);
         }
+        return Vec::new();
+    }
+    if state.error.is_some() && !ctrl_c {
+        // Any other key closes the error, and only that
+        state.error = None;
         return Vec::new();
     }
     if state.prompt.is_some() && !ctrl_c {
@@ -1390,7 +1398,10 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
             show_from_top(state);
             state.pk_path = result.pk_path;
         }
-        Err(error) => state.status = Status::Error(error),
+        Err(error) => {
+            state.status = Status::Error("the query failed".into());
+            state.error = Some(error);
+        }
     }
 }
 
@@ -1994,13 +2005,27 @@ mod tests {
     }
 
     #[test]
-    fn reports_a_failed_query() {
+    fn reports_a_failed_query_in_a_dialog() {
         let mut state = with_orders_expanded();
         open_carts(&mut state);
 
         query_done(&mut state, 1, Err("syntax error".into()));
 
-        assert_eq!(state.status, Status::Error("syntax error".into()));
+        assert_eq!(state.error.as_deref(), Some("syntax error"));
+        assert_eq!(state.status, Status::Error("the query failed".into()));
+    }
+
+    #[test]
+    fn any_key_closes_the_error_dialog_and_does_nothing_else() {
+        let mut state = with_orders_expanded();
+        open_carts(&mut state);
+        query_done(&mut state, 1, Err("syntax error".into()));
+
+        let effects = press(&mut state, KeyCode::Char('q'));
+
+        assert!(effects.is_empty());
+        assert!(state.error.is_none());
+        assert!(!state.quit);
     }
 
     #[test]
