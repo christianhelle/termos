@@ -1,52 +1,73 @@
-//! Remembers the account list between runs, so it shows before Azure answers.
+//! Remembers things between runs, such as the account list, so they show before Azure answers.
 
+use std::marker::PhantomData;
 use std::path::PathBuf;
+
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::management::Account;
 
 /// The account list saved in a file.
-pub struct AccountCache {
+pub type AccountCache = JsonCache<Vec<Account>>;
+
+/// A value saved in a JSON file, with one file per subscription filter.
+pub struct JsonCache<T> {
     path: PathBuf,
+    value: PhantomData<T>,
 }
 
 impl AccountCache {
-    /// The cache in the user's cache folder, such as `%LOCALAPPDATA%smoscli` on Windows.
+    /// The cache in the user's cache folder, such as `%LOCALAPPDATA%\termos` on Windows.
     pub fn for_user(subscription: Option<&str>) -> Option<Self> {
-        let dir = dirs::cache_dir()?.join("termos");
-        Some(Self::in_dir(dir, subscription))
+        Self::for_user_named("accounts", subscription)
     }
 
     /// A cache kept in the given folder, with one file per subscription filter.
     pub fn in_dir(dir: impl Into<PathBuf>, subscription: Option<&str>) -> Self {
-        let name = match subscription {
+        Self::in_dir_named(dir, "accounts", subscription)
+    }
+}
+
+impl<T: Serialize + DeserializeOwned> JsonCache<T> {
+    /// The cache called `name` in the user's cache folder.
+    pub fn for_user_named(name: &str, subscription: Option<&str>) -> Option<Self> {
+        let dir = dirs::cache_dir()?.join("termos");
+        Some(Self::in_dir_named(dir, name, subscription))
+    }
+
+    /// The cache called `name` in the given folder.
+    pub fn in_dir_named(dir: impl Into<PathBuf>, name: &str, subscription: Option<&str>) -> Self {
+        let file = match subscription {
             // Kept to characters that are safe in a file name on every platform
             Some(id) => {
                 let id: String = id
                     .chars()
                     .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
                     .collect();
-                format!("accounts-{id}.json")
+                format!("{name}-{id}.json")
             }
-            None => "accounts.json".to_string(),
+            None => format!("{name}.json"),
         };
-        AccountCache {
-            path: dir.into().join(name),
+        JsonCache {
+            path: dir.into().join(file),
+            value: PhantomData,
         }
     }
 
-    /// The accounts saved last time, if there are any that can be read.
-    pub fn load(&self) -> Option<Vec<Account>> {
+    /// The value saved last time, if there is one that can be read.
+    pub fn load(&self) -> Option<T> {
         let text = std::fs::read_to_string(&self.path).ok()?;
         serde_json::from_str(&text).ok()
     }
 
-    pub fn save(&self, accounts: &[Account]) -> anyhow::Result<()> {
+    pub fn save(&self, value: &T) -> anyhow::Result<()> {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        // Written aside first, so a run that stops halfway leaves the old list readable
+        // Written aside first, so a run that stops halfway leaves the old value readable
         let partial = self.path.with_extension("json.tmp");
-        std::fs::write(&partial, serde_json::to_string(accounts)?)?;
+        std::fs::write(&partial, serde_json::to_string(value)?)?;
         std::fs::rename(&partial, &self.path)?;
         Ok(())
     }
@@ -89,10 +110,10 @@ mod tests {
         let every = AccountCache::in_dir(dir.path(), None);
         let one = AccountCache::in_dir(dir.path(), Some("sub-2"));
         every
-            .save(&[account("orders"), account("inventory")])
+            .save(&vec![account("orders"), account("inventory")])
             .unwrap();
 
-        one.save(&[account("inventory")]).unwrap();
+        one.save(&vec![account("inventory")]).unwrap();
 
         assert_eq!(every.load().unwrap().len(), 2);
         assert_eq!(one.load(), Some(vec![account("inventory")]));
@@ -103,7 +124,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = AccountCache::in_dir(dir.path().join("termos"), None);
 
-        cache.save(&[account("orders")]).unwrap();
+        cache.save(&vec![account("orders")]).unwrap();
 
         assert_eq!(cache.load(), Some(vec![account("orders")]));
     }
