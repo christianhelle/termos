@@ -1469,15 +1469,15 @@ fn on_prompt_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 }
 
 /// Whether the key runs the query editor's query: F5, Ctrl-R, or Shift-Enter
-/// in terminals that tell it apart from Enter. Alt-Enter runs it too, as terminals
-/// set up to send Esc and Enter for Shift-Enter report it.
+/// in terminals that tell it apart from Enter. Ctrl-Enter and Alt-Enter run it
+/// too, as some terminals report Shift-Enter, such as Warp on Windows, or
+/// terminals set up to send Esc and Enter for it.
 fn is_run_key(key: KeyEvent) -> bool {
+    let modified = KeyModifiers::SHIFT | KeyModifiers::CONTROL | KeyModifiers::ALT;
     match key.code {
         KeyCode::F(5) => true,
         KeyCode::Char('r') => key.modifiers.contains(KeyModifiers::CONTROL),
-        KeyCode::Enter => key
-            .modifiers
-            .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT),
+        KeyCode::Enter => key.modifiers.intersects(modified),
         _ => false,
     }
 }
@@ -2688,12 +2688,13 @@ mod tests {
     }
 
     #[test]
-    fn f5_ctrl_r_shift_enter_and_alt_enter_run_the_query_as_written() {
+    fn f5_ctrl_r_and_enter_with_a_modifier_run_the_query_as_written() {
         let run_keys = [
             KeyEvent::from(KeyCode::F(5)),
             KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
             KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
         ];
         for key in run_keys {
             let mut state = with_query_editor();
