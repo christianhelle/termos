@@ -1271,7 +1271,9 @@ fn load_more_output(state: &mut AppState) -> Vec<Effect> {
 
 /// Reads the next page of the latest browse query, unless it found everything or is reading it already.
 fn load_more(state: &mut AppState) -> Vec<Effect> {
-    if !state.more || state.loading_more {
+    // Documents an earlier run saved have no open query until the refresh finds them
+    let refreshing = state.refreshing_query == Some(state.query_id);
+    if !state.more || state.loading_more || refreshing {
         return Vec::new();
     }
     state.loading_more = true;

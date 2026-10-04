@@ -196,8 +196,9 @@ fn account_node(snapshot: AccountSnapshot) -> AccountNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Origin;
+    use crate::state::{Event, Origin, update};
     use crate::testing::{account, snapshot};
+    use crossterm::event::{KeyCode, KeyEvent};
     use serde_json::json;
 
     /// The tree as indented text, one line per row.
@@ -375,5 +376,18 @@ FROM c"
         let saved = state.snapshot();
 
         assert_eq!(saved.last_sql, DEFAULT_QUERY);
+    }
+
+    #[test]
+    fn more_documents_load_once_the_refreshed_ones_are_in() {
+        let mut saved = snapshot();
+        saved.focus = Focus::Results;
+        saved.zoomed = false;
+        let (mut state, _) = AppState::restore(saved);
+
+        let effects = update(&mut state, Event::Key(KeyEvent::from(KeyCode::Down)));
+
+        assert_eq!(effects, vec![]);
+        assert!(state.more);
     }
 }
