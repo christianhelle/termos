@@ -27,12 +27,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::arm::Arm;
-use crate::cache::AccountCache;
+use crate::cache::{AccountCache, SessionCache};
 use crate::connector::{Connector, Settings};
 use crate::cosmos::{CosmosDataPlane, skip_vm_metadata_probe};
 use crate::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefetch_tokens};
 use crate::emulator::{Emulator, trust_emulator_certificate};
-use crate::management::{Account, Management};
+use crate::management::Management;
 use crate::store::AuthMode;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
@@ -126,7 +126,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
         prefetch_tokens(&credential, vec![MANAGEMENT_SCOPE]);
     }
     let cache = AccountCache::for_user(settings.subscription.as_deref());
-    let cached = cache.as_ref().and_then(AccountCache::load);
+    let session = SessionCache::for_user(settings.subscription.as_deref());
+    // The screen the last run left shows at once, or else the accounts it listed
+    let start = match session.as_ref().and_then(SessionCache::load) {
+        Some(snapshot) => AppState::restore(snapshot),
+        None => AppState::with_cached_accounts(cache.as_ref().and_then(AccountCache::load)),
+    };
     let mut runner = Runner::new(Connector::new(
         Arm::new(credential.clone()),
         CosmosDataPlane::new(credential),
@@ -135,10 +140,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
     if let Some(cache) = cache {
         runner = runner.with_account_cache(cache);
     }
-    show(runner, cached).await
+    show(runner, start, session).await
 }
 
-/// Browses the emulator with its key, without Resource Manager or a cached account list.
+/// Browses the emulator with its key, without Resource Manager or a saved session.
 async fn run_emulator(
     endpoint: &str,
     key: Option<String>,
@@ -155,13 +160,15 @@ async fn run_emulator(
         CosmosDataPlane::new(credential),
         settings,
     ));
-    show(runner, None).await
+    show(runner, AppState::new(), None).await
 }
 
-/// Runs the terminal UI until the user quits, then restores the terminal.
+/// Runs the terminal UI until the user quits, then restores the terminal
+/// and saves the screen for the next run.
 async fn show<M: Management + 'static>(
     runner: AppRunner<M>,
-    cached: Option<Vec<Account>>,
+    start: (AppState, Vec<Effect>),
+    session: Option<SessionCache>,
 ) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     // Terminals that support it tell Shift-Enter apart from Enter, to run the query
@@ -172,7 +179,7 @@ async fn show<M: Management + 'static>(
         )
         .is_ok();
     let result = match execute!(stdout(), EnableMouseCapture) {
-        Ok(()) => event_loop(&mut terminal, Rc::new(runner), cached).await,
+        Ok(()) => event_loop(&mut terminal, Rc::new(runner), start).await,
         Err(error) => Err(error.into()),
     };
     // Restore the terminal even when the mouse could not be released
@@ -181,19 +188,23 @@ async fn show<M: Management + 'static>(
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
     ratatui::restore();
-    result.and(released.map_err(Into::into))
+    if let (Ok(state), Some(session)) = (&result, &session) {
+        // A session that cannot be saved only costs the next run its head start
+        let _ = session.save(&state.snapshot());
+    }
+    result.map(drop).and(released.map_err(Into::into))
 }
 
 /// Draws the state, then waits for a key, the mouse or finished work, until the user quits.
+/// Returns the state as the user left it.
 async fn event_loop<M: Management + 'static>(
     terminal: &mut DefaultTerminal,
     runner: Rc<AppRunner<M>>,
-    cached_accounts: Option<Vec<Account>>,
-) -> anyhow::Result<()> {
+    (mut state, effects): (AppState, Vec<Effect>),
+) -> anyhow::Result<AppState> {
     let (sender, mut finished) = mpsc::unbounded_channel();
     let mut keys = EventStream::new();
     let mut left_held = false;
-    let (mut state, effects) = AppState::with_cached_accounts(cached_accounts);
     start(&runner, &sender, effects);
     while !state.quit {
         state.doc_height = ui::document_height(terminal.size()?, state.zoomed_pane());
@@ -218,7 +229,7 @@ async fn event_loop<M: Management + 'static>(
         let effects = update(&mut state, event);
         start(&runner, &sender, effects);
     }
-    Ok(())
+    Ok(state)
 }
 
 /// A left click, drag or release or turn of the wheel, in terms of the pane it is over.
