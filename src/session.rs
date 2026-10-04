@@ -63,14 +63,22 @@ impl AppState {
             Load::Loaded(nodes) => nodes.iter().map(account_snapshot).collect(),
             Load::Loading | Load::Failed(_) => Vec::new(),
         };
+        // Settings are loaded afresh when opened, so the run starts where they were opened from
+        let (mode, focus) = match self.mode {
+            Mode::Settings if self.focus.settings_tab().is_some() => {
+                (self.settings_from, Focus::Tree)
+            }
+            Mode::Settings => (self.settings_from, self.focus),
+            mode => (mode, self.focus),
+        };
         Snapshot {
             version: VERSION,
             accounts,
             tree_selected: self.tree_selected,
             tree_hidden: self.tree_hidden,
             zoomed: self.zoomed,
-            focus: self.focus,
-            mode: self.mode,
+            focus,
+            mode,
             output_tab: self.output_tab,
             search: self.search.text().to_string(),
             search_cursor: self.search.cursor(),
@@ -93,6 +101,11 @@ impl AppState {
         let nodes = snapshot.accounts.into_iter().map(account_node).collect();
         state.accounts = Load::Loaded(nodes);
         state.tree_selected = snapshot.tree_selected;
+        state.tree_hidden = snapshot.tree_hidden;
+        state.zoomed = snapshot.zoomed;
+        state.focus = snapshot.focus;
+        state.mode = snapshot.mode;
+        state.output_tab = snapshot.output_tab;
         (state, effects)
     }
 }
@@ -193,5 +206,29 @@ mod tests {
 
         assert_eq!(outline(&state), vec!["orders"]);
         assert_eq!(state.tree_rows()[0].expanded, Some(false));
+    }
+
+    #[test]
+    fn restores_the_layout() {
+        let (state, _) = AppState::restore(snapshot());
+
+        assert!(state.tree_hidden);
+        assert!(state.zoomed);
+        assert_eq!(state.focus, Focus::Document);
+        assert_eq!(state.mode, Mode::Browse);
+        assert_eq!(state.output_tab, OutputTab::Stats);
+    }
+
+    #[test]
+    fn saves_settings_mode_as_the_mode_it_came_from() {
+        let (mut state, _) = AppState::restore(snapshot());
+        state.mode = Mode::Settings;
+        state.settings_from = Mode::Query;
+        state.focus = Focus::IndexingPolicy;
+
+        let saved = state.snapshot();
+
+        assert_eq!(saved.mode, Mode::Query);
+        assert_eq!(saved.focus, Focus::Tree);
     }
 }
