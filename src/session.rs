@@ -520,4 +520,25 @@ FROM c"
             Status::Error("could not refresh documents: not authorized".into())
         );
     }
+
+    #[test]
+    fn accounts_refreshed_after_the_documents_leave_the_status_to_them() {
+        let mut state = three_carts();
+        let id = state.query_id;
+        update(
+            &mut state,
+            Event::Msg(Msg::QueryDone {
+                id,
+                result: found(vec![cart("c-1")], false),
+            }),
+        );
+        let status = state.status.clone();
+
+        update(
+            &mut state,
+            Event::Msg(Msg::AccountsLoaded(Ok(vec![account("orders")]))),
+        );
+
+        assert_eq!(state.status, status);
+    }
 }

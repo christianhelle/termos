@@ -1909,7 +1909,10 @@ fn accounts_loaded(state: &mut AppState, result: Result<Vec<Account>, String>) {
         })
         .collect();
     state.accounts = Load::Loaded(nodes);
-    state.status = Status::Info("Pick a container".into());
+    // With a container picked already, the status is about its documents
+    if state.target.is_none() {
+        state.status = Status::Info("Pick a container".into());
+    }
     state.reselect(selected);
 }
 
