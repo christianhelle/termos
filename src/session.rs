@@ -106,6 +106,12 @@ impl AppState {
         state.focus = snapshot.focus;
         state.mode = snapshot.mode;
         state.output_tab = snapshot.output_tab;
+        snapshot.search.chars().for_each(|c| state.search.insert(c));
+        state.search.move_to(snapshot.search_cursor);
+        state.last_sql = snapshot.last_sql;
+        state.editor.set_text(&snapshot.editor);
+        let (row, column) = snapshot.editor_cursor;
+        state.editor.move_to(row, column);
         (state, effects)
     }
 }
@@ -230,5 +236,21 @@ mod tests {
 
         assert_eq!(saved.mode, Mode::Query);
         assert_eq!(saved.focus, Focus::Tree);
+    }
+
+    #[test]
+    fn restores_the_search_and_the_query_editor_without_its_output() {
+        let (state, _) = AppState::restore(snapshot());
+
+        assert_eq!(state.search.text(), "c.qty > 1");
+        assert_eq!(state.search.cursor(), 3);
+        assert_eq!(state.last_sql, "SELECT * FROM c WHERE c.qty > 1");
+        assert_eq!(
+            state.editor.text(),
+            "SELECT *
+FROM c"
+        );
+        assert_eq!(state.editor.cursor(), (1, 2));
+        assert!(state.output.results.is_empty());
     }
 }
