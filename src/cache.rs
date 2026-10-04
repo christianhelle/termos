@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::management::Account;
+use crate::session::{Snapshot, VERSION};
 
 /// The account list saved in a file.
 pub type AccountCache = JsonCache<Vec<Account>>;
@@ -26,6 +27,30 @@ impl AccountCache {
     /// A cache kept in the given folder, with one file per subscription filter.
     pub fn in_dir(dir: impl Into<PathBuf>, subscription: Option<&str>) -> Self {
         Self::in_dir_named(dir, "accounts", subscription)
+    }
+}
+
+/// The screen as termos last left it, saved in a file.
+pub struct SessionCache(JsonCache<Snapshot>);
+
+impl SessionCache {
+    /// The session in the user's cache folder, next to the account list.
+    pub fn for_user(subscription: Option<&str>) -> Option<Self> {
+        JsonCache::for_user_named("session", subscription).map(SessionCache)
+    }
+
+    /// A session kept in the given folder, with one file per subscription filter.
+    pub fn in_dir(dir: impl Into<PathBuf>, subscription: Option<&str>) -> Self {
+        SessionCache(JsonCache::in_dir_named(dir, "session", subscription))
+    }
+
+    /// The session saved last time, unless another version of termos saved it.
+    pub fn load(&self) -> Option<Snapshot> {
+        self.0.load().filter(|snapshot| snapshot.version == VERSION)
+    }
+
+    pub fn save(&self, snapshot: &Snapshot) -> anyhow::Result<()> {
+        self.0.save(snapshot)
     }
 }
 
@@ -76,7 +101,7 @@ impl<T: Serialize + DeserializeOwned> JsonCache<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::account;
+    use crate::testing::{account, snapshot};
 
     #[test]
     fn loads_the_accounts_it_saved() {
@@ -127,5 +152,42 @@ mod tests {
         cache.save(&vec![account("orders")]).unwrap();
 
         assert_eq!(cache.load(), Some(vec![account("orders")]));
+    }
+
+    #[test]
+    fn loads_the_session_it_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SessionCache::in_dir(dir.path(), None);
+
+        cache.save(&snapshot()).unwrap();
+
+        assert_eq!(cache.load(), Some(snapshot()));
+    }
+
+    #[test]
+    fn ignores_a_session_saved_by_another_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SessionCache::in_dir(dir.path(), None);
+        let older = Snapshot {
+            version: VERSION - 1,
+            ..snapshot()
+        };
+
+        cache.save(&older).unwrap();
+
+        assert_eq!(cache.load(), None);
+    }
+
+    #[test]
+    fn keeps_the_session_apart_from_the_accounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let accounts = AccountCache::in_dir(dir.path(), Some("sub-2"));
+        let session = SessionCache::in_dir(dir.path(), Some("sub-2"));
+
+        accounts.save(&vec![account("orders")]).unwrap();
+        session.save(&snapshot()).unwrap();
+
+        assert_eq!(accounts.load(), Some(vec![account("orders")]));
+        assert_eq!(session.load(), Some(snapshot()));
     }
 }
