@@ -1736,8 +1736,13 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
         .take_if(|refreshing| *refreshing == id)
         .is_some()
     {
-        if let Ok(result) = result {
-            return refreshed(state, result);
+        match result {
+            Ok(result) => refreshed(state, result),
+            Err(error) => {
+                // The saved documents are still worth showing, without their open query
+                state.more = false;
+                state.status = Status::Error(format!("could not refresh documents: {error}"));
+            }
         }
         return;
     }

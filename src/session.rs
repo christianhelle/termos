@@ -497,4 +497,27 @@ FROM c"
         assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![1]);
         assert_eq!(state.doc_scroll, 0);
     }
+
+    #[test]
+    fn a_failed_refresh_keeps_the_restored_documents_without_a_dialog() {
+        let mut state = three_carts();
+        let id = state.query_id;
+
+        update(
+            &mut state,
+            Event::Msg(Msg::QueryDone {
+                id,
+                result: Err("not authorized".into()),
+            }),
+        );
+
+        assert_eq!(state.results.len(), 3);
+        // There is no open query to read more from
+        assert!(!state.more);
+        assert_eq!(state.error, None);
+        assert_eq!(
+            state.status,
+            Status::Error("could not refresh documents: not authorized".into())
+        );
+    }
 }
