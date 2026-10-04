@@ -1675,11 +1675,14 @@ fn collapse(state: &mut AppState) {
 }
 
 /// Puts an account's containers under it, grouped by database in listing order.
+/// Databases listed before, such as by an earlier run, stay open or closed, and
+/// the selection stays where it was.
 fn containers_loaded(
     state: &mut AppState,
     account: &str,
     result: Result<Vec<(String, Container)>, String>,
 ) {
+    let selected = state.path_of(state.selected_node());
     let Load::Loaded(accounts) = &mut state.accounts else {
         return;
     };
@@ -1697,18 +1700,27 @@ fn containers_loaded(
             return;
         }
     };
+    let closed: Vec<String> = match &node.databases {
+        Some(Load::Loaded(databases)) => databases
+            .iter()
+            .filter(|database| !database.expanded)
+            .map(|database| database.name.clone())
+            .collect(),
+        _ => Vec::new(),
+    };
     let mut databases: Vec<DatabaseNode> = Vec::new();
     for (database, container) in containers {
         match databases.iter_mut().find(|d| d.name == database) {
             Some(node) => node.containers.push(container),
             None => databases.push(DatabaseNode {
+                expanded: !closed.contains(&database),
                 name: database,
-                expanded: true,
                 containers: vec![container],
             }),
         }
     }
     node.databases = Some(Load::Loaded(databases));
+    state.reselect(selected);
 }
 
 /// Shows the documents a query found.

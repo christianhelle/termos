@@ -196,8 +196,8 @@ fn account_node(snapshot: AccountSnapshot) -> AccountNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Event, Origin, update};
-    use crate::testing::{account, snapshot};
+    use crate::state::{Event, Msg, Origin, update};
+    use crate::testing::{account, container, snapshot};
     use crossterm::event::{KeyCode, KeyEvent};
     use serde_json::json;
 
@@ -389,5 +389,47 @@ FROM c"
 
         assert_eq!(effects, vec![]);
         assert!(state.more);
+    }
+
+    #[test]
+    fn refreshed_containers_keep_closed_databases_closed_and_the_selection() {
+        let mut saved = snapshot();
+        let databases = saved.accounts[0].databases.as_mut().unwrap();
+        databases.insert(
+            0,
+            DatabaseSnapshot {
+                name: "audit".into(),
+                expanded: false,
+                containers: vec![container("events", "/day")],
+            },
+        );
+        saved.tree_selected = 3;
+        let (mut state, _) = AppState::restore(saved);
+        assert_eq!(state.tree_rows()[3].label, "carts");
+
+        update(
+            &mut state,
+            Event::Msg(Msg::ContainersLoaded {
+                account: "orders".into(),
+                result: Ok(vec![
+                    ("billing".into(), container("ledger", "/year")),
+                    ("audit".into(), container("events", "/day")),
+                    ("shop".into(), container("carts", "/tenantId")),
+                ]),
+            }),
+        );
+
+        assert_eq!(
+            outline(&state),
+            vec![
+                "orders",
+                "  billing",
+                "    ledger",
+                "  audit",
+                "  shop",
+                "    carts"
+            ]
+        );
+        assert_eq!(state.tree_rows()[state.tree_selected].label, "carts");
     }
 }
