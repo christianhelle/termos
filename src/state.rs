@@ -489,6 +489,8 @@ pub struct AppState {
     pub settings_tab: SettingsTab,
     /// How many lines the settings tabs show at once.
     pub settings_height: u16,
+    /// The id of the query refreshing documents an earlier run saved, while it runs.
+    pub refreshing_query: Option<u64>,
 }
 
 impl AppState {
@@ -537,6 +539,7 @@ impl AppState {
             settings_from: Mode::Browse,
             settings_tab: SettingsTab::Settings,
             settings_height: 0,
+            refreshing_query: None,
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -1606,6 +1609,18 @@ fn run_query(state: &mut AppState, sql: String, origin: Origin) -> Vec<Effect> {
         sql,
         origin,
     }]
+}
+
+/// Runs the latest query again for documents an earlier run saved, which stay
+/// shown, with whether there are more, until the query finds them afresh.
+pub fn refresh_documents(state: &mut AppState) -> Vec<Effect> {
+    let more = state.more;
+    let effects = run_query(state, state.last_sql.clone(), Origin::Browse);
+    state.more = more;
+    if !effects.is_empty() {
+        state.refreshing_query = Some(state.query_id);
+    }
+    effects
 }
 
 /// Opens the selected tree node, loading an account's containers the first time.

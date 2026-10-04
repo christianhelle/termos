@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::management::{Account, Container};
+use crate::query::DEFAULT_QUERY;
 use crate::state::{
-    AccountNode, AppState, DatabaseNode, Effect, Focus, Load, Mode, OutputTab, Target,
+    AccountNode, AppState, DatabaseNode, Effect, Focus, Load, Mode, OutputTab, Status, Target,
+    refresh_documents,
 };
 
 /// The snapshot format, so a file from another version is left alone.
@@ -95,7 +97,12 @@ impl AppState {
             editor: self.editor.text(),
             editor_cursor: self.editor.cursor(),
             target: self.target.clone(),
-            last_sql: self.last_sql.clone(),
+            // Documents of the picked container were not listed yet, so they are listed from the top
+            last_sql: if self.browse_stale {
+                DEFAULT_QUERY.to_string()
+            } else {
+                self.last_sql.clone()
+            },
             results: results.to_vec(),
             pk_path: self.pk_path.clone(),
             more: self.more || results.len() < self.results.len(),
@@ -112,7 +119,7 @@ impl AppState {
 
     /// The state on startup, showing the screen an earlier run saved while it refreshes.
     pub fn restore(snapshot: Snapshot) -> (Self, Vec<Effect>) {
-        let (mut state, effects) = Self::new();
+        let (mut state, mut effects) = Self::new();
         let nodes = snapshot.accounts.into_iter().map(account_node).collect();
         state.accounts = Load::Loaded(nodes);
         state.tree_selected = snapshot.tree_selected;
@@ -134,6 +141,12 @@ impl AppState {
         state.result_selected = snapshot.result_selected;
         state.marked = snapshot.marked.into_iter().collect();
         state.doc_scroll = snapshot.doc_scroll;
+        if let Load::Loaded(nodes) = &state.accounts {
+            let opened = nodes.iter().filter(|node| node.databases.is_some());
+            effects.extend(opened.map(|node| Effect::LoadContainers(node.account.clone())));
+        }
+        effects.extend(refresh_documents(&mut state));
+        state.status = Status::Info("Refreshing…".into());
         (state, effects)
     }
 }
@@ -183,7 +196,8 @@ fn account_node(snapshot: AccountSnapshot) -> AccountNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::snapshot;
+    use crate::state::Origin;
+    use crate::testing::{account, snapshot};
     use serde_json::json;
 
     /// The tree as indented text, one line per row.
@@ -318,5 +332,48 @@ FROM c"
 
         assert_eq!(saved.result_selected, 999);
         assert_eq!(saved.doc_scroll, 0);
+    }
+
+    #[test]
+    fn refreshes_the_accounts_the_open_containers_and_the_documents() {
+        let (state, effects) = AppState::restore(snapshot());
+
+        assert_eq!(
+            effects,
+            vec![
+                Effect::LoadAccounts,
+                Effect::LoadContainers(account("orders")),
+                Effect::Query {
+                    id: 1,
+                    target: snapshot().target.unwrap(),
+                    sql: snapshot().last_sql,
+                    origin: Origin::Browse,
+                },
+            ]
+        );
+        assert_eq!(state.status, Status::Info("Refreshing…".into()));
+        assert!(state.more);
+    }
+
+    #[test]
+    fn without_a_container_only_the_accounts_refresh() {
+        let mut saved = snapshot();
+        saved.accounts[0].databases = None;
+        saved.target = None;
+
+        let (_, effects) = AppState::restore(saved);
+
+        assert_eq!(effects, vec![Effect::LoadAccounts]);
+    }
+
+    #[test]
+    fn documents_not_listed_yet_for_the_picked_container_list_from_the_top() {
+        let (mut state, _) = AppState::restore(snapshot());
+        state.browse_stale = true;
+        state.results.clear();
+
+        let saved = state.snapshot();
+
+        assert_eq!(saved.last_sql, DEFAULT_QUERY);
     }
 }
