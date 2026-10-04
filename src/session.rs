@@ -11,6 +11,9 @@ use crate::state::{
 /// The snapshot format, so a file from another version is left alone.
 pub const VERSION: u32 = 1;
 
+/// How many documents of the results are saved, to keep the file small.
+const MAX_RESULTS: usize = 1000;
+
 /// What the screen showed, in a form that can be saved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -71,6 +74,13 @@ impl AppState {
             Mode::Settings => (self.settings_from, self.focus),
             mode => (mode, self.focus),
         };
+        let results = &self.results[..self.results.len().min(MAX_RESULTS)];
+        // A document left out is not shown, so the last one saved is selected instead
+        let (result_selected, doc_scroll) = match results.len() {
+            0 => (0, 0),
+            len if self.result_selected >= len => (len - 1, 0),
+            _ => (self.result_selected, self.doc_scroll),
+        };
         Snapshot {
             version: VERSION,
             accounts,
@@ -86,12 +96,17 @@ impl AppState {
             editor_cursor: self.editor.cursor(),
             target: self.target.clone(),
             last_sql: self.last_sql.clone(),
-            results: self.results.clone(),
+            results: results.to_vec(),
             pk_path: self.pk_path.clone(),
-            more: self.more,
-            result_selected: self.result_selected,
-            marked: self.marked.iter().copied().collect(),
-            doc_scroll: self.doc_scroll,
+            more: self.more || results.len() < self.results.len(),
+            result_selected,
+            marked: self
+                .marked
+                .iter()
+                .copied()
+                .filter(|index| *index < results.len())
+                .collect(),
+            doc_scroll,
         }
     }
 
@@ -112,6 +127,13 @@ impl AppState {
         state.editor.set_text(&snapshot.editor);
         let (row, column) = snapshot.editor_cursor;
         state.editor.move_to(row, column);
+        state.target = snapshot.target;
+        state.results = snapshot.results;
+        state.pk_path = snapshot.pk_path;
+        state.more = snapshot.more;
+        state.result_selected = snapshot.result_selected;
+        state.marked = snapshot.marked.into_iter().collect();
+        state.doc_scroll = snapshot.doc_scroll;
         (state, effects)
     }
 }
@@ -162,6 +184,7 @@ fn account_node(snapshot: AccountSnapshot) -> AccountNode {
 mod tests {
     use super::*;
     use crate::testing::snapshot;
+    use serde_json::json;
 
     /// The tree as indented text, one line per row.
     fn outline(state: &AppState) -> Vec<String> {
@@ -252,5 +275,48 @@ FROM c"
         );
         assert_eq!(state.editor.cursor(), (1, 2));
         assert!(state.output.results.is_empty());
+    }
+
+    #[test]
+    fn restores_the_documents_found_with_the_selected_one() {
+        let (state, _) = AppState::restore(snapshot());
+
+        assert_eq!(state.target, snapshot().target);
+        assert_eq!(state.results, snapshot().results);
+        assert_eq!(state.pk_path, "/tenantId");
+        assert!(state.more);
+        assert_eq!(state.result_selected, 0);
+        assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![0]);
+        assert_eq!(state.doc_scroll, 4);
+    }
+
+    #[test]
+    fn saves_at_most_a_thousand_documents() {
+        let (mut state, _) = AppState::restore(snapshot());
+        state.results = (0..1500)
+            .map(|i| json!({ "id": format!("c-{i}") }))
+            .collect();
+        state.marked = [10, 1200].into();
+
+        let saved = state.snapshot();
+
+        assert_eq!(saved.results.len(), 1000);
+        assert!(saved.more);
+        assert_eq!(saved.marked, vec![10]);
+    }
+
+    #[test]
+    fn a_selected_document_past_the_saved_ones_selects_the_last() {
+        let (mut state, _) = AppState::restore(snapshot());
+        state.results = (0..1500)
+            .map(|i| json!({ "id": format!("c-{i}") }))
+            .collect();
+        state.result_selected = 1200;
+        state.doc_scroll = 7;
+
+        let saved = state.snapshot();
+
+        assert_eq!(saved.result_selected, 999);
+        assert_eq!(saved.doc_scroll, 0);
     }
 }
