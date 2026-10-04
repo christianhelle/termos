@@ -196,10 +196,11 @@ fn account_node(snapshot: AccountSnapshot) -> AccountNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Event, Msg, Origin, update};
+    use crate::state::{Event, Msg, Origin, QueryResult, QueryStats, update};
     use crate::testing::{account, container, snapshot};
     use crossterm::event::{KeyCode, KeyEvent};
     use serde_json::json;
+    use std::time::Duration;
 
     /// The tree as indented text, one line per row.
     fn outline(state: &AppState) -> Vec<String> {
@@ -431,5 +432,69 @@ FROM c"
             ]
         );
         assert_eq!(state.tree_rows()[state.tree_selected].label, "carts");
+    }
+
+    fn cart(id: &str) -> Value {
+        json!({ "id": id, "tenantId": "contoso" })
+    }
+
+    /// A restored session showing three carts, the second selected and the third marked.
+    fn three_carts() -> AppState {
+        let mut saved = snapshot();
+        saved.results = vec![cart("c-1"), cart("c-2"), cart("c-3")];
+        saved.result_selected = 1;
+        saved.marked = vec![2];
+        let (state, _) = AppState::restore(saved);
+        state
+    }
+
+    fn found(docs: Vec<Value>, more: bool) -> Result<QueryResult, String> {
+        Ok(QueryResult {
+            docs,
+            more,
+            pk_path: "/tenantId".into(),
+            elapsed: Duration::from_millis(5),
+            stats: QueryStats::default(),
+        })
+    }
+
+    #[test]
+    fn refreshed_documents_keep_the_selected_and_marked_ones() {
+        let mut state = three_carts();
+        let id = state.query_id;
+
+        let refreshed = vec![cart("c-0"), cart("c-1"), cart("c-2"), cart("c-3")];
+        update(
+            &mut state,
+            Event::Msg(Msg::QueryDone {
+                id,
+                result: found(refreshed.clone(), false),
+            }),
+        );
+
+        assert_eq!(state.results, refreshed);
+        assert_eq!(state.result_selected, 2);
+        assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![3]);
+        assert_eq!(state.doc_scroll, 4);
+        assert!(!state.more);
+        assert_eq!(state.refreshing_query, None);
+    }
+
+    #[test]
+    fn a_selected_document_that_is_gone_selects_the_one_in_its_place() {
+        let mut state = three_carts();
+        let id = state.query_id;
+
+        update(
+            &mut state,
+            Event::Msg(Msg::QueryDone {
+                id,
+                result: found(vec![cart("c-1"), cart("c-3")], false),
+            }),
+        );
+
+        assert_eq!(state.result_selected, 1);
+        assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(state.doc_scroll, 0);
     }
 }

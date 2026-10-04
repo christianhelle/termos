@@ -1731,6 +1731,16 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
     if id != state.query_id {
         return;
     }
+    if state
+        .refreshing_query
+        .take_if(|refreshing| *refreshing == id)
+        .is_some()
+    {
+        if let Ok(result) = result {
+            return refreshed(state, result);
+        }
+        return;
+    }
     match result {
         Ok(result) => {
             state.stats = result.stats;
@@ -1748,6 +1758,45 @@ fn query_done(state: &mut AppState, id: u64, result: Result<QueryResult, String>
             state.error = Some(error);
         }
     }
+}
+
+/// Shows documents found afresh in place of those an earlier run saved, keeping
+/// the selected and marked ones by id and partition key, and the document scrolled.
+fn refreshed(state: &mut AppState, result: QueryResult) {
+    let pk_path = result.pk_path.clone();
+    let key = |doc: &Value| {
+        (
+            doc.get("id").cloned(),
+            value_at_path(doc, &pk_path).cloned(),
+        )
+    };
+    let selected = state.selected_document().map(key);
+    let marked: Vec<_> = state
+        .marked
+        .iter()
+        .filter_map(|&index| state.results.get(index))
+        .map(key)
+        .collect();
+    let keys: Vec<_> = result.docs.iter().map(key).collect();
+    match keys
+        .iter()
+        .position(|found| Some(found) == selected.as_ref())
+    {
+        Some(index) => state.result_selected = index,
+        None => {
+            state.result_selected = state.result_selected.min(keys.len().saturating_sub(1));
+            show_from_top(state);
+        }
+    }
+    state.marked = (0..keys.len())
+        .filter(|&index| marked.contains(&keys[index]))
+        .collect();
+    state.stats = result.stats;
+    state.status = Status::Info(found(result.docs.len(), &state.stats, result.elapsed));
+    state.results = result.docs;
+    state.more = result.more;
+    state.loading_more = false;
+    state.pk_path = result.pk_path;
 }
 
 /// Shows the documents the query editor's query found in its output, from the top.
