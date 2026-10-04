@@ -9,6 +9,11 @@ use serde::de::DeserializeOwned;
 use crate::management::Account;
 use crate::session::{Snapshot, VERSION};
 
+/// The folder termos keeps its caches in, such as `%LOCALAPPDATA%\termos` on Windows.
+fn user_dir() -> Option<PathBuf> {
+    Some(dirs::cache_dir()?.join("termos"))
+}
+
 /// The account list saved in a file.
 pub type AccountCache = JsonCache<Vec<Account>>;
 
@@ -19,9 +24,9 @@ pub struct JsonCache<T> {
 }
 
 impl AccountCache {
-    /// The cache in the user's cache folder, such as `%LOCALAPPDATA%\termos` on Windows.
+    /// The cache in the user's cache folder.
     pub fn for_user(subscription: Option<&str>) -> Option<Self> {
-        Self::for_user_named("accounts", subscription)
+        Some(Self::in_dir(user_dir()?, subscription))
     }
 
     /// A cache kept in the given folder, with one file per subscription filter.
@@ -36,7 +41,7 @@ pub struct SessionCache(JsonCache<Snapshot>);
 impl SessionCache {
     /// The session in the user's cache folder, next to the account list.
     pub fn for_user(subscription: Option<&str>) -> Option<Self> {
-        JsonCache::for_user_named("session", subscription).map(SessionCache)
+        Some(Self::in_dir(user_dir()?, subscription))
     }
 
     /// A session kept in the given folder, with one file per subscription filter.
@@ -55,12 +60,6 @@ impl SessionCache {
 }
 
 impl<T: Serialize + DeserializeOwned> JsonCache<T> {
-    /// The cache called `name` in the user's cache folder.
-    pub fn for_user_named(name: &str, subscription: Option<&str>) -> Option<Self> {
-        let dir = dirs::cache_dir()?.join("termos");
-        Some(Self::in_dir_named(dir, name, subscription))
-    }
-
     /// The cache called `name` in the given folder.
     pub fn in_dir_named(dir: impl Into<PathBuf>, name: &str, subscription: Option<&str>) -> Self {
         let file = match subscription {
