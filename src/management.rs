@@ -11,7 +11,7 @@ pub struct Account {
 }
 
 /// A SQL container and the paths that make up its partition key.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Container {
     pub name: String,
     pub partition_key_paths: Vec<String>,

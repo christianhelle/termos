@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Position;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::editor::Editor;
@@ -68,7 +69,7 @@ pub enum Origin {
 }
 
 /// A container to query.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Target {
     pub account: Account,
     pub database: String,
@@ -309,7 +310,7 @@ impl Selection {
 }
 
 /// The pane that keys go to.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Focus {
     Tree,
     Search,
@@ -344,7 +345,7 @@ pub enum Saving {
 }
 
 /// Which panes show next to the tree.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     /// The search bar, the results and the selected document.
     Browse,
@@ -355,7 +356,7 @@ pub enum Mode {
 }
 
 /// What the query editor's output shows.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OutputTab {
     /// The documents the query found.
     Results,
