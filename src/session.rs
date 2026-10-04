@@ -57,48 +57,7 @@ pub struct DatabaseSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::account;
-    use serde_json::json;
-
-    fn snapshot() -> Snapshot {
-        Snapshot {
-            version: VERSION,
-            accounts: vec![AccountSnapshot {
-                account: account("orders"),
-                expanded: true,
-                databases: Some(vec![DatabaseSnapshot {
-                    name: "shop".into(),
-                    expanded: true,
-                    containers: vec![Container {
-                        name: "carts".into(),
-                        partition_key_paths: vec!["/tenantId".into()],
-                    }],
-                }]),
-            }],
-            tree_selected: 2,
-            tree_hidden: true,
-            zoomed: true,
-            focus: Focus::Document,
-            mode: Mode::Browse,
-            output_tab: OutputTab::Stats,
-            search: "c.qty > 1".into(),
-            search_cursor: 3,
-            editor: "SELECT *\nFROM c".into(),
-            editor_cursor: (1, 2),
-            target: Some(Target {
-                account: account("orders"),
-                database: "shop".into(),
-                container: "carts".into(),
-            }),
-            last_sql: "SELECT * FROM c WHERE c.qty > 1".into(),
-            results: vec![json!({ "id": "c-1", "tenantId": "contoso" })],
-            pk_path: "/tenantId".into(),
-            more: true,
-            result_selected: 0,
-            marked: vec![0],
-            doc_scroll: 4,
-        }
-    }
+    use crate::testing::snapshot;
 
     #[test]
     fn reads_back_the_snapshot_it_wrote_as_json() {
