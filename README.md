@@ -86,6 +86,10 @@ The mouse works too. Click a pane to focus it, or a node or document to select i
   <img src="images/ventablack/delete.png" width="49%" alt="Delete Cosmos document" />
   <img src="images/ventablack/document-viewer-highlight.png" width="49%" alt="Selected text highlighted in the document viewer" />
 </p>
+<p align="center">
+  <img src="images/ventablack/query-editor.png" width="49%" alt="Query editor showing SQL and results" />
+  <img src="images/ventablack/settings.png" width="49%" alt="Container settings editor" />
+</p>
 
 ## Authentication
 
