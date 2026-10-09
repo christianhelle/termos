@@ -1533,11 +1533,15 @@ fn edit(editor: &mut Editor, key: KeyEvent, page: u16, register: &mut Register) 
     outcome
 }
 
-/// Copies yanked text to the clipboard, and leaves keys Vim had no use for to the pane.
+/// Copies yanked text to the clipboard, and leaves keys Vim had no use for
+/// in normal mode to the pane.
 fn edited(state: &mut AppState, key: KeyEvent, outcome: Outcome) -> Vec<Effect> {
     match outcome {
         Outcome::Yanked(text) => vec![Effect::Copy(text)],
-        Outcome::Unhandled => on_pane_key(state, key),
+        Outcome::Unhandled if state.editing_mode() == Some(VimMode::Normal) => {
+            on_pane_key(state, key)
+        }
+        Outcome::Unhandled => Vec::new(),
         Outcome::Handled | Outcome::Leave => Vec::new(),
     }
 }
@@ -2916,6 +2920,19 @@ mod tests {
         type_text(&mut state, "?");
 
         assert!(state.show_help);
+    }
+
+    #[test]
+    fn keys_vim_does_not_use_in_insert_mode_do_nothing() {
+        let mut state = with_query_editor();
+        type_text(&mut state, "i");
+
+        press_ctrl(&mut state, 'q');
+        press_ctrl(&mut state, 'n');
+
+        assert!(!state.quit);
+        assert_eq!(state.mode, Mode::Query);
+        assert_eq!(state.editor.vim.mode, VimMode::Insert);
     }
 
     #[test]
