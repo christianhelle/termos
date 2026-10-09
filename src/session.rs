@@ -42,6 +42,7 @@ pub struct Snapshot {
     pub result_selected: usize,
     /// Indices of the marked results.
     pub marked: Vec<usize>,
+    /// The line of the document the cursor is on.
     pub doc_scroll: u16,
 }
 
@@ -81,7 +82,10 @@ impl AppState {
         let (result_selected, doc_scroll) = match results.len() {
             0 => (0, 0),
             len if self.result_selected >= len => (len - 1, 0),
-            _ => (self.result_selected, self.doc_scroll),
+            _ => {
+                let (row, _) = self.document.cursor();
+                (self.result_selected, u16::try_from(row).unwrap_or(u16::MAX))
+            }
         };
         Snapshot {
             version: VERSION,
@@ -140,7 +144,8 @@ impl AppState {
         state.more = snapshot.more;
         state.result_selected = snapshot.result_selected;
         state.marked = snapshot.marked.into_iter().collect();
-        state.doc_scroll = snapshot.doc_scroll;
+        state.sync_document();
+        state.document.move_to(usize::from(snapshot.doc_scroll), 0);
         if let Load::Loaded(nodes) = &state.accounts {
             let opened = nodes.iter().filter(|node| node.databases.is_some());
             effects.extend(opened.map(|node| Effect::LoadContainers(node.account.clone())));
@@ -303,7 +308,8 @@ FROM c"
         assert!(state.more);
         assert_eq!(state.result_selected, 0);
         assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![0]);
-        assert_eq!(state.doc_scroll, 4);
+        // The document has four lines, so the cursor stops on the last
+        assert_eq!(state.document.cursor().0, 3);
     }
 
     #[test]
@@ -328,7 +334,7 @@ FROM c"
             .map(|i| json!({ "id": format!("c-{i}") }))
             .collect();
         state.result_selected = 1200;
-        state.doc_scroll = 7;
+        state.document.move_to(7, 0);
 
         let saved = state.snapshot();
 
@@ -475,7 +481,7 @@ FROM c"
         assert_eq!(state.results, refreshed);
         assert_eq!(state.result_selected, 2);
         assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![3]);
-        assert_eq!(state.doc_scroll, 4);
+        assert_eq!(state.document.cursor().0, 3);
         assert!(!state.more);
         assert_eq!(state.refreshing_query, None);
     }
@@ -495,7 +501,7 @@ FROM c"
 
         assert_eq!(state.result_selected, 1);
         assert_eq!(state.marked.iter().copied().collect::<Vec<_>>(), vec![1]);
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor().0, 0);
     }
 
     #[test]

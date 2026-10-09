@@ -11,7 +11,7 @@ use ratatui::widgets::{
 };
 
 use crate::editor::{Editor, Pos};
-use crate::json::{highlight_json, highlight_json_array, highlight_json_line};
+use crate::json::{highlight_json_array, highlight_json_line};
 use crate::query::DEFAULT_QUERY;
 use crate::settings::{ContainerSettings, Field, Geospatial, SettingsTab, TimeToLive};
 use crate::sql::highlight_sql;
@@ -414,22 +414,41 @@ fn draw_code(
     frame.render_widget(paragraph, area);
     draw_scrollbar(frame, area.inner(Margin::new(0, 1)), lines.len(), scroll);
     if let Some(range) = editor.vim.selection(editor.cursor()) {
-        let widths: Vec<usize> = lines.iter().map(|line| line.chars().count()).collect();
-        let text = area.inner(Margin::new(1, 1));
-        let numbers = u16::try_from(gutter + 1).unwrap_or(u16::MAX);
-        let text = Rect {
-            x: text.x + numbers,
-            width: text.width.saturating_sub(numbers),
-            ..text
-        };
         let scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
-        draw_picked(frame, range, &widths, scroll, text);
+        draw_picked(
+            frame,
+            range,
+            &line_widths(editor),
+            scroll,
+            code_area(editor, area),
+        );
     }
     if focused {
         let x = area.x + 1 + u16::try_from(gutter + 1 + column).unwrap_or(u16::MAX);
         let y = area.y + 1 + u16::try_from(row - scroll).unwrap_or(u16::MAX);
         frame.set_cursor_position((x.min(area.right().saturating_sub(2)), y));
     }
+}
+
+/// Where the text of a pane drawn by [`draw_code`] shows: inside its borders,
+/// right of the line numbers.
+fn code_area(editor: &Editor, area: Rect) -> Rect {
+    let inner = area.inner(Margin::new(1, 1));
+    let numbers = u16::try_from(editor.number_width() + 1).unwrap_or(u16::MAX);
+    Rect {
+        x: inner.x + numbers,
+        width: inner.width.saturating_sub(numbers),
+        ..inner
+    }
+}
+
+/// How many characters each line of an editor has.
+fn line_widths(editor: &Editor) -> Vec<usize> {
+    editor
+        .lines()
+        .iter()
+        .map(|line| line.chars().count())
+        .collect()
 }
 
 /// The settings title: the container and the tabs, with the shown one picked out
@@ -659,30 +678,23 @@ fn metric(value: f64) -> String {
 }
 
 fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
-    // The pane may have grown since the document was scrolled
-    let height = area.height.saturating_sub(2);
-    let scroll = state
-        .doc_scroll
-        .min(state.document_lines().saturating_sub(height));
-    let lines = state
-        .selected_document()
-        .map(highlight_json)
-        .unwrap_or_default();
-    let widths: Vec<usize> = lines.iter().map(Line::width).collect();
-    let document = Paragraph::new(lines)
-        .block(pane("Document", state, Focus::Document))
-        .scroll((scroll, 0));
-    frame.render_widget(document, area);
-    draw_scrollbar(
-        frame,
-        area.inner(Margin::new(0, 1)),
-        usize::from(state.document_lines()),
-        usize::from(scroll),
-    );
+    let Some(source) = &state.document_source else {
+        frame.render_widget(pane("Document", state, Focus::Document), area);
+        return;
+    };
+    let changed = if state.document_modified() { "*" } else { "" };
+    let title = format!("Document: {}{changed}", display_value(source.doc.get("id")));
+    let block = pane(title, state, Focus::Document);
+    let focused = state.focus == Focus::Document;
+    let document = &state.document;
+    draw_code(frame, document, highlight_json_line, block, focused, area);
     if let Some(selection) = state.doc_selection.filter(|s| s.anchor != s.head) {
         let (start, end) = selection.range();
         let range = ((start.line, start.column), (end.line, end.column));
-        draw_picked(frame, range, &widths, scroll, area.inner(Margin::new(1, 1)));
+        let height = usize::from(area.height.saturating_sub(2));
+        let scroll = u16::try_from(document.scroll(height)).unwrap_or(u16::MAX);
+        let widths = line_widths(document);
+        draw_picked(frame, range, &widths, scroll, code_area(document, area));
     }
 }
 
@@ -1638,11 +1650,10 @@ mod tests {
         assert!(shows(&screen, r#""id": "c-2","#), "{}", screen.join("\n"));
 
         state.focus = Focus::Document;
-        press(&mut state, KeyCode::Down);
-        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char('G'));
         let screen = self::screen(&state);
         assert!(!shows(&screen, r#""id": "c-2","#), "{}", screen.join("\n"));
-        assert!(shows(&screen, r#""x00": 0"#));
+        assert!(shows(&screen, r#""x29": 29"#));
     }
 
     #[test]
@@ -1909,10 +1920,11 @@ mod tests {
         let mut state = with_results();
         let fields = (0..40).map(|i| (format!("f{i:02}"), json!(i)));
         state.results[0] = serde_json::Value::Object(fields.collect());
+        state.sync_document();
         state.doc_height = document_height(Size::new(100, 20), None);
         state.focus = Focus::Document;
 
-        press(&mut state, KeyCode::End);
+        press(&mut state, KeyCode::Char('G'));
 
         let screen = screen(&state);
         let above_bottom = &screen[screen.len() - 4];
@@ -1954,7 +1966,7 @@ mod tests {
     #[test]
     fn drawing_never_scrolls_past_the_end_of_the_document() {
         let mut state = with_results();
-        state.doc_scroll = 50;
+        state.document.move_to(50, 0);
 
         assert!(shows(&screen(&state), r#""id": "c-1","#));
     }
@@ -1966,6 +1978,7 @@ mod tests {
 
         let fields = (0..40).map(|i| (format!("f{i:02}"), json!(i)));
         state.results[0] = serde_json::Value::Object(fields.collect());
+        state.sync_document();
 
         let screen = screen(&state);
         assert!(screen[4].ends_with("█"), "{}", screen.join("\n"));

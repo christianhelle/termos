@@ -324,6 +324,14 @@ impl Selection {
     }
 }
 
+/// A document as it was read, and where from, to save it back there.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocSource {
+    pub target: Option<Target>,
+    pub pk_path: String,
+    pub doc: Value,
+}
+
 /// The pane that keys go to.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Focus {
@@ -469,8 +477,13 @@ pub struct AppState {
     pub marked: BTreeSet<usize>,
     /// The SQL of the latest query, to run again on refresh.
     pub last_sql: String,
-    /// How many lines the document pane is scrolled down.
-    pub doc_scroll: u16,
+    /// The selected document as JSON, to read and edit.
+    pub document: Editor,
+    /// The document the document pane was filled from, while it shows one.
+    pub document_source: Option<DocSource>,
+    /// The result to show once the edited document's changes are discarded,
+    /// while a dialog asks to discard them.
+    pub confirm_discard_document: Option<usize>,
     /// How many lines of a document the document pane shows at once.
     pub doc_height: u16,
     /// Text picked in the document, to copy.
@@ -539,7 +552,9 @@ impl AppState {
             result_selected: 0,
             marked: BTreeSet::new(),
             last_sql: String::new(),
-            doc_scroll: 0,
+            document: Editor::default(),
+            document_source: None,
+            confirm_discard_document: None,
             doc_height: 0,
             doc_selection: None,
             results_height: 0,
@@ -631,18 +646,40 @@ impl AppState {
         self.results.get(self.result_selected)
     }
 
-    /// How far the document pane scrolls: until the last line is at the bottom.
-    pub fn max_doc_scroll(&self) -> u16 {
-        self.document_lines().saturating_sub(self.doc_height)
+    /// Whether the document pane holds changes that were not saved.
+    pub fn document_modified(&self) -> bool {
+        self.document_source
+            .as_ref()
+            .is_some_and(|source| self.document.text() != pretty(&source.doc))
     }
 
-    /// How many lines the selected document takes when pretty-printed.
-    pub fn document_lines(&self) -> u16 {
-        let lines = self.selected_document().map_or(0, |doc| {
-            let pretty = serde_json::to_string_pretty(doc).unwrap_or_default();
-            pretty.lines().count()
-        });
-        u16::try_from(lines).unwrap_or(u16::MAX)
+    /// Fills the document pane with the selected document when it shows
+    /// another one, unless it holds changes, which it keeps until they are
+    /// saved or discarded.
+    pub fn sync_document(&mut self) {
+        if self.document_modified() {
+            return;
+        }
+        let selected = self.selected_document().cloned();
+        if self.document_source.as_ref().map(|source| &source.doc) == selected.as_ref() {
+            return;
+        }
+        self.doc_selection = None;
+        match selected {
+            Some(doc) => {
+                self.document.set_text(&pretty(&doc));
+                self.document.move_to(0, 0);
+                self.document_source = Some(DocSource {
+                    target: self.target.clone(),
+                    pk_path: self.pk_path.clone(),
+                    doc,
+                });
+            }
+            None => {
+                self.document.set_text("");
+                self.document_source = None;
+            }
+        }
     }
 
     /// How many lines the query output takes: the results as one pretty-printed array.
@@ -661,10 +698,11 @@ impl AppState {
         if selection.anchor == selection.head {
             return None;
         }
-        let pretty = serde_json::to_string_pretty(self.selected_document()?).ok()?;
         let (start, end) = selection.range();
-        let picked: Vec<String> = pretty
+        let picked: Vec<String> = self
+            .document
             .lines()
+            .iter()
             .enumerate()
             .skip(start.line)
             .take(end.line + 1 - start.line)
@@ -770,11 +808,24 @@ fn row(node: Node, depth: usize, label: &str) -> TreeRow {
 
 /// Applies an event to the state, returning the background work it starts.
 pub fn update(state: &mut AppState, event: Event) -> Vec<Effect> {
-    match event {
+    let selected = state.result_selected;
+    let effects = match event {
         Event::Key(key) => on_key(state, key),
         Event::Mouse(mouse) => on_mouse(state, mouse),
         Event::Msg(msg) => on_msg(state, msg),
+    };
+    if state.result_selected != selected && state.document_modified() {
+        // Keep the changes on screen until the dialog says whether to drop them
+        state.confirm_discard_document = Some(state.result_selected);
+        state.result_selected = selected;
     }
+    state.sync_document();
+    effects
+}
+
+/// A value as indented JSON.
+fn pretty(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -796,6 +847,15 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         state.confirm_discard = false;
         if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
             return close_settings(state);
+        }
+        return Vec::new();
+    }
+    if let Some(index) = state.confirm_discard_document.filter(|_| !ctrl_c) {
+        // Only y or Enter discards. Any other key keeps the changes, and only that
+        state.confirm_discard_document = None;
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Enter) {
+            state.document_source = None;
+            state.result_selected = index;
         }
         return Vec::new();
     }
@@ -836,6 +896,7 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 fn on_editor_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     match state.focus {
         Focus::Editor => on_editor_key(state, key),
+        Focus::Document => on_document_key(state, key),
         Focus::IndexingPolicy | Focus::ComputedProperties => on_settings_editor_key(state, key),
         _ => on_pane_key(state, key),
     }
@@ -934,6 +995,7 @@ fn on_click(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effe
         }
         Focus::Document => {
             let point = doc_point(state, at);
+            state.document.move_to(point.line, point.column);
             state.doc_selection = Some(Selection {
                 anchor: point,
                 head: point,
@@ -961,17 +1023,16 @@ fn on_drag(state: &mut AppState, pane: Focus, at: Option<Position>) -> Vec<Effec
 
 /// The place in the document under a point inside the document pane.
 fn doc_point(state: &AppState, at: Position) -> DocPoint {
-    // The pane may have grown since the document was scrolled
-    let scroll = state.doc_scroll.min(state.max_doc_scroll());
+    let document = &state.document;
     DocPoint {
-        line: usize::from(scroll) + usize::from(at.y),
-        column: usize::from(at.x),
+        line: document.scroll(usize::from(state.doc_height)) + usize::from(at.y),
+        // Less the line numbers and the space after them
+        column: usize::from(at.x).saturating_sub(document.number_width() + 1),
     }
 }
 
-/// Shows another document from its top, with nothing picked.
+/// Drops the text picked in the document, as another document shows.
 fn show_from_top(state: &mut AppState) {
-    state.doc_scroll = 0;
     state.doc_selection = None;
 }
 
@@ -1016,10 +1077,10 @@ fn on_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
             return match state.focus {
                 Focus::Tree => on_tree_key(state, key),
                 Focus::Results => on_results_key(state, key),
-                Focus::Document => on_document_key(state, key),
                 Focus::Output => on_output_key(state, key),
                 Focus::SettingsForm => on_settings_form_key(state, key),
                 Focus::Search
+                | Focus::Document
                 | Focus::Editor
                 | Focus::IndexingPolicy
                 | Focus::ComputedProperties => Vec::new(),
@@ -1312,26 +1373,75 @@ fn load_more(state: &mut AppState) -> Vec<Effect> {
     vec![Effect::LoadMore { id: state.query_id }]
 }
 
+/// Edits the document the way Vim would, saves it with Ctrl-S, and copies
+/// the text picked with the mouse with `y`.
 fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
-    match key.code {
-        KeyCode::Char('y') => return copy_document(state),
-        KeyCode::Char('d') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.confirm_delete = state.selected_document().is_some();
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    if ctrl && key.code == KeyCode::Char('s') {
+        return save_document(state);
+    }
+    if state.document_source.is_none() {
+        return on_pane_key(state, key);
+    }
+    if key.code == KeyCode::Char('y') && state.document.vim.is_idle() {
+        if let Some(text) = state.selected_text() {
+            return vec![Effect::Copy(text)];
+        }
+    }
+    let outcome = edit(
+        &mut state.document,
+        key,
+        state.doc_height,
+        &mut state.register,
+    );
+    match outcome {
+        Outcome::Leave => {
+            state.doc_selection = None;
+            Vec::new()
+        }
+        outcome => edited(state, key, outcome),
+    }
+}
+
+/// Saves the edited document in place of the one it was read as, or says
+/// why it cannot be saved.
+fn save_document(state: &mut AppState) -> Vec<Effect> {
+    let Some(source) = &state.document_source else {
+        return Vec::new();
+    };
+    let Some(target) = source.target.clone() else {
+        return Vec::new();
+    };
+    let id = display_value(source.doc.get("id"));
+    if !state.document_modified() {
+        state.status = Status::Info(format!("No changes to save in {id}"));
+        return Vec::new();
+    }
+    let document = match serde_json::from_str::<Value>(&state.document.text()) {
+        Ok(document) if document.is_object() => document,
+        Ok(_) => {
+            state.error = Some("The document must be a JSON object.".into());
             return Vec::new();
         }
-        KeyCode::Esc => state.doc_selection = None,
-        _ => {}
-    }
-    let last = usize::from(state.max_doc_scroll());
-    let page = usize::from(state.doc_height).max(1);
-    let scroll = usize::from(state.doc_scroll);
-    let target = jump(key, &mut state.pending_g, scroll, last, page).unwrap_or(match key.code {
-        KeyCode::Down | KeyCode::Char('j') => (scroll + 1).min(last),
-        KeyCode::Up | KeyCode::Char('k') => scroll.saturating_sub(1),
-        _ => scroll,
-    });
-    state.doc_scroll = u16::try_from(target).unwrap_or(u16::MAX);
-    Vec::new()
+        Err(error) => {
+            state.error = Some(format!("The document is not valid JSON: {error}"));
+            return Vec::new();
+        }
+    };
+    let partition_key = value_at_path(&source.doc, &source.pk_path).cloned();
+    let etag = source
+        .doc
+        .get("_etag")
+        .and_then(Value::as_str)
+        .map(String::from);
+    state.status = Status::Info(format!("Saving {id}…"));
+    vec![Effect::ReplaceDocument {
+        target,
+        id,
+        partition_key,
+        document,
+        etag,
+    }]
 }
 
 /// Deletes the selected document from the current container.
@@ -1369,15 +1479,6 @@ fn delete_marked(state: &mut AppState) -> Vec<Effect> {
         .collect();
     state.status = Status::Info(format!("Deleting {}…", documents(items.len())));
     vec![Effect::DeleteMany { target, items }]
-}
-
-/// Copies the picked text, or the whole document when nothing is picked.
-fn copy_document(state: &AppState) -> Vec<Effect> {
-    let text = state.selected_text().or_else(|| {
-        let doc = state.selected_document()?;
-        serde_json::to_string_pretty(doc).ok()
-    });
-    text.map(Effect::Copy).into_iter().collect()
 }
 
 fn on_search_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
@@ -1460,6 +1561,7 @@ fn on_settings_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 fn focused_editor(state: &AppState) -> Option<&Editor> {
     match (state.focus, &state.settings) {
         (Focus::Editor, _) => Some(&state.editor),
+        (Focus::Document, _) if state.document_source.is_some() => Some(&state.document),
         (Focus::IndexingPolicy, Some(Load::Loaded(settings))) => Some(&settings.indexing),
         (Focus::ComputedProperties, Some(Load::Loaded(settings))) => Some(&settings.computed),
         _ => None,
@@ -2042,6 +2144,22 @@ fn document_saved(state: &mut AppState, id: &str, result: Result<Value, String>)
             return;
         }
     };
+    let shown = state
+        .document_source
+        .as_ref()
+        .is_some_and(|source| display_value(source.doc.get("id")) == id);
+    if shown {
+        // Show the document as saved, with its new etag, where the cursor was
+        let (row, column) = state.document.cursor();
+        let vim = std::mem::take(&mut state.document.vim);
+        state.document.set_text(&pretty(&saved));
+        state.document.move_to(row, column);
+        state.document.follow(usize::from(state.doc_height).max(1));
+        state.document.vim = vim;
+        if let Some(source) = &mut state.document_source {
+            source.doc = saved.clone();
+        }
+    }
     if let Some(doc) = state
         .results
         .iter_mut()
@@ -3183,11 +3301,11 @@ mod tests {
     #[test]
     fn jumping_to_another_document_shows_it_from_the_top() {
         let mut state = with_many_results(25);
-        state.doc_scroll = 5;
+        state.document.move_to(2, 3);
 
         press(&mut state, KeyCode::PageDown);
 
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor(), (0, 0));
     }
 
     #[test]
@@ -3213,26 +3331,28 @@ mod tests {
     }
 
     #[test]
-    fn the_document_pane_scrolls_and_starts_at_the_top_for_another_document() {
+    fn the_document_cursor_moves_and_starts_at_the_top_for_another_document() {
         let mut state = with_cart_results();
         state.focus = Focus::Document;
         state.results[0] = long_document(40);
+        state.sync_document();
         state.doc_height = 10;
 
         press(&mut state, KeyCode::Down);
         press(&mut state, KeyCode::Char('j'));
         press(&mut state, KeyCode::PageDown);
         press(&mut state, KeyCode::Up);
-        assert_eq!(state.doc_scroll, 11);
+        assert_eq!(state.document.cursor().0, 11);
         press(&mut state, KeyCode::PageUp);
-        assert_eq!(state.doc_scroll, 1);
-        press(&mut state, KeyCode::Home);
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor().0, 1);
+        type_text(&mut state, "gg");
+        assert_eq!(state.document.cursor().0, 0);
 
         press(&mut state, KeyCode::PageDown);
         state.focus = Focus::Results;
         press(&mut state, KeyCode::Down);
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor(), (0, 0));
+        assert_eq!(state.document.scroll(10), 0);
     }
 
     #[test]
@@ -3483,16 +3603,16 @@ mod tests {
     }
 
     #[test]
-    fn d_in_the_document_pane_asks_to_confirm_the_delete_too() {
+    fn dd_in_the_document_pane_deletes_a_line_without_asking() {
         let mut state = with_cart_results();
         state.focus = Focus::Document;
 
-        let effects = press(&mut state, KeyCode::Char('d'));
-        assert!(effects.is_empty());
-        assert!(state.confirm_delete);
+        let effects = type_text_effects(&mut state, "jdd");
 
-        let effects = press(&mut state, KeyCode::Char('y'));
-        assert!(matches!(effects[..], [Effect::Delete { ref id, .. }] if id == "c-1"));
+        assert!(effects.is_empty());
+        assert!(!state.confirm_delete);
+        assert_eq!(state.document.text(), "{\n  \"tenantId\": \"contoso\"\n}");
+        assert!(state.document_modified());
     }
 
     #[test]
@@ -3506,16 +3626,17 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_d_in_the_document_pane_still_scrolls_without_asking() {
+    fn ctrl_d_in_the_document_pane_moves_half_a_page_without_asking() {
         let mut state = with_cart_results();
         state.focus = Focus::Document;
         state.results[0] = long_document(40);
+        state.sync_document();
         state.doc_height = 10;
 
         press_ctrl(&mut state, 'd');
 
         assert!(!state.confirm_delete);
-        assert_eq!(state.doc_scroll, 5);
+        assert_eq!(state.document.cursor().0, 5);
     }
 
     #[test]
@@ -3555,44 +3676,41 @@ mod tests {
     }
 
     #[test]
-    fn the_document_scrolls_no_further_than_its_last_line_at_the_bottom() {
+    fn the_document_cursor_stops_at_its_last_line() {
         let mut state = with_cart_results();
         state.results[0] = long_document(10);
+        state.sync_document();
         state.doc_height = 5;
         state.focus = Focus::Document;
 
         for _ in 0..20 {
             press(&mut state, KeyCode::Down);
         }
-        assert_eq!(state.doc_scroll, 7);
+        assert_eq!(state.document.cursor().0, 11);
+        assert_eq!(state.document.scroll(5), 7);
 
-        press(&mut state, KeyCode::Home);
+        type_text(&mut state, "gg");
         press(&mut state, KeyCode::PageDown);
-        assert_eq!(state.doc_scroll, 5);
-        press(&mut state, KeyCode::PageDown);
-        assert_eq!(state.doc_scroll, 7);
-
-        press(&mut state, KeyCode::Home);
-        press(&mut state, KeyCode::End);
-        assert_eq!(state.doc_scroll, 7);
+        assert_eq!(state.document.cursor().0, 5);
+        assert_eq!(state.document.scroll(5), 1);
     }
 
     #[test]
-    fn the_document_scrolls_with_vim_motions_a_page_or_half_a_page_at_a_time() {
+    fn the_document_cursor_moves_with_vim_motions_a_page_or_half_a_page_at_a_time() {
         let mut state = with_cart_results();
         state.focus = Focus::Document;
         state.results[0] = long_document(40);
+        state.sync_document();
         state.doc_height = 10;
 
         press_ctrl(&mut state, 'd');
-        assert_eq!(state.doc_scroll, 5);
+        assert_eq!(state.document.cursor().0, 5);
         press_ctrl(&mut state, 'u');
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor().0, 0);
         press(&mut state, KeyCode::Char('G'));
-        assert_eq!(state.doc_scroll, state.max_doc_scroll());
-        press(&mut state, KeyCode::Char('g'));
-        press(&mut state, KeyCode::Char('g'));
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor().0, 41);
+        type_text(&mut state, "gg");
+        assert_eq!(state.document.cursor().0, 0);
     }
 
     #[test]
@@ -3603,7 +3721,7 @@ mod tests {
 
         press(&mut state, KeyCode::PageDown);
 
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.scroll(10), 0);
     }
 
     #[test]
@@ -3733,14 +3851,13 @@ mod tests {
     }
 
     #[test]
-    fn y_copies_the_whole_document_when_nothing_is_picked() {
+    fn yy_copies_the_line_under_the_cursor_when_nothing_is_picked() {
         let mut state = with_cart_results();
         state.focus = Focus::Document;
 
-        let effects = press(&mut state, KeyCode::Char('y'));
+        let effects = type_text_effects(&mut state, "jyy");
 
-        let whole = serde_json::to_string_pretty(&cart_docs()[0]).unwrap();
-        assert_eq!(effects, vec![Effect::Copy(whole)]);
+        assert_eq!(effects, vec![Effect::Copy("  \"id\": \"c-1\",".into())]);
     }
 
     #[test]
@@ -3815,9 +3932,10 @@ mod tests {
         let mut state = with_cart_results();
         state.doc_height = 10;
 
-        click(&mut state, Focus::Document, 2, 1);
-        drag(&mut state, Focus::Document, 4, 1);
-        drag(&mut state, Focus::Document, 5, 1);
+        // Right of the line numbers, which take three columns
+        click(&mut state, Focus::Document, 5, 1);
+        drag(&mut state, Focus::Document, 7, 1);
+        drag(&mut state, Focus::Document, 8, 1);
 
         assert_eq!(state.focus, Focus::Document);
         assert_eq!(state.selected_text().as_deref(), Some("\"id\""));
@@ -3828,8 +3946,8 @@ mod tests {
         let mut state = with_cart_results();
         state.doc_height = 10;
 
-        click(&mut state, Focus::Document, 2, 1);
-        let at = Some(Position::new(5, 1));
+        click(&mut state, Focus::Document, 5, 1);
+        let at = Some(Position::new(8, 1));
         let action = MouseAction::Release;
         let pane = Focus::Document;
         update(&mut state, Event::Mouse(Mouse { action, pane, at }));
@@ -3841,11 +3959,13 @@ mod tests {
     fn dragging_counts_the_lines_scrolled_out_of_sight() {
         let mut state = with_cart_results();
         state.results[0] = long_document(10);
+        state.sync_document();
         state.doc_height = 5;
-        state.doc_scroll = 2;
+        state.document.move_to(6, 0);
+        state.document.follow(5);
 
-        click(&mut state, Focus::Document, 2, 0);
-        drag(&mut state, Focus::Document, 6, 0);
+        click(&mut state, Focus::Document, 5, 0);
+        drag(&mut state, Focus::Document, 9, 0);
 
         assert_eq!(state.selected_text().as_deref(), Some("\"f01\""));
     }
@@ -3854,8 +3974,8 @@ mod tests {
     fn dragging_outside_the_document_keeps_the_selection() {
         let mut state = with_cart_results();
         state.doc_height = 10;
-        click(&mut state, Focus::Document, 2, 1);
-        drag(&mut state, Focus::Document, 5, 1);
+        click(&mut state, Focus::Document, 5, 1);
+        drag(&mut state, Focus::Document, 8, 1);
 
         drag(&mut state, Focus::Results, 1, 1);
         let border = Mouse {
@@ -3943,12 +4063,12 @@ mod tests {
     fn clicking_a_result_shows_its_document_from_the_top() {
         let mut state = with_cart_results();
         state.results_height = 10;
-        state.doc_scroll = 3;
+        state.document.move_to(3, 1);
 
         click(&mut state, Focus::Results, 2, 2);
 
         assert_eq!(state.selected_document(), Some(&cart_docs()[1]));
-        assert_eq!(state.doc_scroll, 0);
+        assert_eq!(state.document.cursor(), (0, 0));
     }
 
     #[test]
@@ -3991,13 +4111,15 @@ mod tests {
         state.results[0] = long_document(10);
         state.doc_height = 5;
 
+        state.sync_document();
+
         wheel(&mut state, Focus::Document, MouseAction::ScrollDown);
-        assert_eq!(state.doc_scroll, 3);
+        assert_eq!(state.document.cursor().0, 3);
         wheel(&mut state, Focus::Document, MouseAction::ScrollDown);
         wheel(&mut state, Focus::Document, MouseAction::ScrollDown);
-        assert_eq!(state.doc_scroll, 7);
+        assert_eq!(state.document.cursor().0, 9);
         wheel(&mut state, Focus::Document, MouseAction::ScrollUp);
-        assert_eq!(state.doc_scroll, 4);
+        assert_eq!(state.document.cursor().0, 6);
 
         wheel(&mut state, Focus::Results, MouseAction::ScrollDown);
         assert_eq!(state.result_selected, 1);

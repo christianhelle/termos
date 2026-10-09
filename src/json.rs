@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 /// Pretty-prints a document like `serde_json::to_string_pretty`, one styled line per line.
+#[cfg(test)]
 pub fn highlight_json(value: &Value) -> Vec<Line<'static>> {
     let mut writer = Writer::default();
     writer.value(value, 0);
