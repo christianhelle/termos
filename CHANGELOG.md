@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Show why a query failed in a dialog, with the service's own message and the line and column it points at, and explain queries such as aggregates that the Azure Cosmos DB SDK for Rust cannot run across partitions yet, or parameters termos cannot set.
 - Edit a container's settings with `s`: time to live, geography or geometry for spatial data, the indexing policy and computed properties as JSON, and save them with Ctrl-S.
 - Start where the last run left off: the same accounts, containers, documents, search and query show at once, and refresh in the background without moving the selection.
+- Edit the query, the document and the JSON settings tabs with Vim keys: normal, insert and visual modes, motions, operators, counts, undo and redo, with the mode in the pane title and a block or bar cursor.
+- Edit the selected document and save it with Ctrl-S, replacing it by its id and partition key only while it is unchanged since it was read, and ask before discarding unsaved changes.
+
+### Changed
+
+- `d` deletes documents from the results pane only, as it edits text in the document pane.
+- The query editor starts in Vim's normal mode, so `i` or `a` starts typing and Esc goes back to normal mode before leaving the editor.
 
 ## [0.1.5] - 2026-10-02
 
