@@ -6,6 +6,8 @@ pub struct Editor {
     lines: Vec<String>,
     row: usize,
     column: usize,
+    /// The first line shown, kept until the cursor leaves the lines shown.
+    top: usize,
 }
 
 impl Default for Editor {
@@ -14,6 +16,7 @@ impl Default for Editor {
             lines: vec![String::new()],
             row: 0,
             column: 0,
+            top: 0,
         }
     }
 }
@@ -76,9 +79,21 @@ impl Editor {
     }
 
     /// The first line to show, when this many lines show at once:
-    /// scrolled only as far as it takes to show the cursor.
+    /// where it was, scrolled only as far as it takes to show the cursor.
     pub fn scroll(&self, height: usize) -> usize {
-        self.row.saturating_sub(height.max(1) - 1)
+        let height = height.max(1);
+        if self.row < self.top {
+            self.row
+        } else if self.row >= self.top + height {
+            self.row + 1 - height
+        } else {
+            self.top
+        }
+    }
+
+    /// Keeps the lines shown where they are, unless the cursor left them.
+    pub fn follow(&mut self, height: usize) {
+        self.top = self.scroll(height);
     }
 
     /// How many characters the widest line number takes, at least two.
@@ -306,6 +321,21 @@ mod tests {
         assert_eq!(editor.cursor(), (4, 0));
         editor.page_down(10);
         assert_eq!(editor.cursor(), (9, 0));
+    }
+
+    #[test]
+    fn the_lines_shown_scroll_only_when_the_cursor_leaves_them() {
+        let mut editor = typed("a");
+        (0..9).for_each(|_| editor.newline());
+        editor.follow(4);
+        assert_eq!(editor.scroll(4), 6);
+
+        editor.up();
+        editor.follow(4);
+        assert_eq!(editor.scroll(4), 6);
+        editor.page_up(4);
+        editor.follow(4);
+        assert_eq!(editor.scroll(4), 4);
     }
 
     #[test]

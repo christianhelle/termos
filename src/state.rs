@@ -1401,6 +1401,7 @@ fn edit(editor: &mut Editor, key: KeyEvent, page: u16) {
         KeyCode::PageDown => editor.page_down(page),
         _ => {}
     }
+    editor.follow(page);
 }
 
 /// Edits the JSON of the indexing policy or computed properties tab.
