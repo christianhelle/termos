@@ -15,7 +15,7 @@ use crate::json::highlight_json_array;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
 use crate::settings::{ContainerSettings, Field, SettingsTab};
-use crate::vim::{self, Outcome, Register};
+use crate::vim::{self, Outcome, Register, VimMode};
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -605,6 +605,11 @@ impl AppState {
     /// The search bar is never zoomed: every pane shows while searching.
     pub fn zoomed_pane(&self) -> Option<Focus> {
         (self.zoomed && self.focus != Focus::Search).then_some(self.focus)
+    }
+
+    /// The mode of the focused pane's editor, if it has one.
+    pub fn editing_mode(&self) -> Option<VimMode> {
+        focused_editor(self).map(|editor| editor.vim.mode)
     }
 
     /// The document shown in the document pane.
@@ -2095,7 +2100,6 @@ mod tests {
     use super::*;
     use crate::settings::{Field, Geospatial, SettingsTab, TimeToLive};
     use crate::testing::{account, container};
-    use crate::vim::VimMode;
     use serde_json::{Value, json};
     use std::time::Duration;
 

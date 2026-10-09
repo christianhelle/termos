@@ -35,9 +35,11 @@ use crate::credential::{COSMOS_SCOPE, CachedCredential, MANAGEMENT_SCOPE, prefet
 use crate::emulator::{Emulator, trust_emulator_certificate};
 use crate::management::Management;
 use crate::store::AuthMode;
+use crate::vim::VimMode;
 use azure_core::credentials::TokenCredential;
 use azure_identity::DeveloperToolsCredential;
 use clap::Parser;
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event as TermEvent, EventStream, KeyEventKind,
     KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
@@ -185,6 +187,7 @@ async fn show<M: Management + 'static>(
     };
     // Restore the terminal even when the mouse could not be released
     let released = execute!(stdout(), DisableMouseCapture);
+    let _ = execute!(stdout(), SetCursorStyle::DefaultUserShape);
     if enhanced {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
@@ -206,6 +209,7 @@ async fn event_loop<M: Management + 'static>(
     let (sender, mut finished) = mpsc::unbounded_channel();
     let mut keys = EventStream::new();
     let mut left_held = false;
+    let mut cursor_style = None;
     start(&runner, &sender, effects);
     while !state.quit {
         state.doc_height = ui::document_height(terminal.size()?, state.zoomed_pane());
@@ -215,6 +219,16 @@ async fn event_loop<M: Management + 'static>(
         state.output_height = ui::output_height(terminal.size()?, state.zoomed_pane());
         state.settings_height = ui::settings_height(terminal.size()?, state.zoomed_pane());
         terminal.draw(|frame| ui::draw(frame, &state))?;
+        let style = match state.editing_mode() {
+            Some(VimMode::Insert) => SetCursorStyle::SteadyBar,
+            Some(_) => SetCursorStyle::SteadyBlock,
+            None => SetCursorStyle::DefaultUserShape,
+        };
+        if cursor_style != Some(style) {
+            // A terminal that cannot change the cursor keeps its own
+            let _ = execute!(stdout(), style);
+            cursor_style = Some(style);
+        }
         let event = tokio::select! {
             Some(input) = keys.next() => match input? {
                 // Windows also reports key releases
