@@ -770,8 +770,11 @@ fn pane<'a>(title: impl Into<Line<'a>>, state: &AppState, focus: Focus) -> Block
 fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
     let hint = match (state.mode, state.zoomed_pane().is_some()) {
         (Mode::Browse, true) => "z unzoom · Tab next pane · / search · n query · ? help · q quit",
+        (Mode::Browse, false) if state.focus == Focus::Document => {
+            "i edit · Ctrl-S save · Tab next pane · ? help · q quit"
+        }
         (Mode::Browse, false) => "Tab next pane · / search · n query · ? help · q quit",
-        (Mode::Query, _) => "F5 run · Esc back · Tab next pane · ? help",
+        (Mode::Query, _) => "i insert · F5 run · Esc back · Tab next pane · ? help",
         (Mode::Settings, _) => "Ctrl-S save · Esc back · Tab next tab · ? help",
     };
     let width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
@@ -787,7 +790,7 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// What each key does, shown with `?`.
-const HELP: [(&str, &str); 21] = [
+const HELP: [(&str, &str); 20] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, or show every pane again"),
@@ -798,9 +801,12 @@ const HELP: [(&str, &str); 21] = [
     ("PgUp PgDn Home End", "Move or scroll a page, or to an end"),
     ("Ctrl-U Ctrl-D", "Scroll half a page up or down"),
     ("g g  G", "Jump to the first or last"),
-    ("Click, again", "Pick a pane or row, then open it"),
-    ("Wheel", "Scroll the pane under the mouse"),
+    (
+        "Click, wheel",
+        "Pick a pane or row and open it, scroll the pane",
+    ),
     ("Drag, y", "Pick text in the document, copy it"),
+    ("i, Esc, Ctrl-S", "Edit the document vim style, save it"),
     ("Esc", "Leave the search bar, drop the picked text"),
     ("r", "Run the query again"),
     ("n  s", "Write a query, or edit the container's settings"),
@@ -810,19 +816,22 @@ const HELP: [(&str, &str); 21] = [
     ),
     (
         "d",
-        "Delete the marked or selected documents, after confirming",
+        "Delete the marked or selected results, after confirming",
     ),
-    ("?", "Show this help"),
-    ("q, Ctrl-C", "Quit"),
+    ("?, q", "Show this help, quit"),
     ("", "Press any key to close"),
 ];
 
 /// What each key does in query mode, shown with `?` there.
-const QUERY_HELP: [(&str, &str); 19] = [
+const QUERY_HELP: [(&str, &str); 20] = [
     ("Tab / Shift-Tab", "Next pane / previous pane"),
     ("F5  Ctrl-R", "Run the query"),
     ("Shift-Enter", "Run the query, in terminals that report it"),
-    ("Enter", "Start a new line in the query"),
+    ("i a o", "Type the query in insert mode"),
+    (
+        "dd yy p u v V",
+        "Edit vim style; Ctrl-R runs rather than redoes",
+    ),
     ("/", "Go to the query editor"),
     ("↑ ↓  j k", "Scroll the output, or load more at the end"),
     (
@@ -835,7 +844,7 @@ const QUERY_HELP: [(&str, &str); 19] = [
     ("w", "Save the results to a JSON file"),
     ("Ctrl-S", "Save the query to a file"),
     ("r", "Run the query again from the output"),
-    ("Esc", "Leave the editor, then the query editor"),
+    ("Esc", "Leave insert mode, the editor, then the query"),
     ("n", "Leave the query editor from the output"),
     ("Ctrl-B", "Hide or show the accounts"),
     ("z", "Zoom the pane, or show every pane again"),
@@ -844,7 +853,7 @@ const QUERY_HELP: [(&str, &str); 19] = [
 ];
 
 /// What each key does in settings mode, shown with `?` there.
-const SETTINGS_HELP: [(&str, &str); 10] = [
+const SETTINGS_HELP: [(&str, &str); 11] = [
     ("Tab / Shift-Tab", "Next tab / previous tab"),
     (
         "↑ ↓  j k",
@@ -852,6 +861,7 @@ const SETTINGS_HELP: [(&str, &str); 10] = [
     ),
     ("← →  h l  Space", "Pick another choice"),
     ("0-9", "Type the seconds documents live"),
+    ("i a o, Esc", "Edit the JSON vim style, back to normal"),
     ("Ctrl-S", "Save the settings"),
     ("Esc  s", "Leave the settings, asking to discard changes"),
     ("Ctrl-B", "Hide or show the accounts"),
@@ -886,7 +896,6 @@ fn draw_help(frame: &mut Frame, state: &AppState) {
     );
 }
 
-/// A dialog asking whether to discard the changes to the settings.
 /// A dialog asking whether to discard the changes to something.
 fn draw_confirm_discard(frame: &mut Frame, changed: &str) {
     let lines = vec![
@@ -1756,7 +1765,8 @@ mod tests {
             "Hide or show the accounts",
             "Zoom the pane, or show every pane again",
             "Pick text in the document, copy it",
-            "Quit",
+            "Edit the document vim style, save it",
+            "Show this help, quit",
         ] {
             assert!(
                 shows(&screen, text),
