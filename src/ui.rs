@@ -18,6 +18,7 @@ use crate::sql::highlight_sql;
 use crate::state::{
     AppState, Focus, Load, Mode, OutputTab, SavePrompt, Saving, Status, settings_focus,
 };
+use crate::vim::VimMode;
 
 /// Room for the query the search bar completes, and a space after it.
 const QUERY_WIDTH: u16 = DEFAULT_QUERY.len() as u16 + 1;
@@ -412,8 +413,7 @@ fn draw_code(
     let (row, column) = editor.cursor();
     let scroll = editor.scroll(usize::from(area.height.saturating_sub(2)));
     let block = if focused {
-        let mode = format!(" {} ", editor.vim.mode.label());
-        block.title(Line::from(mode).right_aligned())
+        block.title(mode_badge(editor.vim.mode).right_aligned())
     } else {
         block
     };
@@ -767,6 +767,20 @@ fn pane<'a>(title: impl Into<Line<'a>>, state: &AppState, focus: Focus) -> Block
         .border_style(Style::new().fg(colour))
 }
 
+/// The name of a Vim mode on a background of its own colour, like Vim's status line.
+fn mode_badge(mode: VimMode) -> Line<'static> {
+    let colour = match mode {
+        VimMode::Normal => Color::Blue,
+        VimMode::Insert => Color::Green,
+        VimMode::Visual | VimMode::VisualLine => Color::Magenta,
+    };
+    let style = Style::new()
+        .fg(Color::Black)
+        .bg(colour)
+        .add_modifier(Modifier::BOLD);
+    Line::from(Span::styled(format!(" {} ", mode.label()), style))
+}
+
 fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
     let hint = match (state.mode, state.zoomed_pane().is_some()) {
         (Mode::Browse, true) => "z unzoom · Tab next pane · / search · n query · ? help · q quit",
@@ -780,10 +794,16 @@ fn draw_status(frame: &mut Frame, state: &AppState, area: Rect) {
     let width = u16::try_from(hint.chars().count()).unwrap_or(u16::MAX);
     let [message, keys] =
         Layout::horizontal([Constraint::Fill(1), Constraint::Length(width)]).areas(area);
-    let line = match &state.status {
+    let mut line = match &state.status {
         Status::Info(text) => Line::raw(text.as_str()),
         Status::Error(text) => Line::styled(format!("error: {text}"), Style::new().fg(Color::Red)),
     };
+    if let Some(mode) = state.editing_mode() {
+        let mut spans = mode_badge(mode).spans;
+        spans.push(Span::raw(" "));
+        spans.append(&mut line.spans);
+        line.spans = spans;
+    }
     frame.render_widget(Paragraph::new(line), message);
     let hint = Line::styled(hint, Style::new().fg(Color::DarkGray));
     frame.render_widget(Paragraph::new(hint), keys);
@@ -1552,6 +1572,30 @@ mod tests {
         let first = screen.iter().position(|l| l.contains(" 1 SELECT")).unwrap();
         let cell = &buffer[(u16::try_from(x).unwrap(), u16::try_from(first).unwrap())];
         assert!(!cell.modifier.contains(Modifier::REVERSED));
+    }
+
+    #[test]
+    fn the_status_line_shows_the_mode_of_the_focused_editor_in_colour() {
+        let mut state = with_results();
+        assert!(!shows(&screen(&state), " NORMAL "));
+        press(&mut state, KeyCode::Char('n'));
+        press(&mut state, KeyCode::Char('i'));
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+        let screen = screen(&state);
+
+        let status = screen.last().unwrap();
+        assert!(
+            status.starts_with(" INSERT "),
+            "{}",
+            screen.join(
+                "
+"
+            )
+        );
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(1, 19)].bg, Color::Green);
     }
 
     #[test]
