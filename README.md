@@ -78,7 +78,7 @@ The mouse works too. Click a pane to focus it, or a node or document to select i
 
 ### Editing
 
-The query editor, the document and the JSON settings tabs edit text like Vim. They start in normal mode, and the pane title shows the mode. The cursor is a block in normal mode and a bar in insert mode, in terminals that can change it.
+The query editor, the document and the JSON settings tabs edit text like Vim. They start in normal mode, and the status line and the pane title show the mode in colour: blue for normal, green for insert and magenta for visual. Ctrl-S goes back to normal mode as it saves. The cursor is a block in normal mode and a bar in insert mode, in terminals that can change it.
 
 - **Insert mode**: `i` `a` `I` `A` `o` `O` start typing, and Esc goes back to normal mode.
 - **Moving**: `h` `j` `k` `l` and the arrows, `w` `b` `e` by words, `0` `^` `$` within the line, `gg` `G` to the first or last line, Ctrl-D Ctrl-U by half a page, and PgUp PgDn by a page. A count before a motion repeats it, as in `3j`.
