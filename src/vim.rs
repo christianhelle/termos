@@ -186,11 +186,11 @@ fn normal_key(
     let pending = !vim.is_idle() && vim.mode == VimMode::Normal;
     if vim.replace {
         vim.reset();
-        if let KeyCode::Char(c) = key.code {
-            if !ctrl {
-                editor.checkpoint();
-                editor.replace_char(c);
-            }
+        if let KeyCode::Char(c) = key.code
+            && !ctrl
+        {
+            editor.checkpoint();
+            editor.replace_char(c);
         }
         return Outcome::Handled;
     }

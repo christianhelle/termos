@@ -1383,10 +1383,11 @@ fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     if state.document_source.is_none() {
         return on_pane_key(state, key);
     }
-    if key.code == KeyCode::Char('y') && state.document.vim.is_idle() {
-        if let Some(text) = state.selected_text() {
-            return vec![Effect::Copy(text)];
-        }
+    if key.code == KeyCode::Char('y')
+        && state.document.vim.is_idle()
+        && let Some(text) = state.selected_text()
+    {
+        return vec![Effect::Copy(text)];
     }
     let outcome = edit(
         &mut state.document,
