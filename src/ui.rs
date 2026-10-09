@@ -10,13 +10,13 @@ use ratatui::widgets::{
     ScrollbarState, Table, TableState, Wrap,
 };
 
-use crate::editor::Editor;
+use crate::editor::{Editor, Pos};
 use crate::json::{highlight_json, highlight_json_array, highlight_json_line};
 use crate::query::DEFAULT_QUERY;
 use crate::settings::{ContainerSettings, Field, Geospatial, SettingsTab, TimeToLive};
 use crate::sql::highlight_sql;
 use crate::state::{
-    AppState, Focus, Load, Mode, OutputTab, SavePrompt, Saving, Selection, Status, settings_focus,
+    AppState, Focus, Load, Mode, OutputTab, SavePrompt, Saving, Status, settings_focus,
 };
 
 /// Room for the query the search bar completes, and a space after it.
@@ -402,11 +402,29 @@ fn draw_code(
         .collect();
     let (row, column) = editor.cursor();
     let scroll = editor.scroll(usize::from(area.height.saturating_sub(2)));
+    let block = if focused {
+        let mode = format!(" {} ", editor.vim.mode.label());
+        block.title(Line::from(mode).right_aligned())
+    } else {
+        block
+    };
     let paragraph = Paragraph::new(numbered)
         .block(block)
         .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0));
     frame.render_widget(paragraph, area);
     draw_scrollbar(frame, area.inner(Margin::new(0, 1)), lines.len(), scroll);
+    if let Some(range) = editor.vim.selection(editor.cursor()) {
+        let widths: Vec<usize> = lines.iter().map(|line| line.chars().count()).collect();
+        let text = area.inner(Margin::new(1, 1));
+        let numbers = u16::try_from(gutter + 1).unwrap_or(u16::MAX);
+        let text = Rect {
+            x: text.x + numbers,
+            width: text.width.saturating_sub(numbers),
+            ..text
+        };
+        let scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
+        draw_picked(frame, range, &widths, scroll, text);
+    }
     if focused {
         let x = area.x + 1 + u16::try_from(gutter + 1 + column).unwrap_or(u16::MAX);
         let y = area.y + 1 + u16::try_from(row - scroll).unwrap_or(u16::MAX);
@@ -662,29 +680,30 @@ fn draw_document(frame: &mut Frame, state: &AppState, area: Rect) {
         usize::from(scroll),
     );
     if let Some(selection) = state.doc_selection.filter(|s| s.anchor != s.head) {
-        draw_selection(frame, selection, &widths, scroll, area);
+        let (start, end) = selection.range();
+        let range = ((start.line, start.column), (end.line, end.column));
+        draw_picked(frame, range, &widths, scroll, area.inner(Margin::new(1, 1)));
     }
 }
 
-/// Reverses the picked text of the document, as far as each line reaches.
-fn draw_selection(
+/// Reverses picked text, from its first to its last character as lines and
+/// columns, as far as each line reaches, in the text shown in `inner`.
+fn draw_picked(
     frame: &mut Frame,
-    selection: Selection,
+    (start, end): (Pos, Pos),
     widths: &[usize],
     scroll: u16,
-    area: Rect,
+    inner: Rect,
 ) {
-    let inner = area.inner(Margin::new(1, 1));
-    let (start, end) = selection.range();
     for row in 0..inner.height {
         let line = usize::from(scroll) + usize::from(row);
-        if line < start.line || line > end.line {
+        if line < start.0 || line > end.0 {
             continue;
         }
         let width = widths.get(line).copied().unwrap_or(0);
-        let from = if line == start.line { start.column } else { 0 };
-        let to = if line == end.line {
-            (end.column + 1).min(width)
+        let from = if line == start.0 { start.1 } else { 0 };
+        let to = if line == end.0 {
+            end.1.saturating_add(1).min(width)
         } else {
             width
         };
@@ -987,7 +1006,8 @@ fn draw_save_prompt(frame: &mut Frame, prompt: &SavePrompt) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{DocPoint, Event, Focus, Msg, QueryResult, update};
+
+    use crate::state::{DocPoint, Event, Focus, Msg, QueryResult, Selection, update};
     use crate::testing::{account, container};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
@@ -1455,6 +1475,30 @@ mod tests {
         let x = screen[row].chars().position(|c| c == 'S').unwrap();
         let cell = &buffer[(u16::try_from(x).unwrap(), u16::try_from(row).unwrap())];
         assert_eq!(cell.fg, Color::Blue);
+    }
+
+    #[test]
+    fn the_focused_editor_shows_its_vim_mode_and_reverses_the_visual_selection() {
+        let mut state = with_results();
+        press(&mut state, KeyCode::Char('n'));
+        state.editor.set_text("SELECT c.id\nFROM c");
+        state.editor_height = 10;
+        assert!(shows(&screen(&state), " NORMAL "));
+        press(&mut state, KeyCode::Char('V'));
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+        terminal.draw(|frame| draw(frame, &state)).unwrap();
+        let screen = screen(&state);
+
+        assert!(shows(&screen, " V-LINE "), "{}", screen.join("\n"));
+        let buffer = terminal.backend().buffer();
+        let row = screen.iter().position(|l| l.contains(" 2 FROM")).unwrap();
+        let x = screen[row].chars().position(|c| c == 'F').unwrap();
+        let cell = &buffer[(u16::try_from(x).unwrap(), u16::try_from(row).unwrap())];
+        assert!(cell.modifier.contains(Modifier::REVERSED));
+        let first = screen.iter().position(|l| l.contains(" 1 SELECT")).unwrap();
+        let cell = &buffer[(u16::try_from(x).unwrap(), u16::try_from(first).unwrap())];
+        assert!(!cell.modifier.contains(Modifier::REVERSED));
     }
 
     #[test]
