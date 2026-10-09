@@ -11,7 +11,22 @@ pub struct Editor {
     column: usize,
     /// The first line shown, kept until the cursor leaves the lines shown.
     top: usize,
+    /// The text before each change, latest last, to undo them.
+    undone: Vec<Snapshot>,
+    /// The text before each undo, latest last, to redo them.
+    redone: Vec<Snapshot>,
 }
+
+/// The text and cursor at some moment.
+#[derive(Debug, Clone)]
+struct Snapshot {
+    lines: Vec<String>,
+    row: usize,
+    column: usize,
+}
+
+/// How many changes can be undone.
+const UNDO_LIMIT: usize = 200;
 
 impl Default for Editor {
     fn default() -> Self {
@@ -20,6 +35,8 @@ impl Default for Editor {
             row: 0,
             column: 0,
             top: 0,
+            undone: Vec::new(),
+            redone: Vec::new(),
         }
     }
 }
@@ -30,11 +47,58 @@ impl Editor {
         self.lines.join("\n")
     }
 
-    /// Replaces the text, putting the cursor at its end.
+    /// Replaces the text, putting the cursor at its end, with nothing to undo.
     pub fn set_text(&mut self, text: &str) {
         self.lines = text.split('\n').map(String::from).collect();
         self.row = self.lines.len() - 1;
         self.column = self.len();
+        self.undone.clear();
+        self.redone.clear();
+    }
+
+    /// Remembers the text as it is, for the change about to be made to be undone.
+    pub fn checkpoint(&mut self) {
+        let snapshot = self.snapshot();
+        self.undone.push(snapshot);
+        if self.undone.len() > UNDO_LIMIT {
+            self.undone.remove(0);
+        }
+        self.redone.clear();
+    }
+
+    /// Takes the text back to before the latest change, if there is one.
+    pub fn undo(&mut self) -> bool {
+        let Some(before) = self.undone.pop() else {
+            return false;
+        };
+        let now = self.snapshot();
+        self.redone.push(now);
+        self.restore(before);
+        true
+    }
+
+    /// Makes the latest undone change again, if there is one.
+    pub fn redo(&mut self) -> bool {
+        let Some(after) = self.redone.pop() else {
+            return false;
+        };
+        let now = self.snapshot();
+        self.undone.push(now);
+        self.restore(after);
+        true
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            lines: self.lines.clone(),
+            row: self.row,
+            column: self.column,
+        }
+    }
+
+    fn restore(&mut self, snapshot: Snapshot) {
+        self.lines = snapshot.lines;
+        self.move_to(snapshot.row, snapshot.column);
     }
 
     pub fn lines(&self) -> &[String] {
@@ -782,6 +846,38 @@ FROM",
 
         assert_eq!(editor.text(), "cut");
         assert_eq!(editor.cursor(), (0, 1));
+    }
+
+    #[test]
+    fn undoes_and_redoes_changes_back_to_each_checkpoint() {
+        let mut editor = text("a");
+        editor.checkpoint();
+        editor.insert('b');
+        editor.checkpoint();
+        editor.insert('c');
+
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "ab");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "a");
+        assert!(!editor.undo());
+        assert!(editor.redo());
+        assert_eq!(editor.text(), "ab");
+        assert_eq!(editor.cursor(), (0, 2));
+    }
+
+    #[test]
+    fn a_new_change_drops_what_could_be_redone() {
+        let mut editor = text("a");
+        editor.checkpoint();
+        editor.insert('b');
+        editor.undo();
+
+        editor.checkpoint();
+        editor.insert('c');
+
+        assert!(!editor.redo());
+        assert_eq!(editor.text(), "ac");
     }
 
     #[test]
