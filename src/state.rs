@@ -4280,6 +4280,149 @@ mod tests {
         update(state, Event::Key(key))
     }
 
+    /// Cart results with the first cart's etag, and a total typed into it in the document pane.
+    fn with_edited_cart() -> AppState {
+        let mut state = with_cart_results();
+        state.results[0] = json!({ "id": "c-1", "tenantId": "contoso", "_etag": "e1" });
+        state.sync_document();
+        state.focus = Focus::Document;
+        type_text(&mut state, "ggA \"total\": 2,");
+        press(&mut state, KeyCode::Esc);
+        state
+    }
+
+    fn edited_cart() -> Value {
+        json!({ "id": "c-1", "tenantId": "contoso", "_etag": "e1", "total": 2 })
+    }
+
+    #[test]
+    fn ctrl_s_in_the_document_pane_replaces_the_document_where_it_was_read() {
+        let mut state = with_edited_cart();
+        assert!(state.document_modified());
+
+        let effects = ctrl_s(&mut state);
+
+        assert_eq!(
+            effects,
+            vec![Effect::ReplaceDocument {
+                target: carts(),
+                id: "c-1".into(),
+                partition_key: Some(json!("contoso")),
+                document: edited_cart(),
+                etag: Some("e1".into()),
+            }]
+        );
+        assert_eq!(state.status, Status::Info("Saving c-1…".into()));
+    }
+
+    #[test]
+    fn a_document_that_is_not_valid_json_is_not_saved_and_says_why() {
+        let mut state = with_edited_cart();
+        type_text(&mut state, "gg0x");
+
+        let effects = ctrl_s(&mut state);
+
+        assert!(effects.is_empty());
+        let error = state.error.clone().unwrap_or_default();
+        assert!(
+            error.starts_with("The document is not valid JSON: "),
+            "{error}"
+        );
+        assert!(state.document_modified());
+    }
+
+    #[test]
+    fn ctrl_s_without_changes_saves_nothing() {
+        let mut state = with_cart_results();
+        state.focus = Focus::Document;
+
+        let effects = ctrl_s(&mut state);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.status,
+            Status::Info("No changes to save in c-1".into())
+        );
+    }
+
+    #[test]
+    fn a_saved_document_shows_as_the_service_saved_it() {
+        let mut state = with_edited_cart();
+        ctrl_s(&mut state);
+        let mut saved = edited_cart();
+        saved["_etag"] = json!("e2");
+
+        update(
+            &mut state,
+            Event::Msg(Msg::DocumentSaved {
+                id: "c-1".into(),
+                result: Ok(saved.clone()),
+            }),
+        );
+
+        assert_eq!(state.results[0], saved);
+        assert!(!state.document_modified());
+        assert_eq!(state.document.text(), pretty(&saved));
+        assert_eq!(state.status, Status::Info("Saved c-1".into()));
+    }
+
+    #[test]
+    fn a_document_that_failed_to_save_keeps_its_changes_and_says_why() {
+        let mut state = with_edited_cart();
+        ctrl_s(&mut state);
+
+        update(
+            &mut state,
+            Event::Msg(Msg::DocumentSaved {
+                id: "c-1".into(),
+                result: Err("The document changed since it was read.".into()),
+            }),
+        );
+
+        assert_eq!(
+            state.error.as_deref(),
+            Some("The document changed since it was read.")
+        );
+        assert!(state.document_modified());
+    }
+
+    #[test]
+    fn selecting_another_result_with_changes_asks_to_discard_them_first() {
+        let mut state = with_edited_cart();
+        state.focus = Focus::Results;
+
+        press(&mut state, KeyCode::Down);
+        assert_eq!(state.confirm_discard_document, Some(1));
+        assert_eq!(state.result_selected, 0);
+        press(&mut state, KeyCode::Char('n'));
+        assert_eq!(state.confirm_discard_document, None);
+        assert_eq!(state.result_selected, 0);
+        assert!(state.document_modified());
+
+        press(&mut state, KeyCode::Down);
+        press(&mut state, KeyCode::Char('y'));
+
+        assert_eq!(state.result_selected, 1);
+        assert!(!state.document_modified());
+        assert_eq!(state.document.text(), pretty(&cart_docs()[1]));
+    }
+
+    #[test]
+    fn changes_to_the_document_outlast_the_results_refreshing() {
+        let mut state = with_edited_cart();
+        let text = state.document.text();
+        state.focus = Focus::Results;
+
+        press(&mut state, KeyCode::Char('r'));
+        query_done(&mut state, 2, Ok(cart_docs()));
+
+        assert_eq!(state.results, cart_docs());
+        assert_eq!(state.document.text(), text);
+        assert!(state.document_modified());
+        state.focus = Focus::Document;
+        assert_eq!(ctrl_s(&mut state).len(), 1);
+    }
+
     #[test]
     fn ctrl_s_asks_where_to_save_the_query_then_saves_it() {
         let mut state = with_query_editor();
