@@ -1,5 +1,7 @@
 //! Several lines of editable text, for writing queries.
 
+use crate::vim::Vim;
+
 /// A place in the text, as the line and the characters from its start.
 pub type Pos = (usize, usize);
 
@@ -15,6 +17,8 @@ pub struct Editor {
     undone: Vec<Snapshot>,
     /// The text before each undo, latest last, to redo them.
     redone: Vec<Snapshot>,
+    /// How keys act on the text.
+    pub vim: Vim,
 }
 
 /// The text and cursor at some moment.
@@ -37,6 +41,7 @@ impl Default for Editor {
             top: 0,
             undone: Vec::new(),
             redone: Vec::new(),
+            vim: Vim::default(),
         }
     }
 }
@@ -47,13 +52,14 @@ impl Editor {
         self.lines.join("\n")
     }
 
-    /// Replaces the text, putting the cursor at its end, with nothing to undo.
+    /// Replaces the text, putting the cursor at its end, in normal mode with nothing to undo.
     pub fn set_text(&mut self, text: &str) {
         self.lines = text.split('\n').map(String::from).collect();
         self.row = self.lines.len() - 1;
         self.column = self.len();
         self.undone.clear();
         self.redone.clear();
+        self.vim = Vim::default();
     }
 
     /// Remembers the text as it is, for the change about to be made to be undone.

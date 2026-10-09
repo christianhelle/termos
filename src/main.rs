@@ -20,6 +20,7 @@ mod store;
 #[cfg(test)]
 mod testing;
 mod ui;
+mod vim;
 
 use std::io::stdout;
 use std::process::ExitCode;
