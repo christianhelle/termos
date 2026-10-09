@@ -1205,6 +1205,8 @@ fn save_settings(state: &mut AppState) -> Vec<Effect> {
     let Some(settings) = settings_mut(state) else {
         return Vec::new();
     };
+    vim::to_normal(&mut settings.indexing);
+    vim::to_normal(&mut settings.computed);
     match settings.to_properties() {
         Ok(properties) => {
             state.status = Status::Info("Saving the settings…".into());
@@ -1407,6 +1409,7 @@ fn on_document_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
 /// Saves the edited document in place of the one it was read as, or says
 /// why it cannot be saved.
 fn save_document(state: &mut AppState) -> Vec<Effect> {
+    vim::to_normal(&mut state.document);
     let Some(source) = &state.document_source else {
         return Vec::new();
     };
@@ -1506,6 +1509,7 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         return run_editor_query(state);
     }
     if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        vim::to_normal(&mut state.editor);
         ask_where_to_save(state, Saving::Query);
         return Vec::new();
     }
@@ -4331,6 +4335,20 @@ mod tests {
             }]
         );
         assert_eq!(state.status, Status::Info("Saving c-1…".into()));
+    }
+
+    #[test]
+    fn saving_goes_back_to_normal_mode() {
+        let mut state = with_edited_cart();
+        type_text(&mut state, "A");
+
+        ctrl_s(&mut state);
+        assert_eq!(state.document.vim.mode, VimMode::Normal);
+
+        state.focus = Focus::Editor;
+        type_text(&mut state, "i");
+        ctrl_s(&mut state);
+        assert_eq!(state.editor.vim.mode, VimMode::Normal);
     }
 
     #[test]

@@ -150,6 +150,17 @@ pub fn key(editor: &mut Editor, key: KeyEvent, page: usize, register: &mut Regis
     outcome
 }
 
+/// Goes back to normal mode, as Esc would, dropping any half typed command.
+pub fn to_normal(editor: &mut Editor) {
+    if editor.vim.mode == VimMode::Insert {
+        let (row, column) = editor.cursor();
+        editor.move_to(row, column.saturating_sub(1));
+    }
+    editor.vim.reset();
+    editor.vim.mode = VimMode::Normal;
+    editor.clamp_to_line();
+}
+
 fn insert_key(vim: &mut Vim, editor: &mut Editor, key: KeyEvent, page: usize) -> Outcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -821,6 +832,18 @@ mod tests {
             typing.editor.vim.selection(typing.cursor()),
             Some(((0, 0), (1, usize::MAX)))
         );
+    }
+
+    #[test]
+    fn going_back_to_normal_mode_steps_off_the_end_of_an_insert() {
+        let mut typing = Typing::new("ab");
+        typing.keys("Acd");
+
+        to_normal(&mut typing.editor);
+
+        assert_eq!(typing.editor.vim.mode, VimMode::Normal);
+        assert_eq!(typing.cursor(), (0, 3));
+        assert!(typing.editor.vim.is_idle());
     }
 
     #[test]
