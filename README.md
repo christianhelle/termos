@@ -7,6 +7,18 @@ A terminal UI for Azure Cosmos DB (NoSQL API). It browses accounts, containers a
 
 ![Animated demo of termos browsing Azure Cosmos DB](images/ventablack/usage.gif)
 
+## Features
+
+- **Browse everything you can reach**: accounts from every subscription your `az login` can access, signed in with Entra ID or the account key, or the local [emulator](#emulator).
+- **Search as you think**: type a full `SELECT`, a clause like `ORDER BY c._ts DESC`, or just a condition like `c.total > 10`. Results load 100 at a time.
+- **Query editor**: write SQL with highlighting and line numbers, see the results as JSON, and check the request charge, round trips and query metrics. Save the query or its results to a file.
+- **Edit documents in place**: change a document and save it with Ctrl-S. termos only replaces it if nobody changed it since it was read.
+- **Vim-style modal editing**: normal, insert and visual modes, motions, operators, counts, undo and redo in the query editor, the document and the settings JSON. See [Editing](#editing).
+- **Delete with care**: delete one document, or mark several and delete them together, after confirming.
+- **Container settings**: time to live, geospatial type, the indexing policy and computed properties, like the Data Explorer's Settings.
+- **Picks up where you left off**: the accounts, containers, documents, search and query of the last run show at once, then refresh in the background.
+- **Keyboard first, mouse friendly**: Tab between panes, zoom one to full screen, copy text to the clipboard, and click, scroll or drag to pick text.
+
 ## Requirements
 
 - Rust 1.88 or later, when installing with `cargo`
