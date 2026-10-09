@@ -256,7 +256,16 @@ pub fn draw(frame: &mut Frame, state: &AppState) {
         draw_confirm_delete(frame, state);
     }
     if state.confirm_discard {
-        draw_confirm_discard(frame, state);
+        let container = state
+            .target
+            .as_ref()
+            .map(|target| format!(" of {}/{}", target.database, target.container))
+            .unwrap_or_default();
+        draw_confirm_discard(frame, &format!("the settings{container}"));
+    }
+    if let (Some(_), Some(source)) = (state.confirm_discard_document, &state.document_source) {
+        let id = display_value(source.doc.get("id"));
+        draw_confirm_discard(frame, &format!("document {id}"));
     }
     if let Some(prompt) = &state.prompt {
         draw_save_prompt(frame, prompt);
@@ -878,14 +887,10 @@ fn draw_help(frame: &mut Frame, state: &AppState) {
 }
 
 /// A dialog asking whether to discard the changes to the settings.
-fn draw_confirm_discard(frame: &mut Frame, state: &AppState) {
-    let container = state
-        .target
-        .as_ref()
-        .map(|target| format!(" of {}/{}", target.database, target.container))
-        .unwrap_or_default();
+/// A dialog asking whether to discard the changes to something.
+fn draw_confirm_discard(frame: &mut Frame, changed: &str) {
     let lines = vec![
-        Line::raw(format!("Discard the changes to the settings{container}?")),
+        Line::raw(format!("Discard the changes to {changed}?")),
         Line::raw(""),
         Line::from(vec![
             Span::styled("y / Enter", Style::new().fg(Color::Red)),
@@ -1380,6 +1385,33 @@ mod tests {
             "{}",
             computed.join("\n")
         );
+    }
+
+    #[test]
+    fn asks_to_discard_a_changed_document_in_a_dialog() {
+        let mut state = with_results();
+        state.focus = Focus::Document;
+        press(&mut state, KeyCode::Char('x'));
+        state.focus = Focus::Results;
+
+        press(&mut state, KeyCode::Down);
+        let screen = screen(&state);
+
+        for text in [
+            "Document: c-1*",
+            "Discard changes",
+            "Discard the changes to document c-1?",
+        ] {
+            assert!(
+                shows(&screen, text),
+                "{text}
+{}",
+                screen.join(
+                    "
+"
+                )
+            );
+        }
     }
 
     #[test]
