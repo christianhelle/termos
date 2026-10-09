@@ -166,6 +166,157 @@ impl Editor {
         self.move_to(row, self.column);
     }
 
+    /// The text from one place up to another, which it leaves out.
+    pub fn text_between(&self, from: Pos, to: Pos) -> String {
+        let (start, end) = (self.offset(from), self.offset(to));
+        self.text()
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect()
+    }
+
+    /// Deletes the text from one place up to another, putting the cursor
+    /// where it started, and returns it.
+    pub fn delete_between(&mut self, from: Pos, to: Pos) -> String {
+        let (start, end) = (self.offset(from), self.offset(to));
+        let text = self.text();
+        let deleted = text
+            .chars()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect();
+        let kept: String = text
+            .chars()
+            .take(start)
+            .chain(text.chars().skip(end.max(start)))
+            .collect();
+        self.lines = kept.split('\n').map(String::from).collect();
+        self.move_to(from.0, from.1);
+        deleted
+    }
+
+    /// The text of this many lines from a line on, joined by newlines.
+    pub fn lines_text(&self, row: usize, count: usize) -> String {
+        let lines: Vec<&str> = self
+            .lines
+            .iter()
+            .skip(row)
+            .take(count.max(1))
+            .map(String::as_str)
+            .collect();
+        lines.join("\n")
+    }
+
+    /// Deletes this many lines from a line on, putting the cursor on the first
+    /// character of the line that takes their place, and returns them.
+    pub fn delete_lines(&mut self, row: usize, count: usize) -> String {
+        let text = self.lines_text(row, count);
+        let end = (row + count.max(1)).min(self.lines.len());
+        self.lines.drain(row.min(end)..end);
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        let row = row.min(self.lines.len() - 1);
+        self.move_to(row, self.first_non_blank(row));
+        text
+    }
+
+    /// Empties this many lines from a line on into one, keeping its indent,
+    /// with the cursor at its end, and returns them.
+    pub fn clear_lines(&mut self, row: usize, count: usize) -> String {
+        let text = self.lines_text(row, count);
+        let end = (row + count.max(1)).min(self.lines.len());
+        let indent = self.indent(row);
+        self.lines.splice(row..end, [indent]);
+        self.row = row;
+        self.end();
+        text
+    }
+
+    /// Adds lines of text before a line, or after the last, with the cursor
+    /// on the first character of the first of them.
+    pub fn insert_lines(&mut self, row: usize, text: &str) {
+        let row = row.min(self.lines.len());
+        self.lines
+            .splice(row..row, text.split('\n').map(String::from));
+        self.move_to(row, self.first_non_blank(row));
+    }
+
+    /// Adds text at the cursor, breaking lines at its newlines, with the cursor after it.
+    pub fn insert_text(&mut self, text: &str) {
+        for c in text.chars() {
+            match c {
+                '\n' => self.newline(),
+                c => self.insert(c),
+            }
+        }
+    }
+
+    /// Adds an empty line below the cursor's, indented like it, and moves there.
+    pub fn open_below(&mut self) {
+        let indent = self.indent(self.row);
+        self.lines.insert(self.row + 1, indent);
+        self.row += 1;
+        self.end();
+    }
+
+    /// Adds an empty line above the cursor's, indented like it, and moves there.
+    pub fn open_above(&mut self) {
+        let indent = self.indent(self.row);
+        self.lines.insert(self.row, indent);
+        self.end();
+    }
+
+    /// Joins the line below to the cursor's with a space, without its indent,
+    /// with the cursor where they meet.
+    pub fn join_below(&mut self) {
+        if self.row + 1 >= self.lines.len() {
+            return;
+        }
+        let below = self.lines.remove(self.row + 1);
+        let below = below.trim_start();
+        let line = &mut self.lines[self.row];
+        line.truncate(line.trim_end().len());
+        self.column = line.chars().count();
+        if !line.is_empty() && !below.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(below);
+    }
+
+    /// Replaces the character under the cursor.
+    pub fn replace_char(&mut self, c: char) {
+        if self.column < self.len() {
+            self.delete();
+            self.insert(c);
+            self.column -= 1;
+        }
+    }
+
+    /// Keeps the cursor on a character, off the end of its line, as Vim's normal mode does.
+    pub fn clamp_to_line(&mut self) {
+        self.column = self.column.min(self.len().saturating_sub(1));
+    }
+
+    /// The spaces a line starts with.
+    fn indent(&self, row: usize) -> String {
+        self.lines[row]
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect()
+    }
+
+    /// How many characters a place is from the start of the text, newlines included.
+    fn offset(&self, (row, column): Pos) -> usize {
+        let row = row.min(self.lines.len() - 1);
+        let before: usize = self.lines[..row]
+            .iter()
+            .map(|line| line.chars().count() + 1)
+            .sum();
+        before + column.min(self.line_len(row) + 1)
+    }
+
     /// The number of characters in a line.
     pub fn line_len(&self, row: usize) -> usize {
         self.lines.get(row).map_or(0, |line| line.chars().count())
@@ -508,9 +659,11 @@ mod tests {
 
     #[test]
     fn words_start_after_spaces_or_where_punctuation_meets_letters() {
-        let editor = text("SELECT c.id
+        let editor = text(
+            "SELECT c.id
 
-FROM c");
+FROM c",
+        );
 
         assert_eq!(editor.word_forward((0, 0)), (0, 7));
         assert_eq!(editor.word_forward((0, 7)), (0, 8));
@@ -522,8 +675,10 @@ FROM c");
 
     #[test]
     fn words_end_on_their_last_character() {
-        let editor = text("SELECT c.id
-FROM");
+        let editor = text(
+            "SELECT c.id
+FROM",
+        );
 
         assert_eq!(editor.word_end((0, 0)), (0, 5));
         assert_eq!(editor.word_end((0, 5)), (0, 7));
@@ -533,8 +688,10 @@ FROM");
 
     #[test]
     fn moving_back_a_word_goes_to_its_start() {
-        let editor = text("SELECT c.id
-FROM");
+        let editor = text(
+            "SELECT c.id
+FROM",
+        );
 
         assert_eq!(editor.word_back((1, 2)), (1, 0));
         assert_eq!(editor.word_back((1, 0)), (0, 9));
@@ -550,6 +707,81 @@ FROM");
         assert_eq!(editor.word_around((0, 4)), ((0, 3), (0, 6)));
         assert_eq!(editor.word_around((0, 0)), ((0, 0), (0, 1)));
         assert_eq!(editor.first_non_blank(0), 2);
+    }
+
+    #[test]
+    fn deletes_text_between_places_across_lines() {
+        let mut editor = text("SELECT *\nFROM c");
+
+        assert_eq!(editor.text_between((0, 7), (1, 4)), "*\nFROM");
+        assert_eq!(editor.delete_between((0, 6), (1, 4)), " *\nFROM");
+        assert_eq!(editor.text(), "SELECT c");
+        assert_eq!(editor.cursor(), (0, 6));
+    }
+
+    #[test]
+    fn deletes_whole_lines_and_keeps_one_when_all_go() {
+        let mut editor = text("a\n  b\nc");
+
+        assert_eq!(editor.delete_lines(0, 1), "a");
+        assert_eq!(editor.cursor(), (0, 2));
+        assert_eq!(editor.delete_lines(0, 5), "  b\nc");
+        assert_eq!(editor.lines(), [""]);
+    }
+
+    #[test]
+    fn clearing_lines_keeps_the_indent_of_the_first() {
+        let mut editor = text("{\n  \"a\": 1,\n  \"b\": 2\n}");
+
+        assert_eq!(editor.clear_lines(1, 2), "  \"a\": 1,\n  \"b\": 2");
+        assert_eq!(editor.text(), "{\n  \n}");
+        assert_eq!(editor.cursor(), (1, 2));
+    }
+
+    #[test]
+    fn inserts_lines_and_text_with_newlines() {
+        let mut editor = text("a\nd");
+        editor.insert_lines(1, "b\nc");
+        assert_eq!(editor.text(), "a\nb\nc\nd");
+        assert_eq!(editor.cursor(), (1, 0));
+
+        editor.insert_text("x\ny");
+        assert_eq!(editor.text(), "a\nx\nyb\nc\nd");
+        assert_eq!(editor.cursor(), (2, 1));
+    }
+
+    #[test]
+    fn opens_lines_indented_like_the_cursor_line() {
+        let mut editor = text("{\n  \"a\": 1\n}");
+        editor.move_to(1, 0);
+
+        editor.open_below();
+        assert_eq!(editor.cursor(), (2, 2));
+        editor.open_above();
+        assert_eq!(editor.text(), "{\n  \"a\": 1\n  \n  \n}");
+        assert_eq!(editor.cursor(), (2, 2));
+    }
+
+    #[test]
+    fn joins_the_line_below_without_its_indent() {
+        let mut editor = text("SELECT *\n   FROM c");
+        editor.move_to(0, 0);
+
+        editor.join_below();
+
+        assert_eq!(editor.text(), "SELECT * FROM c");
+        assert_eq!(editor.cursor(), (0, 8));
+    }
+
+    #[test]
+    fn replaces_the_character_under_the_cursor() {
+        let mut editor = text("cat");
+        editor.move_to(0, 1);
+
+        editor.replace_char('u');
+
+        assert_eq!(editor.text(), "cut");
+        assert_eq!(editor.cursor(), (0, 1));
     }
 
     #[test]
