@@ -51,6 +51,15 @@ pub enum Effect {
         target: Target,
         items: Vec<(String, Option<Value>)>,
     },
+    /// Replaces a document, found by its id and partition key value, while it
+    /// still has the etag it was read with.
+    ReplaceDocument {
+        target: Target,
+        id: String,
+        partition_key: Option<Value>,
+        document: Value,
+        etag: Option<String>,
+    },
     /// Reads the properties of a container, to show its settings.
     LoadSettings(Target),
     /// Replaces the properties of a container, to save its settings.
@@ -106,6 +115,11 @@ pub enum Msg {
     /// The outcome of deleting each of several documents, by id.
     DeletedMany {
         results: Vec<(String, Result<(), String>)>,
+    },
+    /// The document with this id as saved, or why it could not be.
+    DocumentSaved {
+        id: String,
+        result: Result<Value, String>,
     },
     /// The properties of a container, for its settings.
     SettingsLoaded {
@@ -2018,6 +2032,26 @@ fn deleted_many(state: &mut AppState, results: Vec<(String, Result<(), String>)>
 
 /// Counts documents in words, such as "1 document" or "3 documents".
 /// How many documents a query found, what reading them cost, when known, and how long it took.
+/// Shows a saved document in place of the one it replaced, or why it could not be saved.
+fn document_saved(state: &mut AppState, id: &str, result: Result<Value, String>) {
+    let saved = match result {
+        Ok(saved) => saved,
+        Err(error) => {
+            state.error = Some(error);
+            state.status = Status::Error(format!("could not save {id}"));
+            return;
+        }
+    };
+    if let Some(doc) = state
+        .results
+        .iter_mut()
+        .find(|doc| display_value(doc.get("id")) == id)
+    {
+        *doc = saved;
+    }
+    state.status = Status::Info(format!("Saved {id}"));
+}
+
 /// Whether settings that finished loading or saving are for the settings shown.
 fn shows_settings_of(state: &AppState, target: &Target) -> bool {
     state.mode == Mode::Settings && state.target.as_ref() == Some(target)
@@ -2081,6 +2115,7 @@ fn on_msg(state: &mut AppState, msg: Msg) -> Vec<Effect> {
         Msg::MoreLoaded { id, result } => more_loaded(state, id, result),
         Msg::Deleted { id, result } => deleted(state, &id, result),
         Msg::DeletedMany { results } => deleted_many(state, results),
+        Msg::DocumentSaved { id, result } => document_saved(state, &id, result),
         Msg::Copied(Ok(())) => state.status = Status::Info("Copied to the clipboard".into()),
         Msg::Copied(Err(error)) => {
             state.status = Status::Error(format!("could not copy: {error}"));

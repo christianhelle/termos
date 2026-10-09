@@ -142,6 +142,8 @@ pub struct FakeContainer {
     pub properties: Value,
     /// The properties of each replace asked for.
     pub replaced: Vec<Value>,
+    /// The id and partition key value of each document replace asked for.
+    pub replaces: Vec<(String, Option<Value>)>,
 }
 
 pub struct FakeDataPlane {
@@ -247,5 +249,33 @@ impl DataStore for FakeStore {
         container.docs.retain(|doc| doc["id"] != id);
         anyhow::ensure!(container.docs.len() < before, "document {id} not found");
         Ok(())
+    }
+
+    /// Replaces the document, failing when its etag is not the one given,
+    /// and gives it a new etag.
+    async fn replace(
+        &self,
+        id: &str,
+        partition_key: Option<&Value>,
+        mut document: Value,
+        etag: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let mut container = self.container.borrow_mut();
+        container
+            .replaces
+            .push((id.to_string(), partition_key.cloned()));
+        let Some(doc) = container.docs.iter_mut().find(|doc| doc["id"] == id) else {
+            anyhow::bail!("document {id} not found");
+        };
+        if let Some(etag) = etag {
+            anyhow::ensure!(
+                doc["_etag"] == etag,
+                "the document changed since it was read"
+            );
+        }
+        let version = doc["_etag"].as_str().map_or(1, |etag| etag.len() + 1);
+        document["_etag"] = Value::String("e".repeat(version));
+        *doc = document.clone();
+        Ok(document)
     }
 }

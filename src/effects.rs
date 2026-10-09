@@ -127,6 +127,27 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             Effect::DeleteMany { target, items } => Msg::DeletedMany {
                 results: self.delete_many(&target, items).await,
             },
+            Effect::ReplaceDocument {
+                target,
+                id,
+                partition_key,
+                document,
+                etag,
+            } => {
+                let result = self
+                    .replace_document(
+                        &target,
+                        &id,
+                        partition_key.as_ref(),
+                        document,
+                        etag.as_deref(),
+                    )
+                    .await;
+                Msg::DocumentSaved {
+                    id,
+                    result: result.map_err(describe),
+                }
+            }
             Effect::LoadSettings(target) => {
                 let result = self.properties(&target).await;
                 Msg::SettingsLoaded {
@@ -214,6 +235,22 @@ impl<M: Management, D: DataPlane> Runner<M, D> {
             .connect_to(&target.account, &target.database, &target.container)
             .await?;
         store.delete(id, partition_key).await
+    }
+
+    /// Replaces a document in a container, returning it as saved.
+    async fn replace_document(
+        &self,
+        target: &Target,
+        id: &str,
+        partition_key: Option<&Value>,
+        document: Value,
+        etag: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let store = self
+            .connector
+            .connect_to(&target.account, &target.database, &target.container)
+            .await?;
+        store.replace(id, partition_key, document, etag).await
     }
 
     /// Deletes documents from a container, one at a time, keeping each outcome.
@@ -636,6 +673,56 @@ mod tests {
             container.deletes,
             vec![("c-1".to_string(), Some(json!("contoso")))]
         );
+    }
+
+    fn replace_cart(etag: &str) -> Effect {
+        Effect::ReplaceDocument {
+            target: carts(),
+            id: "c-1".into(),
+            partition_key: Some(json!("contoso")),
+            document: json!({ "id": "c-1", "total": 2 }),
+            etag: Some(etag.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn replaces_a_document_and_returns_it_as_saved() {
+        let mut runner = runner();
+        let docs = vec![json!({ "id": "c-1", "total": 1, "_etag": "a" })];
+        runner.connector.data = FakeDataPlane::new("/tenantId", docs);
+
+        let msg = runner.run(replace_cart("a")).await;
+
+        let Msg::DocumentSaved {
+            id,
+            result: Ok(saved),
+        } = msg
+        else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(id, "c-1");
+        assert_eq!(saved["total"], 2);
+        assert_ne!(saved["_etag"], "a");
+        let container = runner.connector.data.container.borrow();
+        assert_eq!(container.docs, vec![saved]);
+        assert_eq!(
+            container.replaces,
+            vec![("c-1".to_string(), Some(json!("contoso")))]
+        );
+    }
+
+    #[tokio::test]
+    async fn does_not_replace_a_document_changed_since_it_was_read() {
+        let mut runner = runner();
+        let docs = vec![json!({ "id": "c-1", "total": 1, "_etag": "b" })];
+        runner.connector.data = FakeDataPlane::new("/tenantId", docs.clone());
+
+        let msg = runner.run(replace_cart("a")).await;
+
+        let Msg::DocumentSaved { result: Err(_), .. } = msg else {
+            panic!("unexpected {msg:?}");
+        };
+        assert_eq!(runner.connector.data.container.borrow().docs, docs);
     }
 
     #[tokio::test]

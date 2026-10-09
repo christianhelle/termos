@@ -77,4 +77,15 @@ pub trait DataStore {
     /// Deletes the document with this id, in the partition with this key value.
     /// A missing key value stands for a document without the partition key property.
     async fn delete(&self, id: &str, partition_key: Option<&Value>) -> anyhow::Result<()>;
+
+    /// Replaces the document with this id, in the partition with this key value,
+    /// returning it as the service saved it. With an etag, the service only replaces
+    /// the document while it is still the version with that etag.
+    async fn replace(
+        &self,
+        id: &str,
+        partition_key: Option<&Value>,
+        document: Value,
+        etag: Option<&str>,
+    ) -> anyhow::Result<Value>;
 }

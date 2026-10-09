@@ -4,9 +4,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use azure_core::credentials::{Secret, TokenCredential};
-use azure_core::http::StatusCode;
+use azure_core::http::{Etag, StatusCode};
 use azure_data_cosmos::models::ContainerProperties;
-use azure_data_cosmos::options::QueryOptions;
+use azure_data_cosmos::options::{
+    ContentResponseOnWrite, ItemWriteOptions, OperationOptions, Precondition, QueryOptions,
+};
 use azure_data_cosmos::{
     AccountEndpoint, AccountReference, ContainerClient, CosmosClient, CosmosError, FeedScope,
     PartitionKey, Query, RoutingStrategy,
@@ -351,7 +353,40 @@ impl DataStore for CosmosStore {
             .map_err(classify)?;
         Ok(())
     }
+
+    async fn replace(
+        &self,
+        id: &str,
+        partition_key: Option<&Value>,
+        document: Value,
+        etag: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let key = partition_key_of(partition_key)?;
+        let mut operation = OperationOptions::default();
+        operation.content_response_on_write = Some(ContentResponseOnWrite::Enabled);
+        let mut options = ItemWriteOptions::default().with_operation_options(operation);
+        if let Some(etag) = etag {
+            options =
+                options.with_precondition(Precondition::if_match(Etag::from(etag.to_string())));
+        }
+        let response = self
+            .client
+            .replace_item(key, id, document, Some(options))
+            .await
+            .map_err(|error| {
+                if error.status().status_code() == StatusCode::PreconditionFailed {
+                    anyhow::anyhow!(CHANGED_SINCE_READ)
+                } else {
+                    classify(error)
+                }
+            })?;
+        Ok(response.into_body().into_single::<Value>()?)
+    }
 }
+
+/// Why a document could not be replaced when someone changed it after it was read.
+const CHANGED_SINCE_READ: &str =
+    "The document changed since it was read. Press r in the results to read it again.";
 
 #[cfg(test)]
 mod tests {
