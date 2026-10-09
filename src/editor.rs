@@ -1,5 +1,8 @@
 //! Several lines of editable text, for writing queries.
 
+/// A place in the text, as the line and the characters from its start.
+pub type Pos = (usize, usize);
+
 /// Lines of text with a cursor, counted in lines and characters.
 #[derive(Debug)]
 pub struct Editor {
@@ -163,6 +166,157 @@ impl Editor {
         self.move_to(row, self.column);
     }
 
+    /// The number of characters in a line.
+    pub fn line_len(&self, row: usize) -> usize {
+        self.lines.get(row).map_or(0, |line| line.chars().count())
+    }
+
+    /// The character at a place, or `None` past the end of its line.
+    pub fn char_at(&self, (row, column): Pos) -> Option<char> {
+        self.lines.get(row)?.chars().nth(column)
+    }
+
+    /// Where the next word starts, on a later line when this one has no more,
+    /// stopping at empty lines, or the end of the text.
+    pub fn word_forward(&self, from: Pos) -> Pos {
+        let start = self.class_at(from);
+        let mut at = from;
+        if start != Class::Space {
+            loop {
+                match self.next(at) {
+                    None => return self.end_of_text(),
+                    Some(next) if next.0 != at.0 => {
+                        at = next;
+                        break;
+                    }
+                    Some(next) => at = next,
+                }
+                if self.class_at(at) != start {
+                    break;
+                }
+            }
+        }
+        loop {
+            if self.class_at(at) != Class::Space {
+                return at;
+            }
+            if at.0 != from.0 && self.line_len(at.0) == 0 {
+                return at;
+            }
+            match self.next(at) {
+                Some(next) => at = next,
+                None => return self.end_of_text(),
+            }
+        }
+    }
+
+    /// Where the word ends, the one after when already at its end.
+    pub fn word_end(&self, from: Pos) -> Pos {
+        let Some(mut at) = self.next(from) else {
+            return from;
+        };
+        while self.class_at(at) == Class::Space {
+            match self.next(at) {
+                Some(next) => at = next,
+                None => return at,
+            }
+        }
+        let class = self.class_at(at);
+        loop {
+            match self.next(at) {
+                Some(next) if next.0 == at.0 && self.class_at(next) == class => at = next,
+                _ => return at,
+            }
+        }
+    }
+
+    /// Where the word starts, the one before when already at its start.
+    pub fn word_back(&self, from: Pos) -> Pos {
+        let Some(mut at) = self.previous(from) else {
+            return from;
+        };
+        while self.class_at(at) == Class::Space {
+            if at.0 != from.0 && self.line_len(at.0) == 0 {
+                return at;
+            }
+            match self.previous(at) {
+                Some(previous) => at = previous,
+                None => return at,
+            }
+        }
+        let class = self.class_at(at);
+        loop {
+            match self.previous(at) {
+                Some(previous) if previous.0 == at.0 && self.class_at(previous) == class => {
+                    at = previous;
+                }
+                _ => return at,
+            }
+        }
+    }
+
+    /// The first and last characters of the word or the spaces at a place.
+    pub fn word_around(&self, (row, column): Pos) -> (Pos, Pos) {
+        let class = self.class_at((row, column));
+        let same = |c: usize| self.class_at((row, c)) == class;
+        let mut first = column;
+        while first > 0 && same(first - 1) {
+            first -= 1;
+        }
+        let mut last = column;
+        while last + 1 < self.line_len(row) && same(last + 1) {
+            last += 1;
+        }
+        ((row, first), (row, last))
+    }
+
+    /// The column of the first character of a line that is not a space.
+    pub fn first_non_blank(&self, row: usize) -> usize {
+        self.lines.get(row).map_or(0, |line| {
+            line.chars()
+                .position(|c| !c.is_whitespace())
+                .unwrap_or_else(|| line.chars().count().saturating_sub(1))
+        })
+    }
+
+    /// Whether a place holds a space, a word character or punctuation.
+    fn class_at(&self, at: Pos) -> Class {
+        match self.char_at(at) {
+            None => Class::Space,
+            Some(c) if c.is_whitespace() => Class::Space,
+            Some(c) if c.is_alphanumeric() || c == '_' => Class::Word,
+            Some(_) => Class::Punctuation,
+        }
+    }
+
+    /// The character after a place, at the start of the next line after the last.
+    fn next(&self, (row, column): Pos) -> Option<Pos> {
+        if column + 1 < self.line_len(row) {
+            Some((row, column + 1))
+        } else if row + 1 < self.lines.len() {
+            Some((row + 1, 0))
+        } else {
+            None
+        }
+    }
+
+    /// The character before a place, at the end of the line before from the first.
+    fn previous(&self, (row, column): Pos) -> Option<Pos> {
+        if column > 0 {
+            Some((row, column.min(self.line_len(row)) - 1))
+        } else if row > 0 {
+            Some((row - 1, self.line_len(row - 1).saturating_sub(1)))
+        } else {
+            None
+        }
+    }
+
+    /// Just past the last character.
+    fn end_of_text(&self) -> Pos {
+        let row = self.lines.len() - 1;
+        (row, self.line_len(row))
+    }
+
     /// The number of characters in the cursor's line.
     fn len(&self) -> usize {
         self.lines[self.row].chars().count()
@@ -175,6 +329,14 @@ impl Editor {
             .nth(chars)
             .map_or(line.len(), |(index, _)| index)
     }
+}
+
+/// What kind of character, for moving by words.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Class {
+    Space,
+    Word,
+    Punctuation,
 }
 
 #[cfg(test)]
@@ -336,6 +498,58 @@ mod tests {
         editor.page_up(4);
         editor.follow(4);
         assert_eq!(editor.scroll(4), 4);
+    }
+
+    fn text(text: &str) -> Editor {
+        let mut editor = Editor::default();
+        editor.set_text(text);
+        editor
+    }
+
+    #[test]
+    fn words_start_after_spaces_or_where_punctuation_meets_letters() {
+        let editor = text("SELECT c.id
+
+FROM c");
+
+        assert_eq!(editor.word_forward((0, 0)), (0, 7));
+        assert_eq!(editor.word_forward((0, 7)), (0, 8));
+        assert_eq!(editor.word_forward((0, 8)), (0, 9));
+        assert_eq!(editor.word_forward((0, 9)), (1, 0));
+        assert_eq!(editor.word_forward((1, 0)), (2, 0));
+        assert_eq!(editor.word_forward((2, 5)), (2, 6));
+    }
+
+    #[test]
+    fn words_end_on_their_last_character() {
+        let editor = text("SELECT c.id
+FROM");
+
+        assert_eq!(editor.word_end((0, 0)), (0, 5));
+        assert_eq!(editor.word_end((0, 5)), (0, 7));
+        assert_eq!(editor.word_end((0, 9)), (0, 10));
+        assert_eq!(editor.word_end((0, 10)), (1, 3));
+    }
+
+    #[test]
+    fn moving_back_a_word_goes_to_its_start() {
+        let editor = text("SELECT c.id
+FROM");
+
+        assert_eq!(editor.word_back((1, 2)), (1, 0));
+        assert_eq!(editor.word_back((1, 0)), (0, 9));
+        assert_eq!(editor.word_back((0, 9)), (0, 8));
+        assert_eq!(editor.word_back((0, 3)), (0, 0));
+        assert_eq!(editor.word_back((0, 0)), (0, 0));
+    }
+
+    #[test]
+    fn the_word_around_a_place_reaches_both_its_ends() {
+        let editor = text("  \"name\": 1");
+
+        assert_eq!(editor.word_around((0, 4)), ((0, 3), (0, 6)));
+        assert_eq!(editor.word_around((0, 0)), ((0, 0), (0, 1)));
+        assert_eq!(editor.first_non_blank(0), 2);
     }
 
     #[test]
