@@ -15,6 +15,7 @@ use crate::json::highlight_json_array;
 use crate::partition::{display_value, value_at_path};
 use crate::query::{DEFAULT_QUERY, build_query};
 use crate::settings::{ContainerSettings, Field, SettingsTab};
+use crate::vim::{self, Outcome, Register};
 
 /// Work for the runtime to do in the background.
 #[derive(Debug, Clone, PartialEq)]
@@ -491,6 +492,8 @@ pub struct AppState {
     pub settings_height: u16,
     /// The id of the query refreshing documents an earlier run saved, while it runs.
     pub refreshing_query: Option<u64>,
+    /// The text the editors deleted or yanked last, to put back.
+    pub register: Register,
 }
 
 impl AppState {
@@ -540,6 +543,7 @@ impl AppState {
             settings_tab: SettingsTab::Settings,
             settings_height: 0,
             refreshing_query: None,
+            register: Register::default(),
         };
         (state, vec![Effect::LoadAccounts])
     }
@@ -789,6 +793,9 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         state.show_help = false;
         return Vec::new();
     }
+    if editing(state, key) {
+        return on_editor_pane_key(state, key);
+    }
     match key.code {
         KeyCode::Char('c') if ctrl => state.quit = true,
         KeyCode::Char('b') if ctrl => toggle_tree(state),
@@ -799,15 +806,20 @@ fn on_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         _ => {
             return match state.focus {
                 Focus::Search => on_search_key(state, key),
-                Focus::Editor => on_editor_key(state, key),
-                Focus::IndexingPolicy | Focus::ComputedProperties => {
-                    on_settings_editor_key(state, key)
-                }
-                _ => on_pane_key(state, key),
+                _ => on_editor_pane_key(state, key),
             };
         }
     }
     Vec::new()
+}
+
+/// Keys for a pane with an editor, which go to the pane when the editor has no use for them.
+fn on_editor_pane_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
+    match state.focus {
+        Focus::Editor => on_editor_key(state, key),
+        Focus::IndexingPolicy | Focus::ComputedProperties => on_settings_editor_key(state, key),
+        _ => on_pane_key(state, key),
+    }
 }
 
 /// Moves the focus one pane along, past the tree while it is hidden.
@@ -1376,47 +1388,72 @@ fn on_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
         ask_where_to_save(state, Saving::Query);
         return Vec::new();
     }
-    if key.code == KeyCode::Esc {
-        state.focus = Focus::Output;
+    let outcome = edit(
+        &mut state.editor,
+        key,
+        state.editor_height,
+        &mut state.register,
+    );
+    match outcome {
+        Outcome::Leave => {
+            state.focus = Focus::Output;
+            Vec::new()
+        }
+        outcome => edited(state, key, outcome),
     }
-    edit(&mut state.editor, key, state.editor_height);
-    Vec::new()
 }
 
-/// Edits text with a key, moving a page at a time by this many lines.
-fn edit(editor: &mut Editor, key: KeyEvent, page: u16) {
+/// Edits text with a key the way Vim would, moving a page at a time by this
+/// many lines, and keeps the cursor in sight.
+fn edit(editor: &mut Editor, key: KeyEvent, page: u16, register: &mut Register) -> Outcome {
     let page = usize::from(page).max(1);
-    match key.code {
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => editor.insert(c),
-        KeyCode::Enter => editor.newline(),
-        KeyCode::Backspace => editor.backspace(),
-        KeyCode::Delete => editor.delete(),
-        KeyCode::Left => editor.left(),
-        KeyCode::Right => editor.right(),
-        KeyCode::Up => editor.up(),
-        KeyCode::Down => editor.down(),
-        KeyCode::Home => editor.home(),
-        KeyCode::End => editor.end(),
-        KeyCode::PageUp => editor.page_up(page),
-        KeyCode::PageDown => editor.page_down(page),
-        _ => {}
-    }
+    let outcome = vim::key(editor, key, page, register);
     editor.follow(page);
+    outcome
+}
+
+/// Copies yanked text to the clipboard, and leaves keys Vim had no use for to the pane.
+fn edited(state: &mut AppState, key: KeyEvent, outcome: Outcome) -> Vec<Effect> {
+    match outcome {
+        Outcome::Yanked(text) => vec![Effect::Copy(text)],
+        Outcome::Unhandled => on_pane_key(state, key),
+        Outcome::Handled | Outcome::Leave => Vec::new(),
+    }
 }
 
 /// Edits the JSON of the indexing policy or computed properties tab.
 fn on_settings_editor_key(state: &mut AppState, key: KeyEvent) -> Vec<Effect> {
     let page = state.settings_height;
-    let focus = state.focus;
-    let Some(settings) = settings_mut(state) else {
+    let Some(Load::Loaded(settings)) = &mut state.settings else {
         return Vec::new();
     };
-    let editor = match focus {
+    let editor = match state.focus {
         Focus::IndexingPolicy => &mut settings.indexing,
         _ => &mut settings.computed,
     };
-    edit(editor, key, page);
-    Vec::new()
+    match edit(editor, key, page, &mut state.register) {
+        Outcome::Leave => leave_settings(state),
+        outcome => edited(state, key, outcome),
+    }
+}
+
+/// The editor of the focused pane, if it has one.
+fn focused_editor(state: &AppState) -> Option<&Editor> {
+    match (state.focus, &state.settings) {
+        (Focus::Editor, _) => Some(&state.editor),
+        (Focus::IndexingPolicy, Some(Load::Loaded(settings))) => Some(&settings.indexing),
+        (Focus::ComputedProperties, Some(Load::Loaded(settings))) => Some(&settings.computed),
+        _ => None,
+    }
+}
+
+/// Whether the focused pane's editor is typing or in the middle of a command,
+/// so it takes every key but those that save, run or move to another pane.
+fn editing(state: &AppState, key: KeyEvent) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let passes = matches!(key.code, KeyCode::Tab | KeyCode::BackTab)
+        || (ctrl && matches!(key.code, KeyCode::Char('s' | 'c')));
+    !passes && focused_editor(state).is_some_and(|editor| !editor.vim.is_idle())
 }
 
 /// Opens the dialog asking where to save, suggesting a file named after the container.
@@ -2058,6 +2095,7 @@ mod tests {
     use super::*;
     use crate::settings::{Field, Geospatial, SettingsTab, TimeToLive};
     use crate::testing::{account, container};
+    use crate::vim::VimMode;
     use serde_json::{Value, json};
     use std::time::Duration;
 
@@ -2565,6 +2603,12 @@ mod tests {
         assert_eq!(state.tree_selected, 0);
     }
 
+    fn type_text_effects(state: &mut AppState, text: &str) -> Vec<Effect> {
+        text.chars()
+            .flat_map(|c| press(state, KeyCode::Char(c)))
+            .collect()
+    }
+
     fn type_text(state: &mut AppState, text: &str) {
         for c in text.chars() {
             press(state, KeyCode::Char(c));
@@ -2670,6 +2714,7 @@ mod tests {
     fn keys_in_the_query_editor_edit_the_query() {
         let mut state = with_query_editor();
 
+        type_text(&mut state, "i");
         press(&mut state, KeyCode::Enter);
         type_text(&mut state, "WHERE c.q = 1x");
         press(&mut state, KeyCode::Backspace);
@@ -2686,6 +2731,46 @@ mod tests {
         assert_eq!(state.editor.text(), "SELECT * FROM cWHERE c.q = 1");
         assert!(!state.quit);
         assert_eq!(state.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn esc_in_the_query_editor_leaves_insert_mode_before_the_editor() {
+        let mut state = with_query_editor();
+        type_text(&mut state, "A x");
+
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.focus, Focus::Editor);
+        assert_eq!(state.editor.vim.mode, VimMode::Normal);
+        press(&mut state, KeyCode::Esc);
+
+        assert_eq!(state.focus, Focus::Output);
+        assert_eq!(state.editor.text(), "SELECT * FROM c x");
+    }
+
+    #[test]
+    fn normal_mode_keys_edit_the_query_and_others_go_to_the_pane() {
+        let mut state = with_query_editor();
+
+        type_text(&mut state, "0dw");
+        assert_eq!(state.editor.text(), "* FROM c");
+        let effects = type_text_effects(&mut state, "yy");
+        assert_eq!(effects, vec![Effect::Copy("* FROM c".into())]);
+        type_text(&mut state, "?");
+
+        assert!(state.show_help);
+    }
+
+    #[test]
+    fn esc_in_insert_mode_stays_on_a_json_settings_tab() {
+        let mut state = with_loaded_carts_settings(json!({"indexingPolicy": {}}));
+        press(&mut state, KeyCode::Tab);
+        type_text(&mut state, "i");
+
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.mode, Mode::Settings);
+        press(&mut state, KeyCode::Esc);
+
+        assert_ne!(state.mode, Mode::Settings);
     }
 
     #[test]
@@ -4313,10 +4398,10 @@ mod tests {
         let mut state = with_loaded_carts_settings(json!({"indexingPolicy": {}}));
         press(&mut state, KeyCode::Tab);
 
-        type_text(&mut state, "q/nS");
+        type_text(&mut state, "iq/nS");
         press(&mut state, KeyCode::Enter);
         press(&mut state, KeyCode::Tab);
-        press(&mut state, KeyCode::End);
+        type_text(&mut state, "A");
         press(&mut state, KeyCode::Backspace);
         type_text(&mut state, "1]");
 
@@ -4348,7 +4433,7 @@ mod tests {
     fn saving_settings_that_are_not_valid_shows_why_on_their_tab() {
         let mut state = with_loaded_carts_settings(json!({"indexingPolicy": {}}));
         press(&mut state, KeyCode::Tab);
-        press(&mut state, KeyCode::Delete);
+        type_text(&mut state, "x");
         press(&mut state, KeyCode::BackTab);
 
         let effects = ctrl_s(&mut state);
