@@ -5,7 +5,6 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Christian Helle"]
 license = "MIT"
-homepage = "https://github.com/christianhelle/termos"
 repository = "https://github.com/christianhelle/termos"
 readme = "README.md"
 keywords = ["azure", "cosmosdb", "tui", "terminal", "database"]
